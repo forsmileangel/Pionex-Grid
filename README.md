@@ -31,13 +31,23 @@ Windows Task Scheduler `Pionex Grid Record - Daily API` runs v1 at 08:00 from th
 
 ## v2.0 — local SQLite dashboard
 
-v2 lives on branch `v2/sqlite-dashboard`. It does not replace the 08:00 Excel job until you explicitly confirm.
+Use the worktree `D:\My-project\pionex grid record-v2` (branch `v2/sqlite-dashboard`).
+The 08:00 Excel task keeps running from the v1 folder.
 
-- Capture: `python v2\capture.py`
-- Dashboard: `python v2\server.py` then open `http://127.0.0.1:8787`
-- The HTTP server binds localhost only. It reads SQLite, not the API key.
+```powershell
+cd "D:\My-project\pionex grid record-v2"
+python -m v2.capture
+python -m v2.server
+```
 
-SQLite starts from the next successful API capture. It does not import the existing Excel history.
+Or double-click `capture-v2.cmd` then `start-dashboard.cmd`. Open `http://127.0.0.1:8787`.
+
+- SQLite file: `v2-data/pionex-grid.sqlite` (local only)
+- Export: `exports/` (does not overwrite v1 Excel)
+- First successful v2 capture is a baseline (daily profit 0)
+- Server binds `127.0.0.1` only and never reads the API key
+
+Portfolio Tracker is already a remote webpage. This dashboard is a local trial. Later PT can call `/api/v1/summary/latest` or read a local folder; that is not wired yet.
 
 ## Portfolio Tracker
 

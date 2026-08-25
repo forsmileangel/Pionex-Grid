@@ -1,0 +1,18 @@
+name: v2 tests
+on:
+  push:
+    branches: [v2/sqlite-dashboard]
+  pull_request:
+    branches: [v2/sqlite-dashboard]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run fixture tests
+        run: python -m unittest discover -s v2/tests -v
+        env:
+          PYTHONPATH: .

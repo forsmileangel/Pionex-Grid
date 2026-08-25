@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pionex Grid v2</title>
+  <style>
+    :root { --ink:#172026; --muted:#5c6b73; --line:#d7e0e4; --surface:#fff; --soft:#eef3f5; --accent:#2e6970; --warn:#8b5e22; }
+    * { box-sizing:border-box; }
+    body { margin:0; color:var(--ink); background:#f4f7f8; font:16px/1.5 system-ui,"Noto Sans TC",sans-serif; }
+    header { background:#1f2c31; color:#fff; padding:16px 20px; display:flex; gap:12px; flex-wrap:wrap; align-items:center; }
+    header h1 { margin:0; font-size:20px; }
+    nav button, .btn { background:#2e6970; color:#fff; border:0; padding:8px 12px; border-radius:6px; cursor:pointer; }
+    nav button.active { background:#4d8a90; }
+    main { max-width:1100px; margin:0 auto; padding:18px 14px 48px; }
+    .card { background:#fff; border:1px solid var(--line); border-radius:8px; padding:14px; margin:12px 0; overflow:auto; }
+    table { width:100%; border-collapse:collapse; font-size:14px; }
+    th,td { border-bottom:1px solid var(--line); padding:8px 6px; text-align:left; }
+    th { background:var(--soft); }
+    tr[data-href] { cursor:pointer; }
+    .warn { color:var(--warn); }
+    .muted { color:var(--muted); font-size:13px; }
+    svg { width:100%; height:180px; background:#fff; }
+    @media (max-width:700px) { table { font-size:13px; } header { padding:12px; } }
+  </style>
+</head>
+<body>
+<header>
+  <h1>Pionex Grid v2</h1>
+  <nav>
+    <button data-page="daily" class="active">每日報酬</button>
+    <button data-page="grids">網格總覽</button>
+    <button data-page="history">網格歷史</button>
+    <button data-page="status">執行狀態</button>
+  </nav>
+  <a class="btn" href="/api/v1/export.xlsx">匯出 Excel</a>
+</header>
+<main id="app"><p class="muted">載入中…</p></main>
+<script>
+const app = document.getElementById("app");
+const money = (m) => m && m.usdt != null ? Number(m.usdt).toFixed(2) : "—";
+let page = "daily";
+let historyId = "";
+
+document.querySelectorAll("nav button").forEach((btn) => {
+  btn.onclick = () => {
+    document.querySelectorAll("nav button").forEach((b) => b.classList.remove("active"));
+    btn.classList.add("active");
+    page = btn.dataset.page;
+    render();
+  };
+});
+
+async function get(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(url + " " + res.status);
+  return res.json();
+}
+
+function chart(daily) {
+  if (!daily.length) return "<p class='muted'>尚無資料。請先執行 python -m v2.capture</p>";
+  const w = 1000, h = 180, p = 24;
+  const max = Math.max(...daily.map((d) => Math.abs(Number(d.daily_profit.usdt || 0))), 1);
+  const maxCum = Math.max(...daily.map((d) => Number(d.cumulative.usdt || 0)), 1);
+  const barW = Math.max(8, (w - p * 2) / daily.length - 4);
+  const bars = daily.map((d, i) => {
+    const v = Number(d.daily_profit.usdt || 0);
+    const bh = (Math.abs(v) / max) * (h - p * 2);
+    const x = p + i * ((w - p * 2) / daily.length);
+    const y = v >= 0 ? (h / 2 - bh) : h / 2;
+    return `<rect x="${x}" y="${y}" width="${barW}" height="${bh}" fill="${v>=0?'#2e6970':'#8b5e22'}"/>`;
+  }).join("");
+  const pts = daily.map((d, i) => {
+    const x = p + i * ((w - p * 2) / Math.max(daily.length - 1, 1));
+    const y = h - p - (Number(d.cumulative.usdt || 0) / maxCum) * (h - p * 2);
+    return `${x},${y}`;
+  }).join(" ");
+  return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">${bars}<polyline fill="none" stroke="#1f2c31" stroke-width="2" points="${pts}"/></svg><p class="muted">柱：每日利潤；線：累計利潤</p>`;
+}
+
+async function renderDaily() {
+  const daily = await get("/api/v1/daily");
+  app.innerHTML = `<div class="card">${chart(daily)}</div>
+    <div class="card"><table><thead><tr><th>日期</th><th>每日</th><th>累計</th><th>活躍</th><th>投資</th><th>新增</th><th>關倉</th></tr></thead>
+    <tbody>${daily.map((d) => `<tr data-href="${d.capture_date}"><td>${d.capture_date}</td><td>${money(d.daily_profit)}</td><td>${money(d.cumulative)}</td><td>${d.active_count}</td><td>${money(d.investment)}</td><td>${d.new_count}</td><td>${d.closed_count}</td></tr>`).join("")}</tbody></table></div>
+    <div class="card" id="detail"><p class="muted">點日期看各網格差額。跨越超過 1 天的差額會標 gap_days。</p></div>`;
+  app.querySelectorAll("tr[data-href]").forEach((tr) => {
+    tr.onclick = async () => {
+      const data = await get("/api/v1/daily/" + tr.dataset.href);
+      document.getElementById("detail").innerHTML = `<h3>${data.capture_date || tr.dataset.href}</h3>
+        <table><thead><tr><th>網格</th><th>狀態</th><th>前次</th><th>當次</th><th>差額</th></tr></thead><tbody>
+        ${(data.rows||[]).map((r) => `<tr><td>${r.symbol || r.bu_order_id}</td><td>${r.status}${r.gap_days>0?' / gap '+r.gap_days:''}</td><td>${money(r.prev_grid_profit)}</td><td>${money(r.grid_profit)}</td><td>${money(r.daily_profit)}</td></tr>`).join("")}
+        </tbody></table>`;
+    };
+  });
+}
+
+async function renderGrids() {
+  const grids = await get("/api/v1/grids");
+  app.innerHTML = `<div class="card"><p class="muted">perVolume 是每格下單量，不是百分比。價差標記為估算。</p>
+    <table><thead><tr><th>交易對</th><th>狀態</th><th>區間</th><th>格數</th><th>類型</th><th>perVolume</th><th>槓桿</th><th>利潤</th></tr></thead>
+    <tbody>${grids.map((g) => `<tr data-id="${g.bu_order_id}"><td>${g.symbol}</td><td>${g.lifecycle}</td><td>${g.bottom_s||""}–${g.top_s||""}</td><td>${g.row_n||""}</td><td>${g.grid_type||""}</td><td>${g.per_volume_s||""}</td><td>${g.leverage||""}</td><td>${money(g.grid_profit)}</td></tr>`).join("")}</tbody></table></div>`;
+  app.querySelectorAll("tr[data-id]").forEach((tr) => {
+    tr.onclick = () => { historyId = tr.dataset.id; page = "history"; document.querySelector('[data-page="history"]').click(); };
+  });
+}
+
+async function renderHistory() {
+  if (!historyId) {
+    const grids = await get("/api/v1/grids");
+    historyId = grids[0] && grids[0].bu_order_id;
+  }
+  if (!historyId) { app.innerHTML = "<p class='muted'>沒有網格</p>"; return; }
+  const data = await get("/api/v1/grids/" + encodeURIComponent(historyId) + "/history");
+  app.innerHTML = `<div class="card"><h3>${(data.position&&data.position.symbol)||historyId}</h3>
+    <table><thead><tr><th>日期</th><th>狀態</th><th>利潤</th><th>差額</th></tr></thead>
+    <tbody>${(data.profits||[]).map((p)=>`<tr><td>${p.capture_date}</td><td>${p.status}</td><td>${money(p.grid_profit)}</td><td>${money(p.daily_profit)}</td></tr>`).join("")}</tbody></table>
+    <h4>快照</h4>
+    <table><thead><tr><th>run</th><th>保證金</th><th>強平上</th><th>強平下</th><th>區間</th></tr></thead>
+    <tbody>${(data.snapshots||[]).map((s)=>`<tr><td>${s.run_id}</td><td>${money(s.margin_balance)}</td><td>${money(s.estimate_liq_up)}</td><td>${money(s.estimate_liq_down)}</td><td>${s.bottom_s||""}–${s.top_s||""}</td></tr>`).join("")}</tbody></table></div>`;
+}
+
+async function renderStatus() {
+  const s = await get("/api/v1/status");
+  app.innerHTML = `<div class="card">
+    <p>上次成功：${s.last_success ? s.last_success.captured_at : "尚無"}</p>
+    <p>未決關倉：<span class="${s.unresolved?"warn":""}">${s.unresolved}</span></p>
+    <p>漏抓日期：${(s.missing_dates||[]).join(", ") || "無"}</p>
+    <pre class="muted">${JSON.stringify(s.recent_errors||[], null, 2)}</pre>
+  </div>`;
+}
+
+async function render() {
+  try {
+    if (page === "daily") await renderDaily();
+    else if (page === "grids") await renderGrids();
+    else if (page === "history") await renderHistory();
+    else await renderStatus();
+  } catch (err) {
+    app.innerHTML = `<p class="warn">${err.message}</p>`;
+  }
+}
+render();
+</script>
+</body>
+</html>

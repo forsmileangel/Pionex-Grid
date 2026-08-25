@@ -10,6 +10,10 @@ function option(name, fallback = "") {
   return index >= 0 && index + 1 < process.argv.length ? process.argv[index + 1] : fallback;
 }
 
+function hasFlag(name) {
+  return process.argv.includes(name);
+}
+
 function readCredentials(filePath) {
   const lines = fs.readFileSync(filePath, "utf8").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   if (lines.length !== 2) throw new Error("Credential file must contain exactly two non-empty lines: API key, API secret.");
@@ -111,19 +115,61 @@ async function getSpotClose(coin) {
   return { symbol, close, time: ticker.time || null };
 }
 
-async function listRunningFuturesGrids(credentials) {
+const STRIP_RAW_KEYS = /^(userId|keyId|token|secret|apiKey|apiSecret|api_key|api_secret)$/i;
+
+function sanitizeRaw(value) {
+  if (Array.isArray(value)) return value.map(sanitizeRaw);
+  if (value && typeof value === "object") {
+    const out = {};
+    for (const [key, child] of Object.entries(value)) {
+      if (STRIP_RAW_KEYS.test(key) || /secret|token|apikey/i.test(key)) continue;
+      out[key] = sanitizeRaw(child);
+    }
+    return out;
+  }
+  return value;
+}
+
+function firstString(...values) {
+  for (const value of values) {
+    if (value === null || value === undefined || value === "") continue;
+    return String(value);
+  }
+  return "";
+}
+
+function estimateSpacing(top, bottom, row, gridType) {
+  if (!(top > 0) || !(bottom > 0) || !(row > 0)) {
+    return { EstimatedStepPct: null, EstimatedStepPrice: null, EstimatedRangePct: null };
+  }
+  const rangePct = ((top - bottom) / bottom) * 100;
+  if (gridType === "geometric") {
+    return {
+      EstimatedStepPct: (Math.pow(top / bottom, 1 / row) - 1) * 100,
+      EstimatedStepPrice: null,
+      EstimatedRangePct: rangePct,
+    };
+  }
+  return {
+    EstimatedStepPct: null,
+    EstimatedStepPrice: (top - bottom) / row,
+    EstimatedRangePct: rangePct,
+  };
+}
+
+async function listFuturesGrids(credentials, status) {
   const records = [];
   const seen = new Set();
   let pageToken = "";
   for (let page = 0; page < 100; page += 1) {
-    const params = { status: "running", buOrderTypes: "futures_grid" };
+    const params = { status, buOrderTypes: "futures_grid" };
     if (pageToken) params.pageToken = pageToken;
     const response = await requestPrivate("/api/v1/bot/orders", params, credentials);
     const data = response.data || {};
     const pageResults = Array.isArray(data.results) ? data.results : [];
     for (const item of pageResults) {
       const id = String(item.buOrderId || "");
-      if (!id) throw new Error("Pionex returned a running grid without buOrderId.");
+      if (!id) throw new Error(`Pionex returned a ${status} grid without buOrderId.`);
       if (!seen.has(id)) { seen.add(id); records.push(item); }
     }
     const next = data.nextPageToken ? String(data.nextPageToken) : "";
@@ -131,11 +177,20 @@ async function listRunningFuturesGrids(credentials) {
     pageToken = next;
     if (page === 99) throw new Error("Pionex pagination exceeded the safety limit.");
   }
-  if (records.length === 0) throw new Error("No running futures-grid records were returned.");
   return records;
 }
 
-async function detailToRecord(item, credentials) {
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function scaleUsdt(value, conversionPrice) {
+  if (value === null) return null;
+  if (conversionPrice === null) return value;
+  return value * conversionPrice;
+}
+
+async function detailToRecord(item, credentials, listStatus) {
   const orderId = String(item.buOrderId);
   const response = await requestPrivate("/api/v1/bot/orders/futuresGrid/order", { buOrderId: orderId, lang: "en" }, credentials);
   const order = response.data || {};
@@ -147,7 +202,7 @@ async function detailToRecord(item, credentials) {
   if (!symbol || !created) throw new Error(`Incomplete grid identity for API order ${orderId}.`);
 
   const rawGridProfit = firstNumber(data.gridProfit, data.grid_profit);
-  if (rawGridProfit === null) throw new Error(`Grid profit missing for API order ${orderId}.`);
+  if (rawGridProfit === null && listStatus === "running") throw new Error(`Grid profit missing for API order ${orderId}.`);
   const rawQuoteInvestment = firstNumber(data.quoteInvestment, data.quote_investment);
   const rawUsdtInvestment = firstNumber(data.usdtInvestment, data.usdt_investment);
   const extraMargin = firstNumber(data.extraMargin, data.extra_margin) || 0;
@@ -163,31 +218,81 @@ async function detailToRecord(item, credentials) {
     conversionPrice = ticker.close;
     conversionSymbol = ticker.symbol;
     conversionTime = ticker.time;
-    if (rawQuoteInvestment === null) throw new Error(`Coin-margined quote investment missing for API order ${orderId}.`);
-    const openQuotePrice = firstNumber(data.openQuotePrice, data.open_quote_price);
-    if (openQuotePrice === null || openQuotePrice <= 0) throw new Error(`Coin-margined open quote price missing for API order ${orderId}.`);
-    investment = rawQuoteInvestment * openQuotePrice;
-    gridProfit = rawGridProfit * conversionPrice;
+    if (rawQuoteInvestment === null && listStatus === "running") throw new Error(`Coin-margined quote investment missing for API order ${orderId}.`);
+    const openQuotePrice = firstNumber(data.openQuotePrice, data.open_quote_price, data.initQuotePrice);
+    if ((openQuotePrice === null || openQuotePrice <= 0) && listStatus === "running") throw new Error(`Coin-margined open quote price missing for API order ${orderId}.`);
+    if (rawQuoteInvestment !== null && openQuotePrice) investment = rawQuoteInvestment * openQuotePrice;
+    if (rawGridProfit !== null) gridProfit = rawGridProfit * conversionPrice;
   } else if (investment === null) {
     investment = rawUsdtInvestment === null ? null : rawUsdtInvestment + extraMargin;
   }
-  if (investment === null || !Number.isFinite(investment) || investment < 0) throw new Error(`Investment missing for API order ${orderId}.`);
+  if (listStatus === "running" && (investment === null || !Number.isFinite(investment) || investment < 0)) {
+    throw new Error(`Investment missing for API order ${orderId}.`);
+  }
 
   const leverage = firstNumber(data.leverage);
   const trend = directionLabel(data.trend);
   const product = coinMargined ? "coin_margined_contract_grid" : "contract_grid";
-  const totalProfit = firstNumber(data.totalProfit, data.total_profit);
+  const top = firstNumber(data.top);
+  const bottom = firstNumber(data.bottom);
+  const row = firstNumber(data.row);
+  const gridType = firstString(data.gridType, data.grid_type);
+  const spacing = estimateSpacing(top, bottom, row, gridType);
+  const complete = rawGridProfit !== null && investment !== null && Number.isFinite(investment);
   return {
     Key: `${symbol}|${created}`,
     ApiOrderId: orderId,
     Symbol: symbol,
     Created: created,
+    Closed: formatTaipeiTime(data.closeTime || order.closeTime || item.closeTime),
     Product: product,
+    ListStatus: listStatus,
+    BotStatus: firstString(data.status, order.status, item.status),
+    ReasonBy: firstString(data.reasonBy, data.reason_by),
     Leverage: leverage === null ? trend : `${leverage}x ${trend}`.trim(),
+    LeverageValue: leverage,
+    Trend: trend,
+    GridType: gridType,
+    Top: top,
+    Bottom: bottom,
+    Row: row,
+    PerVolume: firstNumber(data.perVolume, data.per_volume),
+    OpenPrice: firstNumber(data.openPrice, data.open_price),
+    Position: firstNumber(data.position),
+    PositionOpenPrice: firstNumber(data.positionOpenPrice, data.position_open_price),
+    BaseAmount: firstNumber(data.baseAmount, data.base_amount, data.closedBaseAmount),
+    QuoteAmount: firstNumber(data.quoteAmount, data.quote_amount),
     Investment: investment,
     GridProfit: gridProfit,
-    TotalProfit: totalProfit,
-    Status: "running",
+    TotalProfit: scaleUsdt(firstNumber(data.totalProfit, data.total_profit), coinMargined ? conversionPrice : null),
+    GridProfit24h: scaleUsdt(firstNumber(data.gridProfit24h, data.grid_profit_24h, data.profit24h), coinMargined ? conversionPrice : null),
+    Fee: scaleUsdt(firstNumber(data.fee, data.feeQuote, data.quoteFee), coinMargined ? conversionPrice : null),
+    FeeBase: firstNumber(data.feeBase, data.baseFee),
+    FeeQuote: firstNumber(data.feeQuote, data.quoteFee, data.fee),
+    FundingFee: scaleUsdt(firstNumber(data.fundingFeePayment, data.fundingFee, data.funding_fee), coinMargined ? conversionPrice : null),
+    ProfitReinvest: scaleUsdt(firstNumber(data.profitReduce, data.profit_reduce), coinMargined ? conversionPrice : null),
+    ProfitWithdrawn: scaleUsdt(firstNumber(data.profitWithdrawn, data.profit_withdrawn, data.profitExited), coinMargined ? conversionPrice : null),
+    ExtraMargin: extraMargin,
+    MarginBalance: firstNumber(data.marginBalance, data.margin_balance),
+    InitMargin: firstNumber(data.initMargin, data.initialMargin, data.usdtInvestment),
+    RiskStatus: firstString(data.riskStatus, data.risk_status),
+    MarginStatus: firstString(data.marginStatus, data.margin_status),
+    EstimateLiqUp: firstNumber(data.estimateLiquidationPriceUp, data.estimate_liquidation_price_up),
+    EstimateLiqDown: firstNumber(data.estimateLiquidationPriceDown, data.estimate_liquidation_price_down),
+    LiquidationPrice: firstNumber(data.liquidationPrice, data.liquidation_price),
+    LiquidationTriggered: Boolean(data.liquidationTriggered),
+    MatchedGrids: firstNumber(data.matched, data.filledGrid, data.gridFilled),
+    OrderCount: firstNumber(data.orderCount, data.order_count),
+    Volume: firstNumber(data.volume, data.quoteVolume, data.tradeVolume),
+    LossStopType: firstString(data.lossStopType),
+    LossStop: firstString(data.lossStop),
+    ProfitStopType: firstString(data.profitStopType),
+    ProfitStop: firstString(data.profitStop),
+    PausePrice: firstNumber(data.pausePrice, data.pause_price),
+    MovingIndicatorType: firstString(data.movingIndicatorType),
+    MovingTop: firstNumber(data.movingTop),
+    MovingBottom: firstNumber(data.movingBottom),
+    Complete: complete,
     ProfitCurrency: "USDT",
     RawGridProfit: rawGridProfit,
     RawGridProfitCurrency: coinMargined ? String(quote) : "USDT",
@@ -196,28 +301,49 @@ async function detailToRecord(item, credentials) {
     ConversionPrice: conversionPrice,
     ConversionSymbol: conversionSymbol,
     ConversionTime: conversionTime,
+    EstimatedStepPct: spacing.EstimatedStepPct,
+    EstimatedStepPrice: spacing.EstimatedStepPrice,
+    EstimatedRangePct: spacing.EstimatedRangePct,
+    EstimateNote: "估算",
+    RawJson: sanitizeRaw({ list: item, order }),
     Source: SOURCE,
   };
 }
 
 async function collect() {
   const credentialPath = option("--credentials", process.env.PIONEX_CREDENTIAL_PATH || DEFAULT_CREDENTIAL_PATH);
+  const includeFinished = hasFlag("--include-finished");
   const credentials = readCredentials(credentialPath);
-  const listed = await listRunningFuturesGrids(credentials);
+  const running = await listFuturesGrids(credentials, "running");
+  if (!includeFinished && running.length === 0) throw new Error("No running futures-grid records were returned.");
+  const listed = running.map((item) => ({ item, listStatus: "running" }));
+  if (includeFinished) {
+    const finished = await listFuturesGrids(credentials, "finished");
+    const runningIds = new Set(running.map((item) => String(item.buOrderId)));
+    for (const item of finished) {
+      if (!runningIds.has(String(item.buOrderId))) listed.push({ item, listStatus: "finished" });
+    }
+  }
   const records = [];
   for (let index = 0; index < listed.length; index += 1) {
-    records.push(await detailToRecord(listed[index], credentials));
-    if (index + 1 < listed.length) await new Promise((resolve) => setTimeout(resolve, 120));
+    records.push(await detailToRecord(listed[index].item, credentials, listed[index].listStatus));
+    if (index + 1 < listed.length) await sleep(120);
   }
   const keys = new Set(records.map((record) => record.Key));
   if (keys.size !== records.length) throw new Error("Duplicate normalized grid key detected; no snapshot produced.");
+  const ids = new Set(records.map((record) => record.ApiOrderId));
+  if (ids.size !== records.length) throw new Error("Duplicate API order id detected; no snapshot produced.");
+  if (records.length !== listed.length) throw new Error("API capture is incomplete: detail count does not match list count.");
   records.sort((a, b) => b.Created.localeCompare(a.Created));
+  const runningRecords = records.filter((record) => record.ListStatus === "running");
   return {
     ok: true,
     CapturedAt: new Date().toISOString(),
     Source: SOURCE,
-    ExpectedCardCount: records.length,
-    ContractCount: records.length,
+    IncludeFinished: includeFinished,
+    ExpectedCardCount: runningRecords.length,
+    ContractCount: runningRecords.length,
+    FinishedCount: records.length - runningRecords.length,
     SavingsCount: 0,
     Records: records,
   };
