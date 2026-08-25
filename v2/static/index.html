@@ -18,6 +18,7 @@
     .stat { background:#fff; border:1px solid var(--line); border-radius:8px; padding:12px 14px; }
     .stat span { display:block; color:var(--muted); font-size:12px; }
     .stat strong { font-size:22px; }
+    .stat .twd, td .twd { display:block; color:var(--muted); font-size:12px; font-weight:500; }
     .card { background:#fff; border:1px solid var(--line); border-radius:8px; padding:14px; margin:12px 0; overflow:auto; }
     table.board { width:100%; min-width:1100px; border-collapse:separate; border-spacing:0; table-layout:fixed; font-size:13px; }
     table.board th, table.board td { border-bottom:1px solid var(--line); padding:10px 12px; vertical-align:middle; overflow:hidden; text-overflow:ellipsis; }
@@ -78,6 +79,17 @@ let historyId = new URLSearchParams(location.search).get("grid") || "";
 
 const n = (v, d=2) => v == null || v === "" || Number.isNaN(Number(v)) ? "—" : Number(v).toLocaleString("en-US", { minimumFractionDigits:d, maximumFractionDigits:d });
 const usdt = (m) => m && m.usdt != null ? n(m.usdt, 2) : "—";
+const twd = (m) => m && m.twd != null ? "約 " + n(m.twd, 0) + " TWD" : "";
+const both = (m) => {
+  if (!m || m.usdt == null) return "—";
+  const extra = twd(m);
+  return n(m.usdt, 2) + " USDT" + (extra ? `<span class="twd">${extra}</span>` : "");
+};
+const bothSigned = (m) => {
+  if (!m || m.usdt == null) return "—";
+  const extra = twd(m);
+  return signed(m.usdt) + " USDT" + (extra ? `<span class="twd">${extra}</span>` : "");
+};
 const cls = (v) => { const x = Number(v); if (!Number.isFinite(x) || x === 0) return ""; return x > 0 ? "up" : "down"; };
 
 document.querySelectorAll("nav button").forEach((btn) => {
@@ -119,13 +131,13 @@ function positionTable(rows, profitKey) {
     const opened = r.opened_at || "";
     return `<tr class="clickable" data-id="${r.bu_order_id || ""}">
       <td class="t c-date">${opened || "—"}</td>
-      <td class="n c-size">${usdt(r.investment || r.size)}</td>
+      <td class="n c-size">${usdt(r.investment || r.size)}${twd(r.investment || r.size) ? `<span class="twd">${twd(r.investment || r.size)}</span>` : ""}</td>
       <td class="t c-sym"><span class="sym">${r.symbol || "—"}</span><span class="lev">${r.leverage || ""}</span></td>
       <td class="n">${n(r.mark_price, 4)}</td>
       <td class="n">${n(r.liq_price, 4)}</td>
       <td class="n ${cls(r.liq_distance_pct)}">${r.liq_distance_pct == null ? "—" : n(r.liq_distance_pct, 2) + "%"}</td>
-      <td class="n">${usdt(r.grid_profit)}</td>
-      <td class="n ${cls(dayV)}">${signed(dayV)}</td>
+      <td class="n">${usdt(r.grid_profit)}${twd(r.grid_profit) ? `<span class="twd">${twd(r.grid_profit)}</span>` : ""}</td>
+      <td class="n ${cls(dayV)}">${signed(dayV)}${twd(day) ? `<span class="twd">${twd(day)}</span>` : ""}</td>
       <td class="n ${cls(pct)}">${pct == null ? "—" : signed(pct) + "%"}</td>
     </tr>`;
   }).join("")}</tbody></table>`;
@@ -136,15 +148,15 @@ async function renderBoard() {
   const total = board.total_profit_24h && board.total_profit_24h.usdt;
   app.innerHTML = `
     <div class="stats">
-      <div class="stat"><span>錢包總市值</span><strong>${board.wallet_total && board.wallet_total.usdt != null ? n(board.wallet_total.usdt, 2) + " USDT" : "—"}</strong></div>
+      <div class="stat"><span>錢包總市值</span><strong>${board.wallet_total && board.wallet_total.usdt != null ? both(board.wallet_total) : "—"}</strong></div>
       <div class="stat"><span>統計時間</span><strong>${board.as_of ? board.as_of.replace("T"," ").slice(0,19) : "尚無"}</strong></div>
-      <div class="stat"><span>過去 24 小時總利潤</span><strong class="${cls(total)}">${signed(total)} USDT</strong></div>
-      <div class="stat"><span>目前倉位加總</span><strong>${usdt(board.total_investment)} USDT</strong></div>
-      <div class="stat"><span>網格利潤加總</span><strong>${usdt(board.total_grid_profit)} USDT</strong></div>
+      <div class="stat"><span>過去 24 小時總利潤</span><strong class="${cls(total)}">${bothSigned(board.total_profit_24h)}</strong></div>
+      <div class="stat"><span>目前倉位加總</span><strong>${both(board.total_investment)}</strong></div>
+      <div class="stat"><span>網格利潤加總</span><strong>${both(board.total_grid_profit)}</strong></div>
       <div class="stat"><span>倉位數</span><strong>${board.position_count || 0}</strong></div>
     </div>
     <div class="card">
-      <p class="muted">倉位大小是實際投入的 USDT，不是持倉名義價值。單日利潤是過去 24 小時網格利潤；單天 % = 單日利潤 ÷ 投資額。強平距離是現價到強平價的百分比。</p>
+      <p class="muted">倉位大小是實際投入的 USDT。台幣用當日 USD/TWD ${board.fx && board.fx.usd_twd ? n(board.fx.usd_twd, 3) : "—"}（USDT 視為 1 美元）。單日利潤是過去 24 小時網格利潤；單天 % = 單日利潤 ÷ 投資額。</p>
       ${positionTable(board.rows || [], "24h")}
     </div>`;
   bindHistoryClicks();
@@ -207,15 +219,15 @@ async function renderHistory() {
       <p><label>選擇網格 <select id="gridPick">${options}</select></label></p>
       <div class="stats">
         <div class="stat"><span>標的</span><strong>${pos.symbol || "—"}</strong></div>
-        <div class="stat"><span>倉位大小</span><strong>${usdt(b.investment || b.size)}</strong></div>
-        <div class="stat"><span>網格利潤</span><strong>${usdt(b.grid_profit)}</strong></div>
-        <div class="stat"><span>過去 24 小時</span><strong class="${cls(b.profit_24h && b.profit_24h.usdt)}">${signed(b.profit_24h && b.profit_24h.usdt)}</strong></div>
+        <div class="stat"><span>倉位大小</span><strong>${both(b.investment || b.size)}</strong></div>
+        <div class="stat"><span>網格利潤</span><strong>${both(b.grid_profit)}</strong></div>
+        <div class="stat"><span>過去 24 小時</span><strong class="${cls(b.profit_24h && b.profit_24h.usdt)}">${bothSigned(b.profit_24h)}</strong></div>
         <div class="stat"><span>現價 / Mark</span><strong>${n(b.mark_price, 4)}</strong></div>
         <div class="stat"><span>強平價</span><strong>${n(b.liq_price, 4)}</strong></div>
         <div class="stat"><span>強平距離</span><strong>${b.liq_distance_pct == null ? "—" : n(b.liq_distance_pct, 2) + "%"}</strong></div>
-        <div class="stat"><span>目前總損益</span><strong class="${cls(b.total_pnl && b.total_pnl.usdt)}">${signed(b.total_pnl && b.total_pnl.usdt)} USDT</strong></div>
-        <div class="stat"><span>趨勢盈虧</span><strong class="${cls(b.trend_profit && b.trend_profit.usdt)}">${signed(b.trend_profit && b.trend_profit.usdt)}</strong></div>
-        <div class="stat"><span>資金費</span><strong class="${cls(b.funding && b.funding.usdt)}">${signed(b.funding && b.funding.usdt)}</strong></div>
+        <div class="stat"><span>目前總損益</span><strong class="${cls(b.total_pnl && b.total_pnl.usdt)}">${bothSigned(b.total_pnl)}</strong></div>
+        <div class="stat"><span>趨勢盈虧</span><strong class="${cls(b.trend_profit && b.trend_profit.usdt)}">${bothSigned(b.trend_profit)}</strong></div>
+        <div class="stat"><span>資金費</span><strong class="${cls(b.funding && b.funding.usdt)}">${bothSigned(b.funding)}</strong></div>
         <div class="stat"><span>網格年化</span><strong class="${cls(b.grid_annualized_pct)}">${b.grid_annualized_pct == null ? "—" : signed(b.grid_annualized_pct) + "%"}</strong></div>
         <div class="stat"><span>總年化報酬</span><strong class="${cls(b.annualized_pct)}">${b.annualized_pct == null ? "—" : signed(b.annualized_pct) + "%"}</strong></div>
       </div>

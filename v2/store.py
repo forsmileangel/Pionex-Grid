@@ -10,6 +10,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from .fx import attach_twd, attach_twd_tree, usd_twd
 from .liq import normalize_liq
 
 SCALE = 100_000_000
@@ -749,15 +750,19 @@ def board_payload(db_path: Path | None = None) -> dict:
             if snap.get("grid_profit_i"):
                 total_grid_profit += snap["grid_profit_i"]
             rows.append(row)
+        fx = usd_twd()
+        rate = fx.get("usd_twd")
+        rows = [attach_twd_tree(row, rate) for row in rows]
         return {
             "as_of": last["captured_at"],
             "capture_date": last["capture_date"],
             "window": "past_24h",
             "position_count": len(rows),
-            "total_profit_24h": money(total_24h),
-            "total_investment": money(total_investment),
-            "total_grid_profit": money(total_grid_profit),
-            "wallet_total": {"usdt": last["wallet_total_usdt"]} if last["wallet_total_usdt"] else None,
+            "total_profit_24h": attach_twd(money(total_24h), rate),
+            "total_investment": attach_twd(money(total_investment), rate),
+            "total_grid_profit": attach_twd(money(total_grid_profit), rate),
+            "wallet_total": attach_twd({"usdt": last["wallet_total_usdt"]} if last["wallet_total_usdt"] else None, rate),
+            "fx": {"usd_twd": rate, "as_of": fx.get("as_of"), "source": fx.get("source")},
             "rows": rows,
         }
     finally:
@@ -790,7 +795,14 @@ def days_payload(db_path: Path | None = None) -> dict:
             item["investment"] = money(summary["investment_i"])
             item["rows"] = rows
             days.append(item)
-        return {"days": days}
+        fx = usd_twd()
+        rate = fx.get("usd_twd")
+        for item in days:
+            item["daily_profit"] = attach_twd(item["daily_profit"], rate)
+            item["cumulative"] = attach_twd(item["cumulative"], rate)
+            item["investment"] = attach_twd(item["investment"], rate)
+            item["rows"] = [attach_twd_tree(row, rate) for row in item["rows"]]
+        return {"days": days, "fx": {"usd_twd": rate, "as_of": fx.get("as_of"), "source": fx.get("source")}}
     finally:
         con.close()
 
@@ -858,6 +870,9 @@ def grid_history_payload(bu_order_id: str, db_path: Path | None = None) -> dict:
         board = None
         if latest:
             board = _board_row(latest, latest.get("grid_profit_24h_i"), None, latest.get("investment_i"))
+            fx = usd_twd()
+            board = attach_twd_tree(board, fx.get("usd_twd"))
+            board["fx"] = {"usd_twd": fx.get("usd_twd"), "as_of": fx.get("as_of"), "source": fx.get("source")}
         snapshot_fields = []
         if latest:
             for key, value in latest.items():
