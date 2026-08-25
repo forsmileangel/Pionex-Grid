@@ -513,6 +513,15 @@ def _effective_liq(trend: str | None, down, up, liq) -> float | None:
     return None
 
 
+def _coin_margined_display_liq(product: str | None, mark: float | None, liq: float | None) -> tuple[float | None, bool]:
+    """USDT.PERP/ETH style grids report liq in inverse units (e.g. 0.000769 = 1300.34 USDT)."""
+    if product != "coin_margined_contract_grid" or liq is None or liq <= 0:
+        return liq, False
+    if mark is not None and mark > 1 and 0 < liq < 1:
+        return 1.0 / liq, True
+    return liq, False
+
+
 def _pct(value: float | None) -> str | None:
     if value is None:
         return None
@@ -526,10 +535,14 @@ def _board_row(snap: dict, profit_24h_i: int | None, daily_i: int | None, size_i
     liq = _effective_liq(snap.get("trend"), from_fixed(snap.get("estimate_liq_down_i")), from_fixed(snap.get("estimate_liq_up_i")), from_fixed(snap.get("liquidation_price_i")))
     if liq is None:
         liq = _num(from_fixed(snap.get("liquidation_price_i")))
+    liq, inverse = _coin_margined_display_liq(snap.get("product"), mark, liq)
     size_i = snap.get("investment_i") if snap.get("investment_i") is not None else size_i
     distance = None
     if mark and mark > 0 and liq and liq > 0:
-        if (snap.get("trend") or "") == "short":
+        side = snap.get("trend") or ""
+        if inverse:
+            side = "long" if side == "short" else "short"
+        if side == "short":
             distance = (liq - mark) / mark * 100
         else:
             distance = (mark - liq) / mark * 100

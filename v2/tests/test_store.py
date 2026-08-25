@@ -171,6 +171,24 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(board["rows"][0]["size"]["usdt"], "3500")
         self.assertEqual(board["rows"][0]["investment"]["usdt"], "3500")
 
+    def test_coin_margined_liq_is_inverted_to_usdt(self):
+        ingest(snap("2026-08-26", [rec(
+            Product="coin_margined_contract_grid",
+            Symbol="ETH",
+            Trend="short",
+            Leverage="4x short",
+            Investment=5099.78,
+            EstimateLiqUp=0.0007690328458623,
+            EstimateLiqDown=0,
+            LiquidationPrice=0,
+            MarkPrice=2519.86,
+            GridProfit24h=1,
+        )]), self.db)
+        from v2.store import board_payload
+        row = board_payload(self.db)["rows"][0]
+        self.assertAlmostEqual(float(row["liq_price"]), 1300.34, delta=0.02)
+        self.assertAlmostEqual(float(row["liq_distance_pct"]), 48.4, delta=0.2)
+
     def test_summary_latest(self):
         ingest(snap("2026-08-26", [rec()]), self.db)
         payload = summary_latest(self.db)

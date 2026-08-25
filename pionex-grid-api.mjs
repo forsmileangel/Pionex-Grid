@@ -143,9 +143,19 @@ function effectiveLiq(trend, down, up, liq) {
   return null;
 }
 
-function liqDistancePct(trend, mark, liq) {
+function isInverseCoinMargined(base, quote) {
+  return String(quote || "").toUpperCase() !== "USDT" && String(base || "").replace(/\.PERP$/i, "").toUpperCase() === "USDT";
+}
+
+function contractPriceToUsdt(price, inverse) {
+  if (!inverse || price === null || price <= 0) return price;
+  return 1 / price;
+}
+
+function liqDistancePct(trend, mark, liq, inverse) {
   if (mark === null || mark <= 0 || liq === null || liq <= 0) return null;
-  if (trend === "short") return ((liq - mark) / mark) * 100;
+  const side = inverse ? (trend === "short" ? "long" : "short") : trend;
+  if (side === "short") return ((liq - mark) / mark) * 100;
   return ((mark - liq) / mark) * 100;
 }
 
@@ -273,11 +283,13 @@ async function detailToRecord(item, credentials, listStatus, perpTickers) {
   const gridType = firstString(data.gridType, data.grid_type);
   const spacing = estimateSpacing(top, bottom, row, gridType);
   const complete = rawGridProfit !== null && investment !== null && Number.isFinite(investment);
+  const inverse = isInverseCoinMargined(base, quote);
   const mark = markFromTickers(symbol, perpTickers);
   const liqDown = firstNumber(data.estimateLiquidationPriceDown, data.estimate_liquidation_price_down);
   const liqUp = firstNumber(data.estimateLiquidationPriceUp, data.estimate_liquidation_price_up);
   const liqActual = firstNumber(data.liquidationPrice, data.liquidation_price);
-  const liqPrice = effectiveLiq(trend, liqDown, liqUp, liqActual);
+  const liqContract = effectiveLiq(trend, liqDown, liqUp, liqActual);
+  const liqPrice = contractPriceToUsdt(liqContract, inverse);
   const position = firstNumber(data.position);
   const notional = mark.price !== null && position !== null ? Math.abs(position) * mark.price : investment;
   const profit24h = scaleUsdt(firstNumber(data.gridProfit24h, data.grid_profit_24h, data.profit24h), coinMargined ? conversionPrice : null);
@@ -305,7 +317,8 @@ async function detailToRecord(item, credentials, listStatus, perpTickers) {
     MarkTime: mark.time,
     Notional: notional,
     LiqPrice: liqPrice,
-    LiqDistancePct: liqDistancePct(trend, mark.price, liqPrice),
+    LiqDistancePct: liqDistancePct(trend, mark.price, liqPrice, inverse),
+    InverseCoinMargined: inverse,
     Position: position,
     PositionOpenPrice: firstNumber(data.positionOpenPrice, data.position_open_price),
     BaseAmount: firstNumber(data.baseAmount, data.base_amount, data.closedBaseAmount),
