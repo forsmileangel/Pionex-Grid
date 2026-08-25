@@ -523,14 +523,10 @@ def _board_row(snap: dict, profit_24h_i: int | None, daily_i: int | None, size_i
     mark = _num(snap.get("mark_price_s"))
     if mark is None and snap.get("mark_price_i") is not None:
         mark = float(Decimal(snap["mark_price_i"]) / Decimal(SCALE))
-    position = _num(snap.get("position_s"))
     liq = _effective_liq(snap.get("trend"), from_fixed(snap.get("estimate_liq_down_i")), from_fixed(snap.get("estimate_liq_up_i")), from_fixed(snap.get("liquidation_price_i")))
     if liq is None:
         liq = _num(from_fixed(snap.get("liquidation_price_i")))
-    notional_i = snap.get("notional_i")
-    if notional_i is None and mark is not None and position is not None:
-        notional_i = to_fixed(abs(position) * mark)
-    size_i = notional_i or size_i or snap.get("investment_i")
+    size_i = snap.get("investment_i") if snap.get("investment_i") is not None else size_i
     distance = None
     if mark and mark > 0 and liq and liq > 0:
         if (snap.get("trend") or "") == "short":
@@ -667,7 +663,7 @@ def board_payload(db_path: Path | None = None) -> dict:
                 snap,
                 snap.get("grid_profit_24h_i"),
                 profit["daily_profit_i"] if profit else None,
-                snap.get("notional_i") or snap.get("investment_i"),
+                snap.get("investment_i"),
             )
             if snap.get("grid_profit_24h_i"):
                 total_24h += snap["grid_profit_24h_i"]

@@ -162,12 +162,14 @@ class StoreTests(unittest.TestCase):
             store.BACKUP_DIR = original_backup
 
     def test_board_uses_24h_profit(self):
-        ingest(snap("2026-08-26", [rec(GridProfit=10, GridProfit24h=1.5, Investment=100, Position=2, MarkPrice=50, LiqPrice=40, Trend="long")]), self.db)
+        ingest(snap("2026-08-26", [rec(GridProfit=10, GridProfit24h=1.5, Investment=3500, Position=15.2, MarkPrice=457, LiqPrice=286, Trend="long")]), self.db)
         from v2.store import board_payload
         board = board_payload(self.db)
         self.assertEqual(board["position_count"], 1)
         self.assertEqual(board["total_profit_24h"]["usdt"], "1.5")
         self.assertEqual(board["rows"][0]["profit_24h"]["usdt"], "1.5")
+        self.assertEqual(board["rows"][0]["size"]["usdt"], "3500")
+        self.assertEqual(board["rows"][0]["investment"]["usdt"], "3500")
 
     def test_summary_latest(self):
         ingest(snap("2026-08-26", [rec()]), self.db)

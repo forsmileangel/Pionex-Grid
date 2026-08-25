@@ -19,10 +19,25 @@
     .stat span { display:block; color:var(--muted); font-size:12px; }
     .stat strong { font-size:22px; }
     .card { background:#fff; border:1px solid var(--line); border-radius:8px; padding:14px; margin:12px 0; overflow:auto; }
-    table { width:100%; border-collapse:collapse; font-size:13px; }
-    th,td { border-bottom:1px solid var(--line); padding:8px 6px; text-align:right; white-space:nowrap; }
-    th:nth-child(1), td:nth-child(1), th:nth-child(3), td:nth-child(3) { text-align:left; }
-    th { background:var(--soft); position:sticky; top:0; }
+    table.board { width:100%; min-width:980px; border-collapse:collapse; table-layout:fixed; font-size:13px; }
+    table.board th, table.board td { border-bottom:1px solid var(--line); padding:8px 8px; vertical-align:middle; overflow:hidden; text-overflow:ellipsis; }
+    table.board th { background:var(--soft); position:sticky; top:0; z-index:1; font-weight:600; }
+    table.board .n { text-align:right; font-variant-numeric:tabular-nums; font-feature-settings:"tnum"; white-space:nowrap; }
+    table.board .t { text-align:left; white-space:nowrap; }
+    table.board col.c-date { width:11%; }
+    table.board col.c-size { width:12%; }
+    table.board col.c-sym { width:13%; }
+    table.board col.c-mark { width:12%; }
+    table.board col.c-liq { width:11%; }
+    table.board col.c-dist { width:9%; }
+    table.board col.c-grid { width:12%; }
+    table.board col.c-day { width:12%; }
+    table.board col.c-pct { width:8%; }
+    .sym { display:block; font-weight:600; }
+    .lev { display:block; color:var(--muted); font-size:12px; }
+    table.plain { width:100%; border-collapse:collapse; table-layout:fixed; font-size:13px; }
+    table.plain th, table.plain td { border-bottom:1px solid var(--line); padding:8px 8px; text-align:right; font-variant-numeric:tabular-nums; }
+    table.plain th:first-child, table.plain td:first-child, table.plain th:nth-child(2), table.plain td:nth-child(2) { text-align:left; }
     tr.clickable { cursor:pointer; }
     tr.clickable:hover { background:#eef6f7; }
     .up { color:var(--up); }
@@ -82,24 +97,28 @@ function signed(v, digits=2) {
 
 function positionTable(rows, profitKey) {
   if (!rows.length) return "<p class='muted'>沒有倉位列</p>";
-  return `<table><thead><tr>
-    <th>日期</th><th>倉位大小 (USDT)</th><th>標的</th><th>現價 / Mark Price</th>
-    <th>強平價</th><th>強平距離</th><th>網格利潤 (USDT)</th><th>單日利潤 (USDT)</th><th>單天 %</th>
+  return `<table class="board"><colgroup>
+    <col class="c-date"><col class="c-size"><col class="c-sym"><col class="c-mark">
+    <col class="c-liq"><col class="c-dist"><col class="c-grid"><col class="c-day"><col class="c-pct">
+  </colgroup><thead><tr>
+    <th class="t">日期</th><th class="n">倉位大小 (USDT)</th><th class="t">標的</th><th class="n">現價 / Mark</th>
+    <th class="n">強平價</th><th class="n">強平距離</th><th class="n">網格利潤 (USDT)</th><th class="n">單日利潤 (USDT)</th><th class="n">單天 %</th>
   </tr></thead><tbody>${rows.map((r) => {
     const day = profitKey === "daily" ? r.daily_profit : r.profit_24h;
     const dayV = day && day.usdt;
-    const sizeV = r.size && r.size.usdt != null ? Number(r.size.usdt) : null;
+    const sizeV = r.investment && r.investment.usdt != null ? Number(r.investment.usdt) : (r.size && r.size.usdt != null ? Number(r.size.usdt) : null);
     const pct = dayV != null && sizeV ? Number(dayV) / sizeV * 100 : null;
+    const opened = (r.opened_at || "").slice(0, 10);
     return `<tr class="clickable" data-id="${r.bu_order_id || ""}">
-      <td>${r.opened_at || "—"}</td>
-      <td>${usdt(r.size)}</td>
-      <td>${r.symbol || "—"}${r.leverage ? " · " + r.leverage : ""}</td>
-      <td>${n(r.mark_price, 4)}</td>
-      <td>${n(r.liq_price, 4)}</td>
-      <td class="${cls(r.liq_distance_pct)}">${r.liq_distance_pct == null ? "—" : n(r.liq_distance_pct, 2) + "%"}</td>
-      <td>${usdt(r.grid_profit)}</td>
-      <td class="${cls(dayV)}">${signed(dayV)}</td>
-      <td class="${cls(pct)}">${pct == null ? "—" : signed(pct) + "%"}</td>
+      <td class="t">${opened || "—"}</td>
+      <td class="n">${usdt(r.investment || r.size)}</td>
+      <td class="t"><span class="sym">${r.symbol || "—"}</span><span class="lev">${r.leverage || ""}</span></td>
+      <td class="n">${n(r.mark_price, 4)}</td>
+      <td class="n">${n(r.liq_price, 4)}</td>
+      <td class="n ${cls(r.liq_distance_pct)}">${r.liq_distance_pct == null ? "—" : n(r.liq_distance_pct, 2) + "%"}</td>
+      <td class="n">${usdt(r.grid_profit)}</td>
+      <td class="n ${cls(dayV)}">${signed(dayV)}</td>
+      <td class="n ${cls(pct)}">${pct == null ? "—" : signed(pct) + "%"}</td>
     </tr>`;
   }).join("")}</tbody></table>`;
 }
@@ -114,7 +133,7 @@ async function renderBoard() {
       <div class="stat"><span>倉位數</span><strong>${board.position_count || 0}</strong></div>
     </div>
     <div class="card">
-      <p class="muted">單日利潤用 API 的過去 24 小時網格利潤（例如現在 10:32，就是昨天 10:32 到現在）。單天 % = 24 小時利潤 ÷ 倉位大小。強平距離是現價到強平價的百分比；做多為正代表現價在強平價上方。</p>
+      <p class="muted">倉位大小是實際投入的 USDT，不是持倉名義價值。單日利潤是過去 24 小時網格利潤；單天 % = 單日利潤 ÷ 投資額。強平距離是現價到強平價的百分比。</p>
       ${positionTable(board.rows || [], "24h")}
     </div>`;
   bindHistoryClicks();
@@ -150,7 +169,7 @@ async function renderHistory() {
   app.innerHTML = `<div class="card">
     <p><label>選擇網格 <select id="gridPick">${options}</select></label></p>
     <p class="muted">${(data.position && data.position.symbol) || historyId}</p>
-    <table><thead><tr><th>日期</th><th>狀態</th><th>網格利潤</th><th>當日差額</th></tr></thead>
+    <table class="plain"><thead><tr><th>日期</th><th>狀態</th><th>網格利潤</th><th>當日差額</th></tr></thead>
     <tbody>${(data.profits||[]).map((p)=>`<tr>
       <td>${p.capture_date}</td><td>${p.status}</td>
       <td>${usdt(p.grid_profit)}</td>
