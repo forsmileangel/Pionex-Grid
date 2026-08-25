@@ -196,6 +196,27 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(payload["capture_date"], "2026-08-26")
         self.assertEqual(payload["daily_profit_usdt"], "0")
 
+    def test_amdx_style_total_pnl(self):
+        ingest(snap("2026-08-25", [rec(
+            Symbol="AMDX/USDT",
+            Created="2026-01-21 00:38:05",
+            Leverage="6x long",
+            Trend="long",
+            Investment=3500,
+            GridProfit=1410.84272059,
+            FundingFee=-152.59678158,
+            Position=15.3,
+            PositionOpenPrice=468.3067180758142,
+            MarkPrice=456.97,
+        )]), self.db)
+        from v2.store import board_payload
+        row = board_payload(self.db)["rows"][0]
+        self.assertAlmostEqual(float(row["trend_profit"]["usdt"]), -508.7, delta=8)
+        self.assertAlmostEqual(float(row["total_pnl"]["usdt"]), 902, delta=8)
+        self.assertAlmostEqual(float(row["funding"]["usdt"]), -152.6, delta=0.2)
+        self.assertGreater(float(row["grid_annualized_pct"]), 60)
+        self.assertLess(float(row["annualized_pct"]), float(row["grid_annualized_pct"]))
+
     def test_fixed_rounding(self):
         self.assertEqual(to_fixed("0.01"), 1_000_000)
         self.assertEqual(to_fixed(1.005), 100500000)

@@ -160,6 +160,11 @@ def _migrate(con: sqlite3.Connection) -> None:
     ):
         if name not in cols:
             con.execute(f"ALTER TABLE grid_snapshots ADD COLUMN {name} {decl}")
+    run_cols = {row[1] for row in con.execute("PRAGMA table_info(capture_runs)")}
+    if "wallet_total_usdt" not in run_cols:
+        con.execute("ALTER TABLE capture_runs ADD COLUMN wallet_total_usdt TEXT")
+    if "wallet_json" not in run_cols:
+        con.execute("ALTER TABLE capture_runs ADD COLUMN wallet_json TEXT")
     latest = con.execute("SELECT version FROM schema_meta ORDER BY version DESC LIMIT 1").fetchone()
     if latest is None or int(latest["version"]) < SCHEMA_VERSION:
         con.execute("INSERT INTO schema_meta(version, applied_at) VALUES (?, ?)", (SCHEMA_VERSION, datetime.now(TAIPEI).isoformat()))
@@ -329,6 +334,12 @@ def ingest(snapshot: dict, db_path: Path | None = None, replace_date: bool = Fal
             ),
         )
         run_id = cur.lastrowid
+        wallet = snapshot.get("Wallet") or {}
+        if wallet:
+            con.execute(
+                "UPDATE capture_runs SET wallet_total_usdt=?, wallet_json=? WHERE id=?",
+                (wallet.get("totalInUsdt"), json.dumps(wallet, ensure_ascii=False), run_id),
+            )
         is_baseline = last is None
         profit_rows = []
         running_ids = set()
@@ -521,6 +532,68 @@ def _pct(value: float | None) -> str | None:
     return f"{value:.2f}"
 
 
+def _float_money(value: int | None) -> float:
+    text = from_fixed(value)
+    return float(text) if text is not None else 0.0
+
+
+def _leverage_value(snap: dict) -> float:
+    text = str(snap.get("leverage") or "")
+    digits = []
+    buf = ""
+    for ch in text:
+        if ch.isdigit() or ch == ".":
+            buf += ch
+        elif buf:
+            break
+    try:
+        value = float(buf) if buf else 1.0
+    except ValueError:
+        value = 1.0
+    return value if value > 0 else 1.0
+
+
+def _pnl_metrics(snap: dict, mark: float | None, as_of: datetime | None = None) -> dict:
+    """Match Pionex grid UI: total profit = trend + grid; funding shown separately."""
+    investment = _float_money(snap.get("investment_i"))
+    grid = _float_money(snap.get("grid_profit_i"))
+    funding = _float_money(snap.get("funding_fee_i"))
+    openp = _num(snap.get("position_open_price_s")) or _num(snap.get("open_price_s"))
+    coin = snap.get("product") == "coin_margined_contract_grid"
+    side = -1.0 if (snap.get("trend") or "") == "short" else 1.0
+    if coin and openp and mark and 0 < openp < 1 < mark:
+        openp = 1.0 / openp
+        side = -side
+    trend = None
+    if investment > 0 and mark and openp and openp > 0:
+        lev = _leverage_value(snap)
+        trend = investment * lev * (mark - openp) / openp * side
+    total = None if trend is None else trend + grid
+    created = snap.get("position_created") or snap.get("created_at")
+    grid_apr = None
+    total_apr = None
+    days_open = None
+    if investment > 0 and created:
+        try:
+            created_dt = datetime.strptime(created[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=TAIPEI)
+            end = as_of or datetime.now(TAIPEI)
+            days_open = max((end - created_dt).total_seconds() / 86400, 1 / 24)
+            grid_apr = grid / investment * 365 / days_open * 100
+            if total is not None:
+                total_apr = total / investment * 365 / days_open * 100
+        except ValueError:
+            pass
+    return {
+        "trend_profit": money(to_fixed(trend) if trend is not None else None),
+        "funding": money(to_fixed(funding)),
+        "grid_profit": money(snap.get("grid_profit_i")),
+        "total_pnl": money(to_fixed(total) if total is not None else None),
+        "grid_annualized_pct": _pct(grid_apr),
+        "annualized_pct": _pct(total_apr),
+        "days_open": days_open,
+    }
+
+
 def _board_row(snap: dict, profit_24h_i: int | None, daily_i: int | None, size_i: int | None) -> dict:
     mark = _num(snap.get("mark_price_s"))
     if mark is None and snap.get("mark_price_i") is not None:
@@ -539,6 +612,7 @@ def _board_row(snap: dict, profit_24h_i: int | None, daily_i: int | None, size_i
     pct = None
     if profit_i is not None and size_i:
         pct = float(Decimal(profit_i) / Decimal(size_i) * 100)
+    pnl = _pnl_metrics(snap, mark)
     return {
         "bu_order_id": snap.get("bu_order_id"),
         "opened_at": snap.get("position_created") or snap.get("created_at"),
@@ -556,6 +630,7 @@ def _board_row(snap: dict, profit_24h_i: int | None, daily_i: int | None, size_i
         "day_pct": _pct(pct),
         "lifecycle": snap.get("lifecycle"),
         "status": snap.get("status"),
+        **pnl,
     }
 
 
@@ -682,6 +757,7 @@ def board_payload(db_path: Path | None = None) -> dict:
             "total_profit_24h": money(total_24h),
             "total_investment": money(total_investment),
             "total_grid_profit": money(total_grid_profit),
+            "wallet_total": {"usdt": last["wallet_total_usdt"]} if last["wallet_total_usdt"] else None,
             "rows": rows,
         }
     finally:

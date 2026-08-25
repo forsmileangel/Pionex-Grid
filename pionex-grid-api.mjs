@@ -50,7 +50,7 @@ async function parseResponse(response, label) {
 }
 
 async function requestPrivate(path, params, credentials) {
-  const allowed = new Set(["/api/v1/bot/orders", "/api/v1/bot/orders/futuresGrid/order"]);
+  const allowed = new Set(["/api/v1/bot/orders", "/api/v1/bot/orders/futuresGrid/order", "/api/v1/wallet/balancesFull"]);
   if (!allowed.has(path)) throw new Error(`Blocked non-read-only endpoint: ${path}`);
   return parseResponse(await privateGet(path, params, credentials), `Pionex ${path}`);
 }
@@ -349,7 +349,7 @@ async function detailToRecord(item, credentials, listStatus, perpTickers) {
     Fee: scaleUsdt(firstNumber(data.fee, data.feeQuote, data.quoteFee), coinMargined ? conversionPrice : null),
     FeeBase: firstNumber(data.feeBase, data.baseFee),
     FeeQuote: firstNumber(data.feeQuote, data.quoteFee, data.fee),
-    FundingFee: scaleUsdt(firstNumber(data.fundingFeePayment, data.fundingFee, data.funding_fee), coinMargined ? conversionPrice : null),
+    FundingFee: scaleUsdt(firstNumber(data.totalFundingFee, data.fundingFeePayment, data.fundingFee, data.funding_fee), coinMargined ? conversionPrice : null),
     ProfitReinvest: scaleUsdt(firstNumber(data.profitReduce, data.profit_reduce), coinMargined ? conversionPrice : null),
     ProfitWithdrawn: scaleUsdt(firstNumber(data.profitWithdrawn, data.profit_withdrawn, data.profitExited), coinMargined ? conversionPrice : null),
     ExtraMargin: extraMargin,
@@ -359,7 +359,7 @@ async function detailToRecord(item, credentials, listStatus, perpTickers) {
     MarginStatus: firstString(data.marginStatus, data.margin_status),
     EstimateLiqUp: liqUp,
     EstimateLiqDown: liqDown,
-    LiquidationPrice: liqPrice,
+    LiquidationPrice: normalizedLiq.liq,
     LiquidationTriggered: Boolean(data.liquidationTriggered),
     MatchedGrids: firstNumber(data.matched, data.filledGrid, data.gridFilled),
     OrderCount: firstNumber(data.orderCount, data.order_count),
@@ -390,6 +390,25 @@ async function detailToRecord(item, credentials, listStatus, perpTickers) {
   };
 }
 
+async function getWalletOverview(credentials) {
+  const response = await requestPrivate("/api/v1/wallet/balancesFull", {}, credentials);
+  const data = response.data || {};
+  const categories = [];
+  for (const item of ((data.botAccount && data.botAccount.detail) || [])) {
+    categories.push({ account: "bot", type: item.type || "", title: item.title || "", totalInUsdt: item.totalInUsdt || null });
+  }
+  for (const item of ((data.traderAccount && data.traderAccount.detail) || [])) {
+    categories.push({ account: "trader", type: item.type || "", title: item.title || "", totalInUsdt: item.totalInUsdt || null });
+  }
+  return {
+    totalInUsdt: data.totalInUsdt || null,
+    totalInBtc: data.totalInBtc || null,
+    botInUsdt: data.botAccount && data.botAccount.totalInUsdt || null,
+    traderInUsdt: data.traderAccount && data.traderAccount.totalInUsdt || null,
+    categories,
+  };
+}
+
 async function collect() {
   const credentialPath = option("--credentials", process.env.PIONEX_CREDENTIAL_PATH || DEFAULT_CREDENTIAL_PATH);
   const includeFinished = hasFlag("--include-finished");
@@ -417,6 +436,8 @@ async function collect() {
   if (records.length !== listed.length) throw new Error("API capture is incomplete: detail count does not match list count.");
   records.sort((a, b) => b.Created.localeCompare(a.Created));
   const runningRecords = records.filter((record) => record.ListStatus === "running");
+  let wallet = null;
+  try { wallet = await getWalletOverview(credentials); } catch (error) { wallet = { error: error.message }; }
   return {
     ok: true,
     CapturedAt: new Date().toISOString(),
@@ -426,6 +447,7 @@ async function collect() {
     ContractCount: runningRecords.length,
     FinishedCount: records.length - runningRecords.length,
     SavingsCount: 0,
+    Wallet: wallet,
     Records: records,
   };
 }

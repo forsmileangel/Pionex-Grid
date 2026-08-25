@@ -136,6 +136,7 @@ async function renderBoard() {
   const total = board.total_profit_24h && board.total_profit_24h.usdt;
   app.innerHTML = `
     <div class="stats">
+      <div class="stat"><span>錢包總市值</span><strong>${board.wallet_total && board.wallet_total.usdt != null ? n(board.wallet_total.usdt, 2) + " USDT" : "—"}</strong></div>
       <div class="stat"><span>統計時間</span><strong>${board.as_of ? board.as_of.replace("T"," ").slice(0,19) : "尚無"}</strong></div>
       <div class="stat"><span>過去 24 小時總利潤</span><strong class="${cls(total)}">${signed(total)} USDT</strong></div>
       <div class="stat"><span>目前倉位加總</span><strong>${usdt(board.total_investment)} USDT</strong></div>
@@ -212,7 +213,13 @@ async function renderHistory() {
         <div class="stat"><span>現價 / Mark</span><strong>${n(b.mark_price, 4)}</strong></div>
         <div class="stat"><span>強平價</span><strong>${n(b.liq_price, 4)}</strong></div>
         <div class="stat"><span>強平距離</span><strong>${b.liq_distance_pct == null ? "—" : n(b.liq_distance_pct, 2) + "%"}</strong></div>
+        <div class="stat"><span>目前總損益</span><strong class="${cls(b.total_pnl && b.total_pnl.usdt)}">${signed(b.total_pnl && b.total_pnl.usdt)} USDT</strong></div>
+        <div class="stat"><span>趨勢盈虧</span><strong class="${cls(b.trend_profit && b.trend_profit.usdt)}">${signed(b.trend_profit && b.trend_profit.usdt)}</strong></div>
+        <div class="stat"><span>資金費</span><strong class="${cls(b.funding && b.funding.usdt)}">${signed(b.funding && b.funding.usdt)}</strong></div>
+        <div class="stat"><span>網格年化</span><strong class="${cls(b.grid_annualized_pct)}">${b.grid_annualized_pct == null ? "—" : signed(b.grid_annualized_pct) + "%"}</strong></div>
+        <div class="stat"><span>總年化報酬</span><strong class="${cls(b.annualized_pct)}">${b.annualized_pct == null ? "—" : signed(b.annualized_pct) + "%"}</strong></div>
       </div>
+      <p class="muted">目前總損益 = 趨勢盈虧 + 網格利潤（不含資金費）。網格年化／總年化用投資額與持有天數推算，API 沒有現成年化欄位。</p>
     </div>
     <div class="card">
       <h3>每日差額</h3>
