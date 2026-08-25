@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>派網合約網格自動記錄流程</title>
+  <style>
+    :root { --ink:#172026; --muted:#5c6b73; --line:#d7e0e4; --surface:#ffffff; --soft:#eef3f5; --accent:#2e6970; --accent-soft:#dceced; --warn:#8b5e22; --warn-soft:#fff3df; }
+    * { box-sizing:border-box; }
+    body { margin:0; color:var(--ink); background:#f4f7f8; font:16px/1.7 system-ui,-apple-system,"Segoe UI","Noto Sans TC",sans-serif; }
+    main { max-width:1080px; margin:0 auto; padding:40px 22px 72px; }
+    header { background:#1f2c31; color:#fff; border-radius:12px; padding:30px 32px; box-shadow:0 8px 24px #17202618; }
+    h1 { margin:0 0 8px; font-size:clamp(26px,4vw,42px); letter-spacing:0; }
+    h2 { margin:34px 0 12px; font-size:24px; }
+    h3 { margin:22px 0 8px; font-size:18px; }
+    p { margin:8px 0 14px; }
+    code { background:#e8eef0; padding:2px 5px; border-radius:4px; overflow-wrap:anywhere; }
+    header code { background:#42555b; color:#fff; }
+    .meta { color:#d8e3e6; margin:0; }
+    .grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px; margin:22px 0; }
+    .card { background:var(--surface); border:1px solid var(--line); border-radius:8px; padding:18px; }
+    .card strong { display:block; color:var(--accent); margin-bottom:4px; }
+    .callout { background:var(--accent-soft); border-left:4px solid var(--accent); padding:14px 16px; border-radius:6px; }
+    .warning { background:var(--warn-soft); border-left-color:var(--warn); }
+    .flow { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; counter-reset:step; }
+    .flow div { background:#fff; border:1px solid var(--line); padding:14px; border-radius:8px; }
+    .flow div::before { counter-increment:step; content:counter(step); display:inline-grid; place-items:center; width:26px; height:26px; margin-right:8px; background:var(--accent); color:#fff; border-radius:50%; font-weight:700; }
+    table { width:100%; border-collapse:collapse; background:#fff; border:1px solid var(--line); }
+    th,td { border:1px solid var(--line); padding:10px 12px; text-align:left; vertical-align:top; }
+    th { background:#e4ecef; }
+    ul,ol { padding-left:24px; }
+    .small { color:var(--muted); font-size:14px; }
+    @media (max-width:760px) { main { padding:22px 14px 48px; } header { padding:24px 20px; } .grid,.flow { grid-template-columns:1fr; } table { font-size:14px; display:block; overflow:auto; white-space:normal; } }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>派網合約網格自動記錄流程</h1>
+    <p class="meta">API-only、每日 08:00、長期 Excel 日差帳｜最後更新：2026-08-25</p>
+  </header>
+
+  <div class="grid">
+    <div class="card"><strong>目前範圍</strong>只記錄派網合約網格，動態支援新增與關倉。</div>
+    <div class="card"><strong>資料來源</strong>Pionex 唯讀 API；不使用 OpenCLI、不操作瀏覽器。</div>
+    <div class="card"><strong>安全原則</strong>只呼叫 GET；不建立、調整、減倉或關閉機器人。</div>
+  </div>
+
+  <div class="callout warning"><strong>屯幣寶處理</strong>目前官方公開唯讀 API 的運行中清單沒有回傳屯幣寶，本版直接跳過。Excel 保留獨立的「屯幣寶記錄」頁籤，但不寫入每日數字，也不併入合約網格總和。</div>
+
+  <h2>資料夾結構</h2>
+  <table>
+    <tr><th>檔案</th><th>用途</th></tr>
+    <tr><td><code>D:\My-project\pionex grid record\PIONEX API.txt</code></td><td>第一行 API key、第二行 API secret。只在本機讀取，禁止上傳、貼到 Notion 或提交 Git。</td></tr>
+    <tr><td><code>pionex-grid-api.mjs</code></td><td>分頁取得所有 running futures_grid，逐筆取得詳情；幣本位利潤用公開行情換算 USDT。</td></tr>
+    <tr><td><code>pionex-grid-daily.ps1</code></td><td>完整性檢查、日差計算、累計、關倉辨識、Excel 寫入與備份還原。</td></tr>
+    <tr><td><code>pionex-grid-backfill.ps1</code></td><td>使用已保存的 JSON 快照手動補讀歷史日期。</td></tr>
+    <tr><td><code>data\pionex-grid-history.xlsx</code></td><td>長期帳本；包含「每日網格差額」與獨立「屯幣寶記錄」兩頁。</td></tr>
+    <tr><td><code>data\pionex-grid-daily.log</code></td><td>只記錄執行狀態、筆數與錯誤，不寫入 key/secret。</td></tr>
+  </table>
+
+  <h2>每日流程</h2>
+  <div class="flow">
+    <div>08:00 啟動 PowerShell。</div>
+    <div>API 分頁抓取全部 running futures_grid。</div>
+    <div>逐筆取得利潤與投資額，確認筆數一致。</div>
+    <div>完整才寫入 Excel；失敗則保留原檔。</div>
+  </div>
+  <p class="small">第一個 08:00 執行會以 <code>ReplaceDate</code> 取代當日暫定基準；後續排程不帶 ReplaceDate，避免同日重複。</p>
+
+  <h2>Excel 日差邏輯</h2>
+  <ol>
+    <li>網格識別鍵是「交易對 + 建立時間」，不是畫面順序。</li>
+    <li>持續網格：<code>每日利潤 = 今日網格利潤 - 前次網格利潤</code>。</li>
+    <li>新網格：第一次出現視為基準，當日每日利潤為 0。</li>
+    <li>完整快照中消失的既有網格：新增一列「關倉」，不把缺資料誤算成 0。</li>
+    <li>日總計只加總目前 API 回傳的有效合約網格；屯幣寶永遠不進入此總計。</li>
+    <li>每次寫入前建立 <code>.xlsx.bak</code>，若 Excel 寫入失敗會還原原檔。</li>
+  </ol>
+
+  <h2>API 讀取範圍</h2>
+  <p>正式程式只允許以下讀取端點：</p>
+  <ul>
+    <li><code>GET /api/v1/bot/orders</code>：<code>status=running</code>、<code>buOrderTypes=futures_grid</code>，使用 <code>pageToken</code> 讀完所有頁。</li>
+    <li><code>GET /api/v1/bot/orders/futuresGrid/order</code>：逐筆取得詳情。</li>
+    <li><code>GET /api/v1/market/tickers</code>：只在幣本位合約需要時取得現貨換算價。</li>
+  </ul>
+  <p>官方參考：<a href="https://www.pionex.com/docs/api-docs/bot-api/general-info/authentication">Bot API 認證</a>、<a href="https://raw.githubusercontent.com/pionex-official/pionex-open-api/main/openapi_bot.yaml">Bot API 規格</a>、<a href="https://www.pionex.com/docs/api-docs/references/api-key-permissions">API key 權限</a>。</p>
+
+  <h2>手動補讀</h2>
+  <p>若 08:00 失敗，先保存當下 API 快照，再以指定日期寫入：</p>
+  <pre><code>node pionex-grid-api.mjs --output data\snapshot-2026-08-25.json
+powershell -ExecutionPolicy Bypass -File pionex-grid-backfill.ps1 -SnapshotJson data\snapshot-2026-08-25.json -CaptureAt 2026-08-25T08:00:00+08:00</code></pre>
+  <p class="small">沒有保存的歷史快照，就無法事後重建當天的網格利潤差；腳本會拒絕偽造資料。補讀同一日期前，請確認該日期沒有成功紀錄，或明確使用基準替換流程。</p>
+
+  <h2>維護規則</h2>
+  <ul>
+    <li>不要把 <code>PIONEX API.txt</code> 加入 Git、雲端同步、Notion、Excel 或 log。</li>
+    <li>API key 只需要 Bot reading 權限；不需要 Bot trading。</li>
+    <li>若 API 回傳筆數不足、詳情缺欄位、行情換算失敗或 key/secret 錯誤，程式不寫 Excel。</li>
+    <li>新增網格會自動新增列；消失的既有網格會在下一個完整快照標記關倉。</li>
+    <li>若更換電腦，先複製程式與 Excel，再在新機建立相同的 API 憑證檔與 08:00 排程。</li>
+  </ul>
+  <p class="small">本文件與程式放在 <code>D:\My-project\pionex grid record</code>；本地 HTML 可直接以瀏覽器開啟，不需要啟動網站伺服器。</p>
+</main>
+</body>
+</html>

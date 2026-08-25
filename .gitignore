@@ -1,0 +1,16 @@
+PIONEX API.txt
+data/*.log
+data/*.bak
+data/*.xlsx
+data/*.sqlite
+data/*.db
+data/*.sqlite-wal
+data/*.sqlite-shm
+data/snapshot-*.json
+runtime/
+exports/
+*.xlsx.bak
+__pycache__/
+*.pyc
+.venv/
+v2-data/

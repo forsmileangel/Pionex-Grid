@@ -1,0 +1,38 @@
+{
+  "ok": true,
+  "CapturedAt": "2026-08-26T00:00:00.000Z",
+  "Source": "synthetic fixture",
+  "ExpectedCardCount": 2,
+  "ContractCount": 2,
+  "SavingsCount": 0,
+  "Records": [
+    {
+      "Key": "BTC/USDT|2026-08-01 10:00:00",
+      "ApiOrderId": "fixture-btc-1",
+      "Symbol": "BTC/USDT",
+      "Created": "2026-08-01 10:00:00",
+      "Product": "contract_grid",
+      "Leverage": "5x long",
+      "Investment": 1000,
+      "GridProfit": 12.5,
+      "TotalProfit": 10.0,
+      "Status": "running",
+      "ProfitCurrency": "USDT",
+      "Source": "synthetic fixture"
+    },
+    {
+      "Key": "ETH/USDT|2026-08-02 11:00:00",
+      "ApiOrderId": "fixture-eth-1",
+      "Symbol": "ETH/USDT",
+      "Created": "2026-08-02 11:00:00",
+      "Product": "contract_grid",
+      "Leverage": "3x short",
+      "Investment": 800,
+      "GridProfit": 4.25,
+      "TotalProfit": 3.0,
+      "Status": "running",
+      "ProfitCurrency": "USDT",
+      "Source": "synthetic fixture"
+    }
+  ]
+}
