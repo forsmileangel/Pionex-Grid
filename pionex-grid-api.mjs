@@ -115,6 +115,40 @@ async function getSpotClose(coin) {
   return { symbol, close, time: ticker.time || null };
 }
 
+async function getPerpTickers() {
+  const response = await requestPublic("/api/v1/market/tickers", { type: "PERP" });
+  const tickers = response.data && Array.isArray(response.data.tickers) ? response.data.tickers : [];
+  const map = new Map();
+  for (const ticker of tickers) {
+    const close = numberOrNull(ticker.close);
+    if (ticker.symbol && close !== null && close > 0) map.set(String(ticker.symbol), { close, time: ticker.time || null });
+  }
+  return map;
+}
+
+function markFromTickers(symbol, tickers) {
+  const base = String(symbol || "").split("/")[0].replace(/\.PERP$/i, "");
+  if (!base) return { price: null, tickerSymbol: "", time: null };
+  const tickerSymbol = `${base}_USDT_PERP`;
+  const ticker = tickers.get(tickerSymbol);
+  if (!ticker) return { price: null, tickerSymbol, time: null };
+  return { price: ticker.close, tickerSymbol, time: ticker.time };
+}
+
+function effectiveLiq(trend, down, up, liq) {
+  if (trend === "short" && down === null && up !== null && up > 0) return up;
+  if (trend === "short" && up !== null && up > 0) return up;
+  if (trend !== "short" && down !== null && down > 0) return down;
+  if (liq !== null && liq > 0) return liq;
+  return null;
+}
+
+function liqDistancePct(trend, mark, liq) {
+  if (mark === null || mark <= 0 || liq === null || liq <= 0) return null;
+  if (trend === "short") return ((liq - mark) / mark) * 100;
+  return ((mark - liq) / mark) * 100;
+}
+
 const STRIP_RAW_KEYS = /^(userId|keyId|token|secret|apiKey|apiSecret|api_key|api_secret)$/i;
 
 function sanitizeRaw(value) {
@@ -190,7 +224,7 @@ function scaleUsdt(value, conversionPrice) {
   return value * conversionPrice;
 }
 
-async function detailToRecord(item, credentials, listStatus) {
+async function detailToRecord(item, credentials, listStatus, perpTickers) {
   const orderId = String(item.buOrderId);
   const response = await requestPrivate("/api/v1/bot/orders/futuresGrid/order", { buOrderId: orderId, lang: "en" }, credentials);
   const order = response.data || {};
@@ -239,6 +273,14 @@ async function detailToRecord(item, credentials, listStatus) {
   const gridType = firstString(data.gridType, data.grid_type);
   const spacing = estimateSpacing(top, bottom, row, gridType);
   const complete = rawGridProfit !== null && investment !== null && Number.isFinite(investment);
+  const mark = markFromTickers(symbol, perpTickers);
+  const liqDown = firstNumber(data.estimateLiquidationPriceDown, data.estimate_liquidation_price_down);
+  const liqUp = firstNumber(data.estimateLiquidationPriceUp, data.estimate_liquidation_price_up);
+  const liqActual = firstNumber(data.liquidationPrice, data.liquidation_price);
+  const liqPrice = effectiveLiq(trend, liqDown, liqUp, liqActual);
+  const position = firstNumber(data.position);
+  const notional = mark.price !== null && position !== null ? Math.abs(position) * mark.price : investment;
+  const profit24h = scaleUsdt(firstNumber(data.gridProfit24h, data.grid_profit_24h, data.profit24h), coinMargined ? conversionPrice : null);
   return {
     Key: `${symbol}|${created}`,
     ApiOrderId: orderId,
@@ -257,15 +299,21 @@ async function detailToRecord(item, credentials, listStatus) {
     Bottom: bottom,
     Row: row,
     PerVolume: firstNumber(data.perVolume, data.per_volume),
-    OpenPrice: firstNumber(data.openPrice, data.open_price),
-    Position: firstNumber(data.position),
+    OpenPrice: firstNumber(data.openPrice, data.open_price, data.initPrice),
+    MarkPrice: mark.price,
+    MarkSymbol: mark.tickerSymbol,
+    MarkTime: mark.time,
+    Notional: notional,
+    LiqPrice: liqPrice,
+    LiqDistancePct: liqDistancePct(trend, mark.price, liqPrice),
+    Position: position,
     PositionOpenPrice: firstNumber(data.positionOpenPrice, data.position_open_price),
     BaseAmount: firstNumber(data.baseAmount, data.base_amount, data.closedBaseAmount),
     QuoteAmount: firstNumber(data.quoteAmount, data.quote_amount),
     Investment: investment,
     GridProfit: gridProfit,
     TotalProfit: scaleUsdt(firstNumber(data.totalProfit, data.total_profit), coinMargined ? conversionPrice : null),
-    GridProfit24h: scaleUsdt(firstNumber(data.gridProfit24h, data.grid_profit_24h, data.profit24h), coinMargined ? conversionPrice : null),
+    GridProfit24h: profit24h,
     Fee: scaleUsdt(firstNumber(data.fee, data.feeQuote, data.quoteFee), coinMargined ? conversionPrice : null),
     FeeBase: firstNumber(data.feeBase, data.baseFee),
     FeeQuote: firstNumber(data.feeQuote, data.quoteFee, data.fee),
@@ -277,9 +325,9 @@ async function detailToRecord(item, credentials, listStatus) {
     InitMargin: firstNumber(data.initMargin, data.initialMargin, data.usdtInvestment),
     RiskStatus: firstString(data.riskStatus, data.risk_status),
     MarginStatus: firstString(data.marginStatus, data.margin_status),
-    EstimateLiqUp: firstNumber(data.estimateLiquidationPriceUp, data.estimate_liquidation_price_up),
-    EstimateLiqDown: firstNumber(data.estimateLiquidationPriceDown, data.estimate_liquidation_price_down),
-    LiquidationPrice: firstNumber(data.liquidationPrice, data.liquidation_price),
+    EstimateLiqUp: liqUp,
+    EstimateLiqDown: liqDown,
+    LiquidationPrice: liqPrice,
     LiquidationTriggered: Boolean(data.liquidationTriggered),
     MatchedGrids: firstNumber(data.matched, data.filledGrid, data.gridFilled),
     OrderCount: firstNumber(data.orderCount, data.order_count),
@@ -314,6 +362,7 @@ async function collect() {
   const credentialPath = option("--credentials", process.env.PIONEX_CREDENTIAL_PATH || DEFAULT_CREDENTIAL_PATH);
   const includeFinished = hasFlag("--include-finished");
   const credentials = readCredentials(credentialPath);
+  const perpTickers = await getPerpTickers();
   const running = await listFuturesGrids(credentials, "running");
   if (!includeFinished && running.length === 0) throw new Error("No running futures-grid records were returned.");
   const listed = running.map((item) => ({ item, listStatus: "running" }));
@@ -326,7 +375,7 @@ async function collect() {
   }
   const records = [];
   for (let index = 0; index < listed.length; index += 1) {
-    records.push(await detailToRecord(listed[index].item, credentials, listed[index].listStatus));
+    records.push(await detailToRecord(listed[index].item, credentials, listed[index].listStatus, perpTickers));
     if (index + 1 < listed.length) await sleep(120);
   }
   const keys = new Set(records.map((record) => record.Key));

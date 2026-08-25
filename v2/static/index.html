@@ -5,42 +5,57 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Pionex Grid v2</title>
   <style>
-    :root { --ink:#172026; --muted:#5c6b73; --line:#d7e0e4; --surface:#fff; --soft:#eef3f5; --accent:#2e6970; --warn:#8b5e22; }
+    :root { --ink:#172026; --muted:#5c6b73; --line:#d7e0e4; --surface:#fff; --soft:#eef3f5; --accent:#2e6970; --warn:#8b5e22; --up:#1f7a4d; --down:#b42318; }
     * { box-sizing:border-box; }
-    body { margin:0; color:var(--ink); background:#f4f7f8; font:16px/1.5 system-ui,"Noto Sans TC",sans-serif; }
-    header { background:#1f2c31; color:#fff; padding:16px 20px; display:flex; gap:12px; flex-wrap:wrap; align-items:center; }
-    header h1 { margin:0; font-size:20px; }
+    body { margin:0; color:var(--ink); background:#f4f7f8; font:15px/1.5 system-ui,"Noto Sans TC",sans-serif; }
+    header { background:#1f2c31; color:#fff; padding:16px 20px; }
+    header h1 { margin:0 0 10px; font-size:20px; }
+    nav { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
     nav button, .btn { background:#2e6970; color:#fff; border:0; padding:8px 12px; border-radius:6px; cursor:pointer; }
     nav button.active { background:#4d8a90; }
-    main { max-width:1100px; margin:0 auto; padding:18px 14px 48px; }
+    main { max-width:1280px; margin:0 auto; padding:16px 12px 56px; }
+    .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:10px; }
+    .stat { background:#fff; border:1px solid var(--line); border-radius:8px; padding:12px 14px; }
+    .stat span { display:block; color:var(--muted); font-size:12px; }
+    .stat strong { font-size:22px; }
     .card { background:#fff; border:1px solid var(--line); border-radius:8px; padding:14px; margin:12px 0; overflow:auto; }
-    table { width:100%; border-collapse:collapse; font-size:14px; }
-    th,td { border-bottom:1px solid var(--line); padding:8px 6px; text-align:left; }
-    th { background:var(--soft); }
-    tr[data-href] { cursor:pointer; }
+    table { width:100%; border-collapse:collapse; font-size:13px; }
+    th,td { border-bottom:1px solid var(--line); padding:8px 6px; text-align:right; white-space:nowrap; }
+    th:nth-child(1), td:nth-child(1), th:nth-child(3), td:nth-child(3) { text-align:left; }
+    th { background:var(--soft); position:sticky; top:0; }
+    tr.clickable { cursor:pointer; }
+    tr.clickable:hover { background:#eef6f7; }
+    .up { color:var(--up); }
+    .down { color:var(--down); }
     .warn { color:var(--warn); }
     .muted { color:var(--muted); font-size:13px; }
-    svg { width:100%; height:180px; background:#fff; }
-    @media (max-width:700px) { table { font-size:13px; } header { padding:12px; } }
+    .day { border:1px solid var(--line); border-radius:8px; margin:10px 0; background:#fff; }
+    .day h3 { margin:0; padding:12px 14px; background:var(--soft); cursor:pointer; display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+    .day .body { padding:0 8px 10px; }
+    select { padding:6px 8px; font-size:14px; max-width:100%; }
+    @media (max-width:760px) { .stat strong { font-size:18px; } table { font-size:12px; } }
   </style>
 </head>
 <body>
 <header>
-  <h1>Pionex Grid v2</h1>
+  <h1>Pionex Grid 倉位</h1>
   <nav>
-    <button data-page="daily" class="active">每日報酬</button>
-    <button data-page="grids">網格總覽</button>
-    <button data-page="history">網格歷史</button>
+    <button data-page="board" class="active">目前倉位</button>
+    <button data-page="daily">每日詳情</button>
+    <button data-page="history">單一網格</button>
     <button data-page="status">執行狀態</button>
+    <a class="btn" href="/api/v1/export.xlsx">匯出 Excel</a>
   </nav>
-  <a class="btn" href="/api/v1/export.xlsx">匯出 Excel</a>
 </header>
 <main id="app"><p class="muted">載入中…</p></main>
 <script>
 const app = document.getElementById("app");
-const money = (m) => m && m.usdt != null ? Number(m.usdt).toFixed(2) : "—";
-let page = "daily";
-let historyId = "";
+let page = "board";
+let historyId = new URLSearchParams(location.search).get("grid") || "";
+
+const n = (v, d=2) => v == null || v === "" || Number.isNaN(Number(v)) ? "—" : Number(v).toLocaleString("en-US", { minimumFractionDigits:d, maximumFractionDigits:d });
+const usdt = (m) => m && m.usdt != null ? n(m.usdt, 2) : "—";
+const cls = (v) => { const x = Number(v); if (!Number.isFinite(x) || x === 0) return ""; return x > 0 ? "up" : "down"; };
 
 document.querySelectorAll("nav button").forEach((btn) => {
   btn.onclick = () => {
@@ -57,67 +72,93 @@ async function get(url) {
   return res.json();
 }
 
-function chart(daily) {
-  if (!daily.length) return "<p class='muted'>尚無資料。請先執行 python -m v2.capture</p>";
-  const w = 1000, h = 180, p = 24;
-  const max = Math.max(...daily.map((d) => Math.abs(Number(d.daily_profit.usdt || 0))), 1);
-  const maxCum = Math.max(...daily.map((d) => Number(d.cumulative.usdt || 0)), 1);
-  const barW = Math.max(8, (w - p * 2) / daily.length - 4);
-  const bars = daily.map((d, i) => {
-    const v = Number(d.daily_profit.usdt || 0);
-    const bh = (Math.abs(v) / max) * (h - p * 2);
-    const x = p + i * ((w - p * 2) / daily.length);
-    const y = v >= 0 ? (h / 2 - bh) : h / 2;
-    return `<rect x="${x}" y="${y}" width="${barW}" height="${bh}" fill="${v>=0?'#2e6970':'#8b5e22'}"/>`;
-  }).join("");
-  const pts = daily.map((d, i) => {
-    const x = p + i * ((w - p * 2) / Math.max(daily.length - 1, 1));
-    const y = h - p - (Number(d.cumulative.usdt || 0) / maxCum) * (h - p * 2);
-    return `${x},${y}`;
-  }).join(" ");
-  return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">${bars}<polyline fill="none" stroke="#1f2c31" stroke-width="2" points="${pts}"/></svg><p class="muted">柱：每日利潤；線：累計利潤</p>`;
+function signed(v, digits=2) {
+  if (v == null || v === "") return "—";
+  const x = Number(v);
+  if (!Number.isFinite(x)) return "—";
+  const t = n(Math.abs(x), digits);
+  return (x > 0 ? "+" : x < 0 ? "-" : "") + t;
+}
+
+function positionTable(rows, profitKey) {
+  if (!rows.length) return "<p class='muted'>沒有倉位列</p>";
+  return `<table><thead><tr>
+    <th>日期</th><th>倉位大小 (USDT)</th><th>標的</th><th>現價 / Mark Price</th>
+    <th>強平價</th><th>強平距離</th><th>網格利潤 (USDT)</th><th>單日利潤 (USDT)</th><th>單天 %</th>
+  </tr></thead><tbody>${rows.map((r) => {
+    const day = profitKey === "daily" ? r.daily_profit : r.profit_24h;
+    const dayV = day && day.usdt;
+    const sizeV = r.size && r.size.usdt != null ? Number(r.size.usdt) : null;
+    const pct = dayV != null && sizeV ? Number(dayV) / sizeV * 100 : null;
+    return `<tr class="clickable" data-id="${r.bu_order_id || ""}">
+      <td>${r.opened_at || "—"}</td>
+      <td>${usdt(r.size)}</td>
+      <td>${r.symbol || "—"}${r.leverage ? " · " + r.leverage : ""}</td>
+      <td>${n(r.mark_price, 4)}</td>
+      <td>${n(r.liq_price, 4)}</td>
+      <td class="${cls(r.liq_distance_pct)}">${r.liq_distance_pct == null ? "—" : n(r.liq_distance_pct, 2) + "%"}</td>
+      <td>${usdt(r.grid_profit)}</td>
+      <td class="${cls(dayV)}">${signed(dayV)}</td>
+      <td class="${cls(pct)}">${pct == null ? "—" : signed(pct) + "%"}</td>
+    </tr>`;
+  }).join("")}</tbody></table>`;
+}
+
+async function renderBoard() {
+  const board = await get("/api/v1/board");
+  const total = board.total_profit_24h && board.total_profit_24h.usdt;
+  app.innerHTML = `
+    <div class="stats">
+      <div class="stat"><span>統計時間</span><strong>${board.as_of ? board.as_of.replace("T"," ").slice(0,19) : "尚無"}</strong></div>
+      <div class="stat"><span>過去 24 小時總利潤</span><strong class="${cls(total)}">${signed(total)} USDT</strong></div>
+      <div class="stat"><span>倉位數</span><strong>${board.position_count || 0}</strong></div>
+    </div>
+    <div class="card">
+      <p class="muted">單日利潤用 API 的過去 24 小時網格利潤（例如現在 10:32，就是昨天 10:32 到現在）。單天 % = 24 小時利潤 ÷ 倉位大小。強平距離是現價到強平價的百分比；做多為正代表現價在強平價上方。</p>
+      ${positionTable(board.rows || [], "24h")}
+    </div>`;
+  bindHistoryClicks();
 }
 
 async function renderDaily() {
-  const daily = await get("/api/v1/daily");
-  app.innerHTML = `<div class="card">${chart(daily)}</div>
-    <div class="card"><table><thead><tr><th>日期</th><th>每日</th><th>累計</th><th>活躍</th><th>投資</th><th>新增</th><th>關倉</th></tr></thead>
-    <tbody>${daily.map((d) => `<tr data-href="${d.capture_date}"><td>${d.capture_date}</td><td>${money(d.daily_profit)}</td><td>${money(d.cumulative)}</td><td>${d.active_count}</td><td>${money(d.investment)}</td><td>${d.new_count}</td><td>${d.closed_count}</td></tr>`).join("")}</tbody></table></div>
-    <div class="card" id="detail"><p class="muted">點日期看各網格差額。跨越超過 1 天的差額會標 gap_days。</p></div>`;
-  app.querySelectorAll("tr[data-href]").forEach((tr) => {
-    tr.onclick = async () => {
-      const data = await get("/api/v1/daily/" + tr.dataset.href);
-      document.getElementById("detail").innerHTML = `<h3>${data.capture_date || tr.dataset.href}</h3>
-        <table><thead><tr><th>網格</th><th>狀態</th><th>前次</th><th>當次</th><th>差額</th></tr></thead><tbody>
-        ${(data.rows||[]).map((r) => `<tr><td>${r.symbol || r.bu_order_id}</td><td>${r.status}${r.gap_days>0?' / gap '+r.gap_days:''}</td><td>${money(r.prev_grid_profit)}</td><td>${money(r.grid_profit)}</td><td>${money(r.daily_profit)}</td></tr>`).join("")}
-        </tbody></table>`;
+  const data = await get("/api/v1/days");
+  const days = data.days || [];
+  if (!days.length) {
+    app.innerHTML = "<p class='muted'>還沒有每日紀錄。請先執行 python -m v2.capture</p>";
+    return;
+  }
+  app.innerHTML = `<p class="muted">每一天會往下新增一列。點日期可收合／展開當天每一筆倉位，不是只看總和。</p>` + days.map((d, i) => `
+    <section class="day" data-open="${i===0}">
+      <h3>${d.capture_date}<span>${d.active_count} 筆 · 當日 ${signed(d.daily_profit && d.daily_profit.usdt)} USDT · 累計 ${usdt(d.cumulative)}</span></h3>
+      <div class="body" ${i===0 ? "" : "hidden"}>${positionTable(d.rows || [], "daily")}</div>
+    </section>`).join("");
+  app.querySelectorAll(".day h3").forEach((h) => {
+    h.onclick = () => {
+      const body = h.parentElement.querySelector(".body");
+      body.hidden = !body.hidden;
     };
   });
-}
-
-async function renderGrids() {
-  const grids = await get("/api/v1/grids");
-  app.innerHTML = `<div class="card"><p class="muted">perVolume 是每格下單量，不是百分比。價差標記為估算。</p>
-    <table><thead><tr><th>交易對</th><th>狀態</th><th>區間</th><th>格數</th><th>類型</th><th>perVolume</th><th>槓桿</th><th>利潤</th></tr></thead>
-    <tbody>${grids.map((g) => `<tr data-id="${g.bu_order_id}"><td>${g.symbol}</td><td>${g.lifecycle}</td><td>${g.bottom_s||""}–${g.top_s||""}</td><td>${g.row_n||""}</td><td>${g.grid_type||""}</td><td>${g.per_volume_s||""}</td><td>${g.leverage||""}</td><td>${money(g.grid_profit)}</td></tr>`).join("")}</tbody></table></div>`;
-  app.querySelectorAll("tr[data-id]").forEach((tr) => {
-    tr.onclick = () => { historyId = tr.dataset.id; page = "history"; document.querySelector('[data-page="history"]').click(); };
-  });
+  bindHistoryClicks();
 }
 
 async function renderHistory() {
-  if (!historyId) {
-    const grids = await get("/api/v1/grids");
-    historyId = grids[0] && grids[0].bu_order_id;
-  }
-  if (!historyId) { app.innerHTML = "<p class='muted'>沒有網格</p>"; return; }
+  const list = await get("/api/v1/grids-index");
+  if (!list.length) { app.innerHTML = "<p class='muted'>沒有網格</p>"; return; }
+  if (!historyId || !list.some((g) => g.bu_order_id === historyId)) historyId = list[0].bu_order_id;
   const data = await get("/api/v1/grids/" + encodeURIComponent(historyId) + "/history");
-  app.innerHTML = `<div class="card"><h3>${(data.position&&data.position.symbol)||historyId}</h3>
-    <table><thead><tr><th>日期</th><th>狀態</th><th>利潤</th><th>差額</th></tr></thead>
-    <tbody>${(data.profits||[]).map((p)=>`<tr><td>${p.capture_date}</td><td>${p.status}</td><td>${money(p.grid_profit)}</td><td>${money(p.daily_profit)}</td></tr>`).join("")}</tbody></table>
-    <h4>快照</h4>
-    <table><thead><tr><th>run</th><th>保證金</th><th>強平上</th><th>強平下</th><th>區間</th></tr></thead>
-    <tbody>${(data.snapshots||[]).map((s)=>`<tr><td>${s.run_id}</td><td>${money(s.margin_balance)}</td><td>${money(s.estimate_liq_up)}</td><td>${money(s.estimate_liq_down)}</td><td>${s.bottom_s||""}–${s.top_s||""}</td></tr>`).join("")}</tbody></table></div>`;
+  const options = list.map((g) => `<option value="${g.bu_order_id}" ${g.bu_order_id===historyId?"selected":""}>${g.symbol} · ${g.created_at} · ${g.lifecycle}</option>`).join("");
+  app.innerHTML = `<div class="card">
+    <p><label>選擇網格 <select id="gridPick">${options}</select></label></p>
+    <p class="muted">${(data.position && data.position.symbol) || historyId}</p>
+    <table><thead><tr><th>日期</th><th>狀態</th><th>網格利潤</th><th>當日差額</th></tr></thead>
+    <tbody>${(data.profits||[]).map((p)=>`<tr>
+      <td>${p.capture_date}</td><td>${p.status}</td>
+      <td>${usdt(p.grid_profit)}</td>
+      <td class="${cls(p.daily_profit && p.daily_profit.usdt)}">${signed(p.daily_profit && p.daily_profit.usdt)}</td>
+    </tr>`).join("")}</tbody></table>
+    <p class="muted">每格下單量（API 欄位 perVolume）是每一格掛單的幣數量，不是報酬率。</p>
+  </div>`;
+  document.getElementById("gridPick").onchange = (e) => { historyId = e.target.value; render(); };
 }
 
 async function renderStatus() {
@@ -126,14 +167,23 @@ async function renderStatus() {
     <p>上次成功：${s.last_success ? s.last_success.captured_at : "尚無"}</p>
     <p>未決關倉：<span class="${s.unresolved?"warn":""}">${s.unresolved}</span></p>
     <p>漏抓日期：${(s.missing_dates||[]).join(", ") || "無"}</p>
-    <pre class="muted">${JSON.stringify(s.recent_errors||[], null, 2)}</pre>
   </div>`;
+}
+
+function bindHistoryClicks() {
+  app.querySelectorAll("tr[data-id]").forEach((tr) => {
+    if (!tr.dataset.id) return;
+    tr.onclick = () => {
+      historyId = tr.dataset.id;
+      document.querySelector('[data-page="history"]').click();
+    };
+  });
 }
 
 async function render() {
   try {
-    if (page === "daily") await renderDaily();
-    else if (page === "grids") await renderGrids();
+    if (page === "board") await renderBoard();
+    else if (page === "daily") await renderDaily();
     else if (page === "history") await renderHistory();
     else await renderStatus();
   } catch (err) {

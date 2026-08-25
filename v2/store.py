@@ -11,7 +11,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 SCALE = 100_000_000
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 TAIPEI = ZoneInfo("Asia/Taipei")
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_DB = ROOT / "v2-data" / "pionex-grid.sqlite"
@@ -144,7 +144,24 @@ def connect(db_path: Path | None = None) -> sqlite3.Connection:
     if row is None:
         con.execute("INSERT INTO schema_meta(version, applied_at) VALUES (?, ?)", (SCHEMA_VERSION, datetime.now(TAIPEI).isoformat()))
         con.commit()
+    _migrate(con)
     return con
+
+
+def _migrate(con: sqlite3.Connection) -> None:
+    cols = {row[1] for row in con.execute("PRAGMA table_info(grid_snapshots)")}
+    for name, decl in (
+        ("mark_price_s", "TEXT"),
+        ("mark_price_i", "INTEGER"),
+        ("notional_i", "INTEGER"),
+        ("liq_distance_pct_s", "TEXT"),
+    ):
+        if name not in cols:
+            con.execute(f"ALTER TABLE grid_snapshots ADD COLUMN {name} {decl}")
+    latest = con.execute("SELECT version FROM schema_meta ORDER BY version DESC LIMIT 1").fetchone()
+    if latest is None or int(latest["version"]) < SCHEMA_VERSION:
+        con.execute("INSERT INTO schema_meta(version, applied_at) VALUES (?, ?)", (SCHEMA_VERSION, datetime.now(TAIPEI).isoformat()))
+        con.commit()
 
 
 def _last_success(con: sqlite3.Connection) -> sqlite3.Row | None:
@@ -164,6 +181,23 @@ def _latest_profit(con: sqlite3.Connection, bu_order_id: str) -> sqlite3.Row | N
            ORDER BY capture_date DESC, id DESC LIMIT 1""",
         (bu_order_id,),
     ).fetchone()
+
+
+def _apply_live_fields(con: sqlite3.Connection, run_id: int, rec: dict) -> None:
+    con.execute(
+        """UPDATE grid_snapshots
+           SET mark_price_s=?, mark_price_i=?, notional_i=?, liq_distance_pct_s=?, liquidation_price_i=COALESCE(?, liquidation_price_i)
+           WHERE run_id=? AND bu_order_id=?""",
+        (
+            None if rec.get("MarkPrice") is None else str(rec.get("MarkPrice")),
+            to_fixed(rec.get("MarkPrice")),
+            to_fixed(rec.get("Notional")),
+            None if rec.get("LiqDistancePct") is None else str(rec.get("LiqDistancePct")),
+            to_fixed(rec.get("LiqPrice")),
+            run_id,
+            rec.get("ApiOrderId"),
+        ),
+    )
 
 
 def _snapshot_fields(run_id: int, rec: dict) -> tuple:
@@ -326,6 +360,7 @@ def ingest(snapshot: dict, db_path: Path | None = None, replace_date: bool = Fal
                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 _snapshot_fields(run_id, rec),
             )
+            _apply_live_fields(con, run_id, rec)
             grid_profit_i = to_fixed(rec.get("GridProfit"))
             investment_i = to_fixed(rec.get("Investment"))
             prev_row = _latest_profit(con, oid)
@@ -379,6 +414,7 @@ def ingest(snapshot: dict, db_path: Path | None = None, replace_date: bool = Fal
                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     _snapshot_fields(run_id, rec),
                 )
+                _apply_live_fields(con, run_id, rec)
                 con.execute(
                     "UPDATE grid_positions SET lifecycle='closed', closed_at=? WHERE bu_order_id=?",
                     (rec.get("Closed") or captured.strftime("%Y-%m-%d %H:%M:%S"), oid),
@@ -456,6 +492,77 @@ def money(value: int | None) -> dict:
     return {"int": value, "usdt": from_fixed(value)}
 
 
+def _num(value) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number == number else None
+
+
+def _effective_liq(trend: str | None, down, up, liq) -> float | None:
+    down_n, up_n, liq_n = _num(down), _num(up), _num(liq)
+    if (trend or "") == "short" and up_n and up_n > 0:
+        return up_n
+    if (trend or "") != "short" and down_n and down_n > 0:
+        return down_n
+    if liq_n and liq_n > 0:
+        return liq_n
+    return None
+
+
+def _pct(value: float | None) -> str | None:
+    if value is None:
+        return None
+    return f"{value:.2f}"
+
+
+def _board_row(snap: dict, profit_24h_i: int | None, daily_i: int | None, size_i: int | None) -> dict:
+    mark = _num(snap.get("mark_price_s"))
+    if mark is None and snap.get("mark_price_i") is not None:
+        mark = float(Decimal(snap["mark_price_i"]) / Decimal(SCALE))
+    position = _num(snap.get("position_s"))
+    liq = _effective_liq(snap.get("trend"), from_fixed(snap.get("estimate_liq_down_i")), from_fixed(snap.get("estimate_liq_up_i")), from_fixed(snap.get("liquidation_price_i")))
+    if liq is None:
+        liq = _num(from_fixed(snap.get("liquidation_price_i")))
+    notional_i = snap.get("notional_i")
+    if notional_i is None and mark is not None and position is not None:
+        notional_i = to_fixed(abs(position) * mark)
+    size_i = notional_i or size_i or snap.get("investment_i")
+    distance = None
+    if mark and mark > 0 and liq and liq > 0:
+        if (snap.get("trend") or "") == "short":
+            distance = (liq - mark) / mark * 100
+        else:
+            distance = (mark - liq) / mark * 100
+    elif snap.get("liq_distance_pct_s"):
+        distance = _num(snap.get("liq_distance_pct_s"))
+    profit_i = profit_24h_i if profit_24h_i is not None else daily_i
+    pct = None
+    if profit_i is not None and size_i:
+        pct = float(Decimal(profit_i) / Decimal(size_i) * 100)
+    return {
+        "bu_order_id": snap.get("bu_order_id"),
+        "opened_at": snap.get("created_at"),
+        "symbol": snap.get("symbol"),
+        "trend": snap.get("trend"),
+        "leverage": snap.get("leverage"),
+        "size": money(size_i),
+        "investment": money(snap.get("investment_i")),
+        "mark_price": None if mark is None else str(mark),
+        "liq_price": None if liq is None else str(liq),
+        "liq_distance_pct": _pct(distance),
+        "grid_profit": money(snap.get("grid_profit_i")),
+        "profit_24h": money(profit_24h_i),
+        "daily_profit": money(daily_i),
+        "day_pct": _pct(pct),
+        "lifecycle": snap.get("lifecycle"),
+        "status": snap.get("status"),
+    }
+
+
 def _rows(con: sqlite3.Connection, sql: str, params=()) -> list[dict]:
     return [dict(row) for row in con.execute(sql, params)]
 
@@ -530,6 +637,88 @@ def daily_date_payload(capture_date: str, db_path: Path | None = None) -> dict:
         payload["investment"] = money(summary["investment_i"])
         payload["rows"] = rows
         return payload
+    finally:
+        con.close()
+
+
+def board_payload(db_path: Path | None = None) -> dict:
+    con = connect(db_path)
+    try:
+        last = _last_success(con)
+        if last is None:
+            return {"as_of": None, "window": "past_24h", "rows": [], "total_profit_24h": money(0), "position_count": 0}
+        snaps = _rows(
+            con,
+            """SELECT s.*, p.lifecycle FROM grid_snapshots s
+               JOIN grid_positions p ON p.bu_order_id=s.bu_order_id
+               WHERE s.run_id=? AND s.list_status='running'
+               ORDER BY s.symbol, s.created_at""",
+            (last["id"],),
+        )
+        profits = {
+            row["bu_order_id"]: row
+            for row in con.execute("SELECT * FROM daily_grid_profit WHERE run_id=?", (last["id"],))
+        }
+        rows = []
+        total_24h = 0
+        for snap in snaps:
+            profit = profits.get(snap["bu_order_id"])
+            row = _board_row(
+                snap,
+                snap.get("grid_profit_24h_i"),
+                profit["daily_profit_i"] if profit else None,
+                snap.get("notional_i") or snap.get("investment_i"),
+            )
+            if snap.get("grid_profit_24h_i"):
+                total_24h += snap["grid_profit_24h_i"]
+            rows.append(row)
+        return {
+            "as_of": last["captured_at"],
+            "capture_date": last["capture_date"],
+            "window": "past_24h",
+            "position_count": len(rows),
+            "total_profit_24h": money(total_24h),
+            "rows": rows,
+        }
+    finally:
+        con.close()
+
+
+def days_payload(db_path: Path | None = None) -> dict:
+    con = connect(db_path)
+    try:
+        days = []
+        summaries = list(con.execute("SELECT * FROM daily_summary ORDER BY capture_date DESC"))
+        for summary in summaries:
+            snaps = _rows(
+                con,
+                """SELECT s.*, p.lifecycle, d.status, d.daily_profit_i, d.prev_grid_profit_i, d.cumulative_i
+                   FROM daily_grid_profit d
+                   JOIN grid_positions p ON p.bu_order_id=d.bu_order_id
+                   LEFT JOIN grid_snapshots s ON s.run_id=d.run_id AND s.bu_order_id=d.bu_order_id
+                   WHERE d.capture_date=?
+                   ORDER BY p.symbol, p.created_at""",
+                (summary["capture_date"],),
+            )
+            rows = []
+            for snap in snaps:
+                merged = dict(snap)
+                rows.append(_board_row(merged, merged.get("grid_profit_24h_i"), merged.get("daily_profit_i"), merged.get("investment_i")))
+            item = dict(summary)
+            item["daily_profit"] = money(summary["daily_profit_i"])
+            item["cumulative"] = money(summary["cumulative_i"])
+            item["investment"] = money(summary["investment_i"])
+            item["rows"] = rows
+            days.append(item)
+        return {"days": days}
+    finally:
+        con.close()
+
+
+def grids_index(db_path: Path | None = None) -> list[dict]:
+    con = connect(db_path)
+    try:
+        return _rows(con, "SELECT bu_order_id, symbol, created_at, lifecycle FROM grid_positions ORDER BY symbol, created_at")
     finally:
         con.close()
 

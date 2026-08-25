@@ -10,7 +10,12 @@ import sys
 import tempfile
 from pathlib import Path
 
-from .store import DEFAULT_DB, CaptureError, ingest
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+from .store import DEFAULT_DB, CaptureError, connect, ingest
+
+TAIPEI = ZoneInfo("Asia/Taipei")
 
 ROOT = Path(__file__).resolve().parent.parent
 V1_CREDENTIALS = Path(r"D:\My-project\pionex grid record\PIONEX API.txt")
@@ -30,6 +35,14 @@ def node_path() -> str:
 def capture(credentials: Path, db_path: Path, replace_date: bool = False) -> dict:
     if not credentials.exists():
         raise CaptureError(f"Credential file not found: {credentials}")
+    if not replace_date and Path(db_path).exists():
+        con = connect(db_path)
+        try:
+            today = datetime.now(TAIPEI).date().isoformat()
+            if con.execute("SELECT 1 FROM daily_summary WHERE capture_date=?", (today,)).fetchone():
+                replace_date = True
+        finally:
+            con.close()
     with tempfile.NamedTemporaryFile(prefix="pionex-v2-", suffix=".json", delete=False) as tmp:
         out = Path(tmp.name)
     try:

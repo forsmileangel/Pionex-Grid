@@ -10,10 +10,13 @@ from urllib.parse import parse_qs, urlparse
 
 from .store import (
     DEFAULT_DB,
+    board_payload,
     daily_date_payload,
     daily_payload,
+    days_payload,
     export_sheets,
     grid_history_payload,
+    grids_index,
     grids_payload,
     status_payload,
     summary_latest,
@@ -59,6 +62,15 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/v1/status":
             self._json(status_payload(self.db_path))
+            return
+        if path == "/api/v1/board":
+            self._json(board_payload(self.db_path))
+            return
+        if path == "/api/v1/days":
+            self._json(days_payload(self.db_path))
+            return
+        if path == "/api/v1/grids-index":
+            self._json(grids_index(self.db_path))
             return
         if path == "/api/v1/daily":
             self._json(daily_payload(self.db_path))
