@@ -147,16 +147,35 @@ function isInverseCoinMargined(base, quote) {
   return String(quote || "").toUpperCase() !== "USDT" && String(base || "").replace(/\.PERP$/i, "").toUpperCase() === "USDT";
 }
 
-function contractPriceToUsdt(price, inverse) {
-  if (!inverse || price === null || price <= 0) return price;
-  return 1 / price;
+function liqDistance(side, mark, liq) {
+  return side === "short" ? ((liq - mark) / mark) * 100 : ((mark - liq) / mark) * 100;
 }
 
-function liqDistancePct(trend, mark, liq, inverse) {
-  if (mark === null || mark <= 0 || liq === null || liq <= 0) return null;
-  const side = inverse ? (trend === "short" ? "long" : "short") : trend;
-  if (side === "short") return ((liq - mark) / mark) * 100;
-  return ((mark - liq) / mark) * 100;
+function inRange(distance) {
+  return distance !== null && distance >= 0 && distance <= 100;
+}
+
+function magnitudeMismatch(mark, liq) {
+  if (!(mark > 0) || !(liq > 0)) return false;
+  return Math.abs(Math.log10(mark) - Math.log10(liq)) >= 2;
+}
+
+function normalizeLiq(trend, mark, liq, coinMargined) {
+  if (mark === null || liq === null || mark <= 0 || liq <= 0) return { liq, distance: null };
+  const side = trend === "short" ? "short" : "long";
+  const direct = liqDistance(side, mark, liq);
+  const inverse = Boolean(coinMargined) || magnitudeMismatch(mark, liq);
+  if (!inverse) return inRange(direct) ? { liq, distance: direct } : { liq, distance: 0 };
+  const display = magnitudeMismatch(mark, liq) ? 1 / liq : liq;
+  const flip = side === "short" ? "long" : "short";
+  const options = [
+    { liq: display, distance: liqDistance(flip, mark, display) },
+    { liq: display, distance: liqDistance(side, mark, display) },
+    { liq, distance: liqDistance(flip, mark, liq) },
+    { liq, distance: direct },
+  ];
+  const good = options.find((item) => inRange(item.distance));
+  return good || { liq: display, distance: 0 };
 }
 
 const STRIP_RAW_KEYS = /^(userId|keyId|token|secret|apiKey|apiSecret|api_key|api_secret)$/i;
@@ -289,7 +308,7 @@ async function detailToRecord(item, credentials, listStatus, perpTickers) {
   const liqUp = firstNumber(data.estimateLiquidationPriceUp, data.estimate_liquidation_price_up);
   const liqActual = firstNumber(data.liquidationPrice, data.liquidation_price);
   const liqContract = effectiveLiq(trend, liqDown, liqUp, liqActual);
-  const liqPrice = contractPriceToUsdt(liqContract, inverse);
+  const normalizedLiq = normalizeLiq(trend, mark.price, liqContract, inverse || coinMargined);
   const position = firstNumber(data.position);
   const notional = mark.price !== null && position !== null ? Math.abs(position) * mark.price : investment;
   const profit24h = scaleUsdt(firstNumber(data.gridProfit24h, data.grid_profit_24h, data.profit24h), coinMargined ? conversionPrice : null);
@@ -316,8 +335,8 @@ async function detailToRecord(item, credentials, listStatus, perpTickers) {
     MarkSymbol: mark.tickerSymbol,
     MarkTime: mark.time,
     Notional: notional,
-    LiqPrice: liqPrice,
-    LiqDistancePct: liqDistancePct(trend, mark.price, liqPrice, inverse),
+    LiqPrice: normalizedLiq.liq,
+    LiqDistancePct: normalizedLiq.distance,
     InverseCoinMargined: inverse,
     Position: position,
     PositionOpenPrice: firstNumber(data.positionOpenPrice, data.position_open_price),

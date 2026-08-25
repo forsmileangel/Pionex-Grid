@@ -19,25 +19,33 @@
     .stat span { display:block; color:var(--muted); font-size:12px; }
     .stat strong { font-size:22px; }
     .card { background:#fff; border:1px solid var(--line); border-radius:8px; padding:14px; margin:12px 0; overflow:auto; }
-    table.board { width:100%; min-width:980px; border-collapse:collapse; table-layout:fixed; font-size:13px; }
-    table.board th, table.board td { border-bottom:1px solid var(--line); padding:8px 8px; vertical-align:middle; overflow:hidden; text-overflow:ellipsis; }
+    table.board { width:100%; min-width:1100px; border-collapse:separate; border-spacing:0; table-layout:fixed; font-size:13px; }
+    table.board th, table.board td { border-bottom:1px solid var(--line); padding:10px 12px; vertical-align:middle; overflow:hidden; text-overflow:ellipsis; }
     table.board th { background:var(--soft); position:sticky; top:0; z-index:1; font-weight:600; }
     table.board .n { text-align:right; font-variant-numeric:tabular-nums; font-feature-settings:"tnum"; white-space:nowrap; }
     table.board .t { text-align:left; white-space:nowrap; }
-    table.board col.c-date { width:11%; }
-    table.board col.c-size { width:12%; }
-    table.board col.c-sym { width:13%; }
-    table.board col.c-mark { width:12%; }
-    table.board col.c-liq { width:11%; }
+    table.board col.c-date { width:12%; }
+    table.board col.c-size { width:14%; }
+    table.board col.c-sym { width:16%; }
+    table.board col.c-mark { width:11%; }
+    table.board col.c-liq { width:10%; }
     table.board col.c-dist { width:9%; }
-    table.board col.c-grid { width:12%; }
-    table.board col.c-day { width:12%; }
-    table.board col.c-pct { width:8%; }
+    table.board col.c-grid { width:11%; }
+    table.board col.c-day { width:11%; }
+    table.board col.c-pct { width:6%; }
+    table.board th.c-size, table.board td.c-size { padding-right:22px; border-right:1px solid var(--line); }
+    table.board th.c-sym, table.board td.c-sym { padding-left:22px; }
     .sym { display:block; font-weight:600; }
     .lev { display:block; color:var(--muted); font-size:12px; }
     table.plain { width:100%; border-collapse:collapse; table-layout:fixed; font-size:13px; }
     table.plain th, table.plain td { border-bottom:1px solid var(--line); padding:8px 8px; text-align:right; font-variant-numeric:tabular-nums; }
     table.plain th:first-child, table.plain td:first-child, table.plain th:nth-child(2), table.plain td:nth-child(2) { text-align:left; }
+    table.kv { width:100%; border-collapse:collapse; table-layout:fixed; font-size:13px; }
+    table.kv th, table.kv td { border-bottom:1px solid var(--line); padding:6px 8px; vertical-align:top; word-break:break-word; }
+    table.kv th { width:32%; text-align:left; color:var(--muted); font-weight:600; background:var(--soft); }
+    table.kv td { text-align:left; font-variant-numeric:tabular-nums; }
+    details { margin:10px 0; }
+    details > summary { cursor:pointer; font-weight:600; padding:8px 0; }
     tr.clickable { cursor:pointer; }
     tr.clickable:hover { background:#eef6f7; }
     .up { color:var(--up); }
@@ -101,18 +109,18 @@ function positionTable(rows, profitKey) {
     <col class="c-date"><col class="c-size"><col class="c-sym"><col class="c-mark">
     <col class="c-liq"><col class="c-dist"><col class="c-grid"><col class="c-day"><col class="c-pct">
   </colgroup><thead><tr>
-    <th class="t">日期</th><th class="n">倉位大小 (USDT)</th><th class="t">標的</th><th class="n">現價 / Mark</th>
+    <th class="t c-date">建倉日期</th><th class="n c-size">倉位大小 (USDT)</th><th class="t c-sym">標的</th><th class="n">現價 / Mark</th>
     <th class="n">強平價</th><th class="n">強平距離</th><th class="n">網格利潤 (USDT)</th><th class="n">單日利潤 (USDT)</th><th class="n">單天 %</th>
   </tr></thead><tbody>${rows.map((r) => {
     const day = profitKey === "daily" ? r.daily_profit : r.profit_24h;
     const dayV = day && day.usdt;
     const sizeV = r.investment && r.investment.usdt != null ? Number(r.investment.usdt) : (r.size && r.size.usdt != null ? Number(r.size.usdt) : null);
     const pct = dayV != null && sizeV ? Number(dayV) / sizeV * 100 : null;
-    const opened = (r.opened_at || "").slice(0, 10);
+    const opened = r.opened_at || "";
     return `<tr class="clickable" data-id="${r.bu_order_id || ""}">
-      <td class="t">${opened || "—"}</td>
-      <td class="n">${usdt(r.investment || r.size)}</td>
-      <td class="t"><span class="sym">${r.symbol || "—"}</span><span class="lev">${r.leverage || ""}</span></td>
+      <td class="t c-date">${opened || "—"}</td>
+      <td class="n c-size">${usdt(r.investment || r.size)}</td>
+      <td class="t c-sym"><span class="sym">${r.symbol || "—"}</span><span class="lev">${r.leverage || ""}</span></td>
       <td class="n">${n(r.mark_price, 4)}</td>
       <td class="n">${n(r.liq_price, 4)}</td>
       <td class="n ${cls(r.liq_distance_pct)}">${r.liq_distance_pct == null ? "—" : n(r.liq_distance_pct, 2) + "%"}</td>
@@ -130,6 +138,8 @@ async function renderBoard() {
     <div class="stats">
       <div class="stat"><span>統計時間</span><strong>${board.as_of ? board.as_of.replace("T"," ").slice(0,19) : "尚無"}</strong></div>
       <div class="stat"><span>過去 24 小時總利潤</span><strong class="${cls(total)}">${signed(total)} USDT</strong></div>
+      <div class="stat"><span>目前倉位加總</span><strong>${usdt(board.total_investment)} USDT</strong></div>
+      <div class="stat"><span>網格利潤加總</span><strong>${usdt(board.total_grid_profit)} USDT</strong></div>
       <div class="stat"><span>倉位數</span><strong>${board.position_count || 0}</strong></div>
     </div>
     <div class="card">
@@ -160,26 +170,6 @@ async function renderDaily() {
   bindHistoryClicks();
 }
 
-async function renderHistory() {
-  const list = await get("/api/v1/grids-index");
-  if (!list.length) { app.innerHTML = "<p class='muted'>沒有網格</p>"; return; }
-  if (!historyId || !list.some((g) => g.bu_order_id === historyId)) historyId = list[0].bu_order_id;
-  const data = await get("/api/v1/grids/" + encodeURIComponent(historyId) + "/history");
-  const options = list.map((g) => `<option value="${g.bu_order_id}" ${g.bu_order_id===historyId?"selected":""}>${g.symbol} · ${g.created_at} · ${g.lifecycle}</option>`).join("");
-  app.innerHTML = `<div class="card">
-    <p><label>選擇網格 <select id="gridPick">${options}</select></label></p>
-    <p class="muted">${(data.position && data.position.symbol) || historyId}</p>
-    <table class="plain"><thead><tr><th>日期</th><th>狀態</th><th>網格利潤</th><th>當日差額</th></tr></thead>
-    <tbody>${(data.profits||[]).map((p)=>`<tr>
-      <td>${p.capture_date}</td><td>${p.status}</td>
-      <td>${usdt(p.grid_profit)}</td>
-      <td class="${cls(p.daily_profit && p.daily_profit.usdt)}">${signed(p.daily_profit && p.daily_profit.usdt)}</td>
-    </tr>`).join("")}</tbody></table>
-    <p class="muted">每格下單量（API 欄位 perVolume）是每一格掛單的幣數量，不是報酬率。</p>
-  </div>`;
-  document.getElementById("gridPick").onchange = (e) => { historyId = e.target.value; render(); };
-}
-
 async function renderStatus() {
   const s = await get("/api/v1/status");
   app.innerHTML = `<div class="card">
@@ -187,6 +177,75 @@ async function renderStatus() {
     <p>未決關倉：<span class="${s.unresolved?"warn":""}">${s.unresolved}</span></p>
     <p>漏抓日期：${(s.missing_dates||[]).join(", ") || "無"}</p>
   </div>`;
+}
+
+function fmt(value) {
+  if (value === null || value === undefined || value === "") return "—";
+  if (typeof value === "object") {
+    if (value.usdt != null) return usdt(value);
+    try { return JSON.stringify(value); } catch { return String(value); }
+  }
+  return String(value);
+}
+
+function kvTable(rows) {
+  if (!rows || !rows.length) return "<p class='muted'>無</p>";
+  return `<table class="kv">${rows.map((r) => `<tr><th>${r.key}</th><td>${fmt(r.value)}</td></tr>`).join("")}</table>`;
+}
+
+async function renderHistory() {
+  const list = await get("/api/v1/grids-index");
+  if (!list.length) { app.innerHTML = "<p class='muted'>沒有網格</p>"; return; }
+  if (!historyId || !list.some((g) => g.bu_order_id === historyId)) historyId = list[0].bu_order_id;
+  const data = await get("/api/v1/grids/" + encodeURIComponent(historyId) + "/history");
+  const options = list.map((g) => `<option value="${g.bu_order_id}" ${g.bu_order_id===historyId?"selected":""}>${g.symbol} · ${g.created_at} · ${g.lifecycle}</option>`).join("");
+  const b = data.board || {};
+  const pos = data.position || {};
+  app.innerHTML = `
+    <div class="card">
+      <p><label>選擇網格 <select id="gridPick">${options}</select></label></p>
+      <div class="stats">
+        <div class="stat"><span>標的</span><strong>${pos.symbol || "—"}</strong></div>
+        <div class="stat"><span>倉位大小</span><strong>${usdt(b.investment || b.size)}</strong></div>
+        <div class="stat"><span>網格利潤</span><strong>${usdt(b.grid_profit)}</strong></div>
+        <div class="stat"><span>過去 24 小時</span><strong class="${cls(b.profit_24h && b.profit_24h.usdt)}">${signed(b.profit_24h && b.profit_24h.usdt)}</strong></div>
+        <div class="stat"><span>現價 / Mark</span><strong>${n(b.mark_price, 4)}</strong></div>
+        <div class="stat"><span>強平價</span><strong>${n(b.liq_price, 4)}</strong></div>
+        <div class="stat"><span>強平距離</span><strong>${b.liq_distance_pct == null ? "—" : n(b.liq_distance_pct, 2) + "%"}</strong></div>
+      </div>
+    </div>
+    <div class="card">
+      <h3>每日差額</h3>
+      <table class="plain"><thead><tr><th>日期</th><th>狀態</th><th>投資額</th><th>前次利潤</th><th>當次利潤</th><th>當日差額</th><th>累計</th></tr></thead>
+      <tbody>${(data.profits||[]).map((p)=>`<tr>
+        <td>${p.capture_date}</td><td>${p.status}</td>
+        <td>${usdt(p.investment)}</td>
+        <td>${usdt(p.prev_grid_profit)}</td>
+        <td>${usdt(p.grid_profit)}</td>
+        <td class="${cls(p.daily_profit && p.daily_profit.usdt)}">${signed(p.daily_profit && p.daily_profit.usdt)}</td>
+        <td>${usdt(p.cumulative)}</td>
+      </tr>`).join("")}</tbody></table>
+    </div>
+    <div class="card">
+      <h3>本機快照欄位</h3>
+      ${kvTable(data.snapshot_fields)}
+    </div>
+    <div class="card">
+      <h3>API 網格詳情 buOrderData</h3>
+      <p class="muted">每格下單量在 API 叫 perVolume，是每一格掛單的幣數量，不是 %。</p>
+      ${kvTable(data.api_fields)}
+    </div>
+    <div class="card">
+      <details open>
+        <summary>API 訂單層 order</summary>
+        ${kvTable(data.order_fields)}
+      </details>
+      <details>
+        <summary>API 清單層 list</summary>
+        ${kvTable(data.list_fields)}
+      </details>
+    </div>`;
+  document.getElementById("gridPick").onchange = (e) => { historyId = e.target.value; render(); };
 }
 
 function bindHistoryClicks() {

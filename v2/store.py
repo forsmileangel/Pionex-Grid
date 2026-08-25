@@ -10,6 +10,8 @@ from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from .liq import normalize_liq
+
 SCALE = 100_000_000
 SCHEMA_VERSION = 2
 TAIPEI = ZoneInfo("Asia/Taipei")
@@ -513,15 +515,6 @@ def _effective_liq(trend: str | None, down, up, liq) -> float | None:
     return None
 
 
-def _coin_margined_display_liq(product: str | None, mark: float | None, liq: float | None) -> tuple[float | None, bool]:
-    """USDT.PERP/ETH style grids report liq in inverse units (e.g. 0.000769 = 1300.34 USDT)."""
-    if product != "coin_margined_contract_grid" or liq is None or liq <= 0:
-        return liq, False
-    if mark is not None and mark > 1 and 0 < liq < 1:
-        return 1.0 / liq, True
-    return liq, False
-
-
 def _pct(value: float | None) -> str | None:
     if value is None:
         return None
@@ -535,26 +528,20 @@ def _board_row(snap: dict, profit_24h_i: int | None, daily_i: int | None, size_i
     liq = _effective_liq(snap.get("trend"), from_fixed(snap.get("estimate_liq_down_i")), from_fixed(snap.get("estimate_liq_up_i")), from_fixed(snap.get("liquidation_price_i")))
     if liq is None:
         liq = _num(from_fixed(snap.get("liquidation_price_i")))
-    liq, inverse = _coin_margined_display_liq(snap.get("product"), mark, liq)
+    liq, distance, _mode = normalize_liq(
+        snap.get("trend"),
+        mark,
+        liq,
+        coin_margined=snap.get("product") == "coin_margined_contract_grid",
+    )
     size_i = snap.get("investment_i") if snap.get("investment_i") is not None else size_i
-    distance = None
-    if mark and mark > 0 and liq and liq > 0:
-        side = snap.get("trend") or ""
-        if inverse:
-            side = "long" if side == "short" else "short"
-        if side == "short":
-            distance = (liq - mark) / mark * 100
-        else:
-            distance = (mark - liq) / mark * 100
-    elif snap.get("liq_distance_pct_s"):
-        distance = _num(snap.get("liq_distance_pct_s"))
     profit_i = profit_24h_i if profit_24h_i is not None else daily_i
     pct = None
     if profit_i is not None and size_i:
         pct = float(Decimal(profit_i) / Decimal(size_i) * 100)
     return {
         "bu_order_id": snap.get("bu_order_id"),
-        "opened_at": snap.get("created_at"),
+        "opened_at": snap.get("position_created") or snap.get("created_at"),
         "symbol": snap.get("symbol"),
         "trend": snap.get("trend"),
         "leverage": snap.get("leverage"),
@@ -658,7 +645,7 @@ def board_payload(db_path: Path | None = None) -> dict:
             return {"as_of": None, "window": "past_24h", "rows": [], "total_profit_24h": money(0), "position_count": 0}
         snaps = _rows(
             con,
-            """SELECT s.*, p.lifecycle FROM grid_snapshots s
+            """SELECT s.*, p.lifecycle, p.created_at AS position_created FROM grid_snapshots s
                JOIN grid_positions p ON p.bu_order_id=s.bu_order_id
                WHERE s.run_id=? AND s.list_status='running'
                ORDER BY s.symbol, s.created_at""",
@@ -670,6 +657,8 @@ def board_payload(db_path: Path | None = None) -> dict:
         }
         rows = []
         total_24h = 0
+        total_investment = 0
+        total_grid_profit = 0
         for snap in snaps:
             profit = profits.get(snap["bu_order_id"])
             row = _board_row(
@@ -680,6 +669,10 @@ def board_payload(db_path: Path | None = None) -> dict:
             )
             if snap.get("grid_profit_24h_i"):
                 total_24h += snap["grid_profit_24h_i"]
+            if snap.get("investment_i"):
+                total_investment += snap["investment_i"]
+            if snap.get("grid_profit_i"):
+                total_grid_profit += snap["grid_profit_i"]
             rows.append(row)
         return {
             "as_of": last["captured_at"],
@@ -687,6 +680,8 @@ def board_payload(db_path: Path | None = None) -> dict:
             "window": "past_24h",
             "position_count": len(rows),
             "total_profit_24h": money(total_24h),
+            "total_investment": money(total_investment),
+            "total_grid_profit": money(total_grid_profit),
             "rows": rows,
         }
     finally:
@@ -701,7 +696,7 @@ def days_payload(db_path: Path | None = None) -> dict:
         for summary in summaries:
             snaps = _rows(
                 con,
-                """SELECT s.*, p.lifecycle, d.status, d.daily_profit_i, d.prev_grid_profit_i, d.cumulative_i
+                """SELECT s.*, p.lifecycle, p.created_at AS position_created, d.status, d.daily_profit_i, d.prev_grid_profit_i, d.cumulative_i
                    FROM daily_grid_profit d
                    JOIN grid_positions p ON p.bu_order_id=d.bu_order_id
                    LEFT JOIN grid_snapshots s ON s.run_id=d.run_id AND s.bu_order_id=d.bu_order_id
@@ -761,15 +756,52 @@ def grid_history_payload(bu_order_id: str, db_path: Path | None = None) -> dict:
         snaps = _rows(con, "SELECT * FROM grid_snapshots WHERE bu_order_id=? ORDER BY run_id", (bu_order_id,))
         profits = _rows(con, "SELECT * FROM daily_grid_profit WHERE bu_order_id=? ORDER BY capture_date", (bu_order_id,))
         for row in snaps:
-            row["investment"] = money(row["investment_i"])
-            row["grid_profit"] = money(row["grid_profit_i"])
-            row["margin_balance"] = money(row["margin_balance_i"])
-            row["estimate_liq_up"] = money(row["estimate_liq_up_i"])
-            row["estimate_liq_down"] = money(row["estimate_liq_down_i"])
+            for key in list(row.keys()):
+                if key.endswith("_i") and row[key] is not None:
+                    row[key[:-2]] = money(row[key])
+            row["investment"] = money(row.get("investment_i"))
+            row["grid_profit"] = money(row.get("grid_profit_i"))
+            row["margin_balance"] = money(row.get("margin_balance_i"))
         for row in profits:
             row["daily_profit"] = money(row["daily_profit_i"])
             row["grid_profit"] = money(row["grid_profit_i"])
-        return {"position": dict(pos) if pos else None, "snapshots": snaps, "profits": profits}
+            row["prev_grid_profit"] = money(row.get("prev_grid_profit_i"))
+            row["cumulative"] = money(row.get("cumulative_i"))
+            row["investment"] = money(row.get("investment_i"))
+        latest = dict(snaps[-1]) if snaps else {}
+        raw = {}
+        if latest.get("raw_json"):
+            try:
+                raw = json.loads(latest["raw_json"])
+            except json.JSONDecodeError:
+                raw = {}
+        order = raw.get("order") or {}
+        api_data = order.get("buOrderData") or {}
+        api_order = {k: v for k, v in order.items() if k != "buOrderData"}
+        list_item = raw.get("list") or {}
+        board = None
+        if latest:
+            board = _board_row(latest, latest.get("grid_profit_24h_i"), None, latest.get("investment_i"))
+        snapshot_fields = []
+        if latest:
+            for key, value in latest.items():
+                if key == "raw_json":
+                    continue
+                snapshot_fields.append({"key": key, "value": value})
+        api_fields = [{"key": k, "value": api_data[k]} for k in sorted(api_data.keys())]
+        order_fields = [{"key": k, "value": api_order[k]} for k in sorted(api_order.keys())]
+        list_fields = [{"key": k, "value": list_item[k]} for k in sorted(list_item.keys())]
+        return {
+            "position": dict(pos) if pos else None,
+            "snapshots": snaps,
+            "profits": profits,
+            "latest": latest,
+            "board": board,
+            "snapshot_fields": snapshot_fields,
+            "api_fields": api_fields,
+            "order_fields": order_fields,
+            "list_fields": list_fields,
+        }
     finally:
         con.close()
 
