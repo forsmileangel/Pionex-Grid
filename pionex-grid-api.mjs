@@ -91,6 +91,21 @@ function formatTaipeiTime(value) {
   return `${values.year}-${values.month}-${values.day} ${values.hour}:${values.minute}:${values.second}`;
 }
 
+function nowTaipeiIso() {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Taipei",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.filter((part) => part.type !== "literal").map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}T${values.hour}:${values.minute}:${values.second}+08:00`;
+}
+
 function normalizeSymbol(base, quote) {
   const cleanBase = String(base || "").replace(/\.PERP$/i, "");
   const cleanQuote = String(quote || "").replace(/\.PERP$/i, "");
@@ -350,8 +365,9 @@ async function detailToRecord(item, credentials, listStatus, perpTickers) {
     FeeBase: firstNumber(data.feeBase, data.baseFee),
     FeeQuote: firstNumber(data.feeQuote, data.quoteFee, data.fee),
     FundingFee: scaleUsdt(firstNumber(data.totalFundingFee, data.fundingFeePayment, data.fundingFee, data.funding_fee), coinMargined ? conversionPrice : null),
-    ProfitReinvest: scaleUsdt(firstNumber(data.profitReduce, data.profit_reduce), coinMargined ? conversionPrice : null),
-    ProfitWithdrawn: scaleUsdt(firstNumber(data.profitWithdrawn, data.profit_withdrawn, data.profitExited), coinMargined ? conversionPrice : null),
+    ProfitReinvest: scaleUsdt(firstNumber(data.profitReinvest, data.profit_reinvest), coinMargined ? conversionPrice : null),
+    ProfitReduce: scaleUsdt(firstNumber(data.profitReduce, data.profit_reduce), coinMargined ? conversionPrice : null),
+    ProfitWithdrawn: scaleUsdt(firstNumber(data.profitWithdrawn, data.profitWithdrawnU, data.profit_withdrawn, data.profitExited), coinMargined ? conversionPrice : null),
     ExtraMargin: extraMargin,
     MarginBalance: firstNumber(data.marginBalance, data.margin_balance),
     InitMargin: firstNumber(data.initMargin, data.initialMargin, data.usdtInvestment),
@@ -440,7 +456,7 @@ async function collect() {
   try { wallet = await getWalletOverview(credentials); } catch (error) { wallet = { error: error.message }; }
   return {
     ok: true,
-    CapturedAt: new Date().toISOString(),
+    CapturedAt: nowTaipeiIso(),
     Source: SOURCE,
     IncludeFinished: includeFinished,
     ExpectedCardCount: runningRecords.length,

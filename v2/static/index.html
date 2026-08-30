@@ -3,26 +3,45 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Pionex Grid v2</title>
+  <title>Pionex Grid — SQLite 儀表板</title>
   <style>
     :root { --ink:#172026; --muted:#5c6b73; --line:#d7e0e4; --surface:#fff; --soft:#eef3f5; --accent:#2e6970; --warn:#8b5e22; --up:#1f7a4d; --down:#b42318; }
     * { box-sizing:border-box; }
     body { margin:0; color:var(--ink); background:#f4f7f8; font:15px/1.5 system-ui,"Noto Sans TC",sans-serif; }
     header { background:#1f2c31; color:#fff; padding:16px 20px; }
-    header h1 { margin:0 0 10px; font-size:20px; }
+    header h1 { margin:0 0 4px; font-size:20px; }
+    header .sub { margin:0 0 10px; color:#c5d4d8; font-size:13px; }
     nav { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
     nav button, .btn { background:#2e6970; color:#fff; border:0; padding:8px 12px; border-radius:6px; cursor:pointer; }
     nav button.active { background:#4d8a90; }
     main { max-width:1280px; margin:0 auto; padding:16px 12px 56px; }
     .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:10px; }
     .stat { background:#fff; border:1px solid var(--line); border-radius:8px; padding:12px 14px; }
-    .stat span { display:block; color:var(--muted); font-size:12px; }
+    .stat span, .stat .hint { display:block; color:var(--muted); font-size:12px; }
+    .hint { background:none; border:0; padding:0; font:inherit; color:inherit; cursor:help; border-bottom:1px dotted #7a9aa3; }
+    th .hint { margin-left:4px; border-bottom:0; color:var(--muted); font-size:12px; font-weight:700; }
+    .hint-pop { position:absolute; z-index:30; max-width:280px; background:#1f2c31; color:#fff; font-size:13px; line-height:1.45; padding:10px 12px; border-radius:8px; box-shadow:0 8px 22px #17202633; }
+    .live-bar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:0 0 12px; }
+    .live-bar .btn.ghost { background:#fff; color:var(--accent); border:1px solid var(--line); }
+    .live-bar .btn.danger { background:#8b4a3a; }
+    .live-bar .btn:disabled { opacity:0.45; cursor:not-allowed; }
+    .mask { position:fixed; inset:0; background:#17202666; z-index:40; display:flex; align-items:center; justify-content:center; padding:16px; }
+    .mask[hidden] { display:none !important; }
+    .dialog { background:#fff; border-radius:10px; max-width:420px; padding:18px 20px; box-shadow:0 12px 32px #17202633; }
+    .dialog h3 { margin:0 0 8px; }
+    .dialog .actions { display:flex; gap:8px; justify-content:flex-end; margin-top:14px; }
     .stat strong { font-size:22px; }
     .stat .twd, td .twd { display:block; color:var(--muted); font-size:12px; font-weight:500; }
+    .stat .pct { display:block; font-size:13px; font-weight:600; margin-top:2px; }
     .card { background:#fff; border:1px solid var(--line); border-radius:8px; padding:14px; margin:12px 0; overflow:auto; }
     table.board { width:100%; min-width:1100px; border-collapse:separate; border-spacing:0; table-layout:fixed; font-size:13px; }
     table.board th, table.board td { border-bottom:1px solid var(--line); padding:10px 12px; vertical-align:middle; overflow:hidden; text-overflow:ellipsis; }
     table.board th { background:var(--soft); position:sticky; top:0; z-index:1; font-weight:600; }
+    table.board th.sortable { cursor:pointer; user-select:none; }
+    table.board th.sortable:hover { color:var(--accent); }
+    table.board th.sortable .arrow { font-size:10px; margin-left:4px; color:var(--muted); font-weight:500; }
+    table.board th.sort-asc .arrow::after { content:"▲"; color:var(--accent); }
+    table.board th.sort-desc .arrow::after { content:"▼"; color:var(--accent); }
     table.board .n { text-align:right; font-variant-numeric:tabular-nums; font-feature-settings:"tnum"; white-space:nowrap; }
     table.board .t { text-align:left; white-space:nowrap; }
     table.board col.c-date { width:12%; }
@@ -57,26 +76,71 @@
     .day h3 { margin:0; padding:12px 14px; background:var(--soft); cursor:pointer; display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; }
     .day .body { padding:0 8px 10px; }
     select { padding:6px 8px; font-size:14px; max-width:100%; }
+    .cal-head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:10px; }
+    .cal-head button { background:#fff; color:var(--accent); border:1px solid var(--line); padding:6px 12px; border-radius:6px; cursor:pointer; font-weight:700; }
+    .cal { display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:6px; }
+    .cal-dow { text-align:center; color:var(--muted); font-size:12px; padding:4px 0; }
+    .cal-cell { min-height:72px; background:#fff; border:1px solid var(--line); border-radius:8px; padding:6px 7px; text-align:left; cursor:default; }
+    button.cal-cell { cursor:pointer; width:100%; font:inherit; color:inherit; }
+    button.cal-cell:hover, .cal-cell.is-selected { border-color:var(--accent); background:#eef6f7; }
+    .cal-cell.is-muted { background:#f7f9fa; min-height:28px; }
+    .cal-num { display:block; font-weight:700; font-size:13px; }
+    .cal-amt { display:block; font-size:11px; font-variant-numeric:tabular-nums; color:var(--muted); }
+    .event-tag { display:inline-block; font-size:11px; padding:1px 6px; border-radius:999px; background:var(--soft); margin-right:4px; }
+    .event-tag.is-review { background:#f4e6c8; color:var(--warn); }
+    .event-tag.is-add { background:#e4eef0; }
+    .decide { display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
+    .btn.tiny { padding:4px 8px; font-size:12px; }
     @media (max-width:760px) { .stat strong { font-size:18px; } table { font-size:12px; } }
   </style>
 </head>
 <body>
 <header>
   <h1>Pionex Grid 倉位</h1>
+  <p class="sub">SQLite 本機紀錄 · 不是 08:00 那份 Excel</p>
   <nav>
-    <button data-page="board" class="active">目前倉位</button>
+    <button data-page="live" class="active">目前倉位</button>
+    <button data-page="records">倉位紀錄</button>
     <button data-page="daily">每日詳情</button>
+    <button data-page="calendar">月曆</button>
     <button data-page="history">單一網格</button>
     <button data-page="status">執行狀態</button>
     <a class="btn" href="/api/v1/export.xlsx">匯出 Excel</a>
+    <a class="btn" href="/architecture.html">架構說明</a>
   </nav>
 </header>
 <main id="app"><p class="muted">載入中…</p></main>
 <script>
 const app = document.getElementById("app");
-let page = "board";
+let page = "live";
+let liveData = null;
+let liveBusy = false;
 let historyId = new URLSearchParams(location.search).get("grid") || "";
+let boardData = null;
+let dailyData = null;
+let boardSort = { key: "", dir: "desc" };
+let dailySort = { key: "", dir: "desc" };
+let dailyOpen = null;
+let calendarData = null;
+let calMonth = null;
+let calSelected = "";
 
+function fmtTaipei(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) {
+    const s = String(iso).replace("T", " ").slice(0, 19);
+    return s ? s + " +08:00" : "";
+  }
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Taipei",
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(d);
+  const g = (t) => (parts.find((p) => p.type === t) || {}).value || "";
+  return `${g("year")}-${g("month")}-${g("day")} ${g("hour")}:${g("minute")}:${g("second")} +08:00`;
+}
 const n = (v, d=2) => v == null || v === "" || Number.isNaN(Number(v)) ? "—" : Number(v).toLocaleString("en-US", { minimumFractionDigits:d, maximumFractionDigits:d });
 const usdt = (m) => m && m.usdt != null ? n(m.usdt, 2) : "—";
 const twd = (m) => m && m.twd != null ? "約 " + n(m.twd, 0) + " TWD" : "";
@@ -91,6 +155,31 @@ const bothSigned = (m) => {
   return signed(m.usdt) + " USDT" + (extra ? `<span class="twd">${extra}</span>` : "");
 };
 const cls = (v) => { const x = Number(v); if (!Number.isFinite(x) || x === 0) return ""; return x > 0 ? "up" : "down"; };
+const tip = (label, text) => `<button type="button" class="hint" data-tip="${String(text).replace(/"/g, "&quot;")}">${label}</button>`;
+
+document.addEventListener("click", (e) => {
+  const hint = e.target.closest(".hint");
+  const pop = document.getElementById("hint-pop");
+  if (hint) {
+    e.preventDefault();
+    e.stopPropagation();
+    const text = hint.getAttribute("data-tip") || "";
+    if (pop && pop.dataset.src === text) { pop.remove(); return; }
+    if (pop) pop.remove();
+    const box = document.createElement("div");
+    box.id = "hint-pop";
+    box.className = "hint-pop";
+    box.dataset.src = text;
+    box.textContent = text;
+    document.body.appendChild(box);
+    const r = hint.getBoundingClientRect();
+    const left = Math.min(r.left + window.scrollX, window.scrollX + window.innerWidth - 300);
+    box.style.left = Math.max(8, left) + "px";
+    box.style.top = (r.bottom + window.scrollY + 8) + "px";
+    return;
+  }
+  if (pop) pop.remove();
+}, true);
 
 document.querySelectorAll("nav button").forEach((btn) => {
   btn.onclick = () => {
@@ -115,15 +204,68 @@ function signed(v, digits=2) {
   return (x > 0 ? "+" : x < 0 ? "-" : "") + t;
 }
 
-function positionTable(rows, profitKey) {
+function moneyNum(m) {
+  if (m == null || m.usdt == null || m.usdt === "") return null;
+  const x = Number(m.usdt);
+  return Number.isFinite(x) ? x : null;
+}
+
+function sortValue(r, key, profitKey) {
+  const day = profitKey === "daily" ? r.daily_profit : r.profit_24h;
+  const dayV = moneyNum(day);
+  const sizeV = moneyNum(r.investment) != null ? moneyNum(r.investment) : moneyNum(r.size);
+  const pct = dayV != null && sizeV ? dayV / sizeV * 100 : null;
+  if (key === "opened_at") return r.opened_at || "";
+  if (key === "size") return sizeV;
+  if (key === "symbol") return (r.symbol || "").toLowerCase();
+  if (key === "mark") return Number(r.mark_price);
+  if (key === "liq") return Number(r.liq_price);
+  if (key === "dist") return Number(r.liq_distance_pct);
+  if (key === "grid") return moneyNum(r.grid_profit);
+  if (key === "day") return dayV;
+  if (key === "pct") return pct;
+  return null;
+}
+
+function missingSort(v) {
+  return v == null || v === "" || (typeof v === "number" && !Number.isFinite(v));
+}
+
+function sortedRows(rows, sort, profitKey) {
+  if (!sort || !sort.key) return rows.slice();
+  const dir = sort.dir === "asc" ? 1 : -1;
+  return rows.slice().sort((a, b) => {
+    const av = sortValue(a, sort.key, profitKey);
+    const bv = sortValue(b, sort.key, profitKey);
+    if (missingSort(av) && missingSort(bv)) return 0;
+    if (missingSort(av)) return 1;
+    if (missingSort(bv)) return -1;
+    if (typeof av === "string" && typeof bv === "string") return av.localeCompare(bv, "zh-Hant") * dir;
+    if (av < bv) return -dir;
+    if (av > bv) return dir;
+    return 0;
+  });
+}
+
+function sortClass(key, sort) {
+  if (!sort || sort.key !== key) return "sortable";
+  return "sortable " + (sort.dir === "asc" ? "sort-asc" : "sort-desc");
+}
+
+function positionTable(rows, profitKey, sort) {
   if (!rows.length) return "<p class='muted'>沒有倉位列</p>";
+  const ordered = sortedRows(rows, sort, profitKey);
+  const dayTip = profitKey === "daily"
+    ? "跟上一次記錄比，這筆倉的網格利潤多了或少了多少。第一天是 0。幣本位（ETH）是當天新增的幣×抓取價，不是把畫面 USDT 直接相減。"
+    : "派網回傳的過去 24 小時網格利潤，不是日記帳。";
+  const h = (key, extra, label, note) => `<th class="${extra} ${sortClass(key, sort)}" data-sort="${key}">${label}${note ? tip("?", note) : ""}<span class="arrow"></span></th>`;
   return `<table class="board"><colgroup>
     <col class="c-date"><col class="c-size"><col class="c-sym"><col class="c-mark">
     <col class="c-liq"><col class="c-dist"><col class="c-grid"><col class="c-day"><col class="c-pct">
   </colgroup><thead><tr>
-    <th class="t c-date">建倉日期</th><th class="n c-size">倉位大小 (USDT)</th><th class="t c-sym">標的</th><th class="n">現價 / Mark</th>
-    <th class="n">強平價</th><th class="n">強平距離</th><th class="n">網格利潤 (USDT)</th><th class="n">單日利潤 (USDT)</th><th class="n">單天 %</th>
-  </tr></thead><tbody>${rows.map((r) => {
+    ${h("opened_at", "t c-date", "建倉日期")}${h("size", "n c-size", "倉位大小 (USDT)", "實際投入的本金，不是持倉數量乘現價。")}${h("symbol", "t c-sym", "標的")}${h("mark", "n", "現價 / Mark")}
+    ${h("liq", "n", "強平價")}${h("dist", "n", "強平距離", "離強平還剩多少％，0 到 100。多數是 U 本位；幣本位會另外換算。")}${h("grid", "n", "網格利潤 (USDT)", "這筆倉目前帳上的累計網格利潤。複投後會從 0 再算。")}${h("day", "n", "單日利潤 (USDT)", dayTip)}${h("pct", "n", "單天 %", "單日利潤 ÷ 倉位大小。")}
+  </tr></thead><tbody>${ordered.map((r) => {
     const day = profitKey === "daily" ? r.daily_profit : r.profit_24h;
     const dayV = day && day.usdt;
     const sizeV = r.investment && r.investment.usdt != null ? Number(r.investment.usdt) : (r.size && r.size.usdt != null ? Number(r.size.usdt) : null);
@@ -132,7 +274,7 @@ function positionTable(rows, profitKey) {
     return `<tr class="clickable" data-id="${r.bu_order_id || ""}">
       <td class="t c-date">${opened || "—"}</td>
       <td class="n c-size">${usdt(r.investment || r.size)}${twd(r.investment || r.size) ? `<span class="twd">${twd(r.investment || r.size)}</span>` : ""}</td>
-      <td class="t c-sym"><span class="sym">${r.symbol || "—"}</span><span class="lev">${r.leverage || ""}</span></td>
+      <td class="t c-sym"><span class="sym">${r.symbol || "—"}</span><span class="lev">${r.leverage || ""}${profitKey === "daily" ? eventChip(r.event || r.status) : ""}</span></td>
       <td class="n">${n(r.mark_price, 4)}</td>
       <td class="n">${n(r.liq_price, 4)}</td>
       <td class="n ${cls(r.liq_distance_pct)}">${r.liq_distance_pct == null ? "—" : n(r.liq_distance_pct, 2) + "%"}</td>
@@ -143,52 +285,307 @@ function positionTable(rows, profitKey) {
   }).join("")}</tbody></table>`;
 }
 
-async function renderBoard() {
-  const board = await get("/api/v1/board");
+function toggleSort(sort, key) {
+  if (sort.key === key) sort.dir = sort.dir === "asc" ? "desc" : "asc";
+  else {
+    sort.key = key;
+    sort.dir = (key === "symbol") ? "asc" : "desc";
+  }
+}
+
+function bindSortHeaders(sort, onChange) {
+  app.querySelectorAll("th.sortable").forEach((th) => {
+    th.onclick = (e) => {
+      e.stopPropagation();
+      toggleSort(sort, th.dataset.sort);
+      onChange();
+    };
+  });
+}
+
+function paintBoard() {
+  const board = boardData;
   const total = board.total_profit_24h && board.total_profit_24h.usdt;
+  const pct24 = board.profit_24h_pct;
+  const fxRate = board.fx && (board.fx.usdt_twd != null ? board.fx.usdt_twd : board.fx.usd_twd);
   app.innerHTML = `
     <div class="stats">
       <div class="stat"><span>錢包總市值</span><strong>${board.wallet_total && board.wallet_total.usdt != null ? both(board.wallet_total) : "—"}</strong></div>
-      <div class="stat"><span>統計時間</span><strong>${board.as_of ? board.as_of.replace("T"," ").slice(0,19) : "尚無"}</strong></div>
-      <div class="stat"><span>過去 24 小時總利潤</span><strong class="${cls(total)}">${bothSigned(board.total_profit_24h)}</strong></div>
+      <div class="stat"><span>每日快照時間</span><strong>${board.as_of ? fmtTaipei(board.as_of) : "尚無"}</strong></div>
+      <div class="stat">${tip("過去 24 小時總利潤", "派網回傳的近 24 小時網格利潤加總。下面的％＝這筆 ÷ 目前倉位加總。")}<strong class="${cls(total)}">${bothSigned(board.total_profit_24h)}${pct24 == null || pct24 === "" ? "" : `<span class="pct ${cls(pct24)}">${signed(pct24)}%</span>`}</strong></div>
       <div class="stat"><span>目前倉位加總</span><strong>${both(board.total_investment)}</strong></div>
-      <div class="stat"><span>網格利潤加總</span><strong>${both(board.total_grid_profit)}</strong></div>
+      <div class="stat">${tip("網格利潤加總", "現在還開著的倉，把派網畫面上的網格利潤加起來。關倉、複投、提取後，這筆會變少。")}<strong>${both(board.total_grid_profit)}</strong></div>
+      <div class="stat">${tip("真實網格總利潤", "基準日之後有記錄到的複投、提取、關倉，會加回網格利潤。派網帳上舊的複投存量、加倉本金都不加。還沒做那些事時，會跟左邊加總一樣。")}<strong>${both(board.true_grid_profit || board.total_grid_profit)}</strong></div>
       <div class="stat"><span>倉位數</span><strong>${board.position_count || 0}</strong></div>
     </div>
     <div class="card">
-      <p class="muted">倉位大小是實際投入的 USDT。台幣用當日 USD/TWD ${board.fx && board.fx.usd_twd ? n(board.fx.usd_twd, 3) : "—"}（USDT 視為 1 美元）。單日利潤是過去 24 小時網格利潤；單天 % = 單日利潤 ÷ 投資額。</p>
-      ${positionTable(board.rows || [], "24h")}
+      <p class="muted">這頁是上一次每日快照（約 08:05 或手動抓取），不是即時。台幣 USDT→TWD ${fxRate != null ? n(fxRate, 3) : "—"}。虛線名稱可點說明；表頭可排序。</p>
+      ${positionTable(board.rows || [], "24h", boardSort)}
     </div>`;
+  bindSortHeaders(boardSort, paintBoard);
   bindHistoryClicks();
 }
 
-async function renderDaily() {
-  const data = await get("/api/v1/days");
-  const days = data.days || [];
+async function renderBoard() {
+  boardData = await get("/api/v1/board");
+  paintBoard();
+}
+
+function taipeiToday() {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Taipei" }).format(new Date());
+}
+
+async function postJson(url, body) {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body || {}),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || (url + " " + res.status));
+  return data;
+}
+
+function paintLive() {
+  const board = liveData || { available: false, rows: [] };
+  const total = board.total_profit_24h && board.total_profit_24h.usdt;
+  const pct24 = board.profit_24h_pct;
+  const fxRate = board.fx && (board.fx.usdt_twd != null ? board.fx.usdt_twd : board.fx.usd_twd);
+  const hasLive = !!(board.available && board.as_of);
+  const today = taipeiToday();
+  app.innerHTML = `
+    <div class="live-bar">
+      <button class="btn" id="liveRefresh" ${liveBusy ? "disabled" : ""}>${liveBusy ? "更新中…" : "更新目前倉位"}</button>
+      <button class="btn ghost" id="liveCommit" ${hasLive && !liveBusy ? "" : "disabled"}>把現在倉位寫入倉位歷史</button>
+      <span class="muted">${hasLive ? "暫存時間：" + fmtTaipei(board.as_of) + "（只留在這一頁，不會改 08:00／每日快照）" : "尚未抓過。按「更新目前倉位」只刷新這一頁暫存，不影響每日 8 點紀錄。"}</span>
+    </div>
+    <div class="stats">
+      <div class="stat"><span>錢包總市值</span><strong>${board.wallet_total && board.wallet_total.usdt != null ? both(board.wallet_total) : "—"}</strong></div>
+      <div class="stat"><span>即時更新時間</span><strong>${hasLive ? fmtTaipei(board.as_of) : "尚未抓過"}</strong></div>
+      <div class="stat">${tip("過去 24 小時總利潤", "派網回傳的近 24 小時網格利潤加總。下面的％＝這筆 ÷ 目前倉位加總。")}<strong class="${cls(total)}">${bothSigned(board.total_profit_24h)}${pct24 == null || pct24 === "" ? "" : `<span class="pct ${cls(pct24)}">${signed(pct24)}%</span>`}</strong></div>
+      <div class="stat"><span>目前倉位加總</span><strong>${both(board.total_investment)}</strong></div>
+      <div class="stat">${tip("網格利潤加總", "現在還開著的倉，把派網畫面上的網格利潤加起來。")}<strong>${both(board.total_grid_profit)}</strong></div>
+      <div class="stat">${tip("真實網格總利潤", "這屏開著的倉，網格利潤加總。不加派網舊的複投存量。基準日之後若有複投／提取／關倉，加回的數字在倉位紀錄。")}<strong>${both(board.true_grid_profit || board.total_grid_profit)}</strong></div>
+      <div class="stat"><span>倉位數</span><strong>${board.position_count || 0}</strong></div>
+    </div>
+    <div class="card">
+      <p class="muted">這一頁是暫存屏，跟每日 8 點快照分開。按「更新目前倉位」只抓此刻並留在這裡。台幣 USDT→TWD ${fxRate != null ? n(fxRate, 3) : "—"}。</p>
+      ${hasLive ? positionTable(board.rows || [], "24h", boardSort) : "<p class='muted'>按「更新目前倉位」後才會出現表格。</p>"}
+    </div>`;
+  if (hasLive) {
+    bindSortHeaders(boardSort, paintLive);
+    bindHistoryClicks();
+  }
+  document.getElementById("liveRefresh").onclick = async () => {
+    if (liveBusy) return;
+    liveBusy = true;
+    paintLive();
+    try {
+      liveData = await postJson("/api/v1/live/refresh", {});
+    } catch (err) {
+      liveBusy = false;
+      paintLive();
+      app.insertAdjacentHTML("afterbegin", `<p class="warn">${err.message}</p>`);
+      return;
+    }
+    liveBusy = false;
+    paintLive();
+  };
+  document.getElementById("liveCommit").onclick = () => {
+    if (!hasLive) return;
+    const old = document.getElementById("commitMask");
+    if (old) old.remove();
+    const mask = document.createElement("div");
+    mask.id = "commitMask";
+    mask.className = "mask";
+    mask.innerHTML = `<div class="dialog">
+        <h3>把現在倉位寫入倉位歷史？</h3>
+        <p>只有這一顆備援鈕才會動每日紀錄。會把<strong>現在這一屏</strong>寫成台北時間 <strong>${today}</strong> 的倉位歷史。今天若已有 8 點快照，會被換成這一份。08:00 Excel 排程本身不會被改。</p>
+        <p class="muted">再按「確定寫入」才會存。取消則什麼都不改。</p>
+        <div class="actions">
+          <button class="btn" type="button" id="commitCancel">取消</button>
+          <button class="btn danger" type="button" id="commitOk">確定寫入</button>
+        </div>
+      </div>`;
+    document.body.appendChild(mask);
+    document.getElementById("commitCancel").onclick = () => mask.remove();
+    document.getElementById("commitOk").onclick = async () => {
+      mask.remove();
+      try {
+        const result = await postJson("/api/v1/live/commit-daily", { confirm_date: today });
+        alert("已寫入 " + (result.capture_date || today) + " 的倉位歷史。");
+      } catch (err) {
+        alert(err.message);
+      }
+    };
+  };
+}
+
+async function renderLive() {
+  liveData = await get("/api/v1/live");
+  paintLive();
+}
+
+function paintDaily() {
+  const days = (dailyData && dailyData.days) || [];
   if (!days.length) {
     app.innerHTML = "<p class='muted'>還沒有每日紀錄。請先執行 python -m v2.capture</p>";
     return;
   }
-  app.innerHTML = `<p class="muted">每一天會往下新增一列。點日期可收合／展開當天每一筆倉位，不是只看總和。</p>` + days.map((d, i) => `
-    <section class="day" data-open="${i===0}">
+  app.innerHTML = `<p class="muted">每一天會往下新增一列。點日期可收合／展開當天每一筆倉位。點欄位標題可排序（各天共用同一排序）。</p>` + days.map((d, i) => {
+    const open = dailyOpen == null ? i === 0 : dailyOpen.has(d.capture_date);
+    return `
+    <section class="day" data-date="${d.capture_date}">
       <h3>${d.capture_date}<span>${d.active_count} 筆 · 當日 ${signed(d.daily_profit && d.daily_profit.usdt)} USDT · 累計 ${usdt(d.cumulative)}</span></h3>
-      <div class="body" ${i===0 ? "" : "hidden"}>${positionTable(d.rows || [], "daily")}</div>
-    </section>`).join("");
+      <div class="body" ${open ? "" : "hidden"}>${positionTable(d.rows || [], "daily", dailySort)}</div>
+    </section>`;
+  }).join("");
   app.querySelectorAll(".day h3").forEach((h) => {
     h.onclick = () => {
-      const body = h.parentElement.querySelector(".body");
+      const section = h.parentElement;
+      const body = section.querySelector(".body");
       body.hidden = !body.hidden;
+      if (dailyOpen == null) {
+        dailyOpen = new Set();
+        days.forEach((d, i) => { if (i === 0) dailyOpen.add(d.capture_date); });
+      }
+      const date = section.dataset.date;
+      if (body.hidden) dailyOpen.delete(date);
+      else dailyOpen.add(date);
     };
   });
+  bindSortHeaders(dailySort, paintDaily);
   bindHistoryClicks();
+}
+
+async function renderDaily() {
+  dailyData = await get("/api/v1/days");
+  paintDaily();
+}
+
+function eventLabel(ev) {
+  const map = { baseline:"基準", new:"新增", continue:"續存", closed:"關倉", closed_unresolved:"關倉未對上", reinvest:"複投", add:"加倉", review:"待確認", withdraw:"提取", reduce:"減倉" };
+  return String(ev || "").split("+").map((p) => map[p] || p).filter(Boolean).join("＋") || "—";
+}
+
+function eventChip(ev) {
+  const key = String(ev || "");
+  if (!key || key === "continue" || key === "baseline" || key === "new") return "";
+  const kind = key.split("+").includes("review") ? "is-review" : key.split("+").includes("add") ? "is-add" : "";
+  return ` <span class="event-tag ${kind}">${eventLabel(key)}</span>`;
+}
+
+function eventCell(r, date) {
+  const ev = r.event || r.status || "";
+  const review = String(ev).split("+").includes("review");
+  let html = `<span class="event-tag${review ? " is-review" : String(ev).split("+").includes("add") ? " is-add" : ""}">${eventLabel(ev)}</span>`;
+  if (review && r.bu_order_id) {
+    html += `<div class="decide">
+      <button type="button" class="btn tiny" data-decide="add" data-date="${date}" data-id="${r.bu_order_id}">這是加倉</button>
+      <button type="button" class="btn tiny" data-decide="reinvest" data-date="${date}" data-id="${r.bu_order_id}">這是複投</button>
+    </div>`;
+  }
+  return html;
+}
+
+function paintCalendar() {
+  const days = (calendarData && calendarData.days) || [];
+  if (!days.length) {
+    app.innerHTML = "<p class='muted'>還沒有每日紀錄。請先執行 python -m v2.capture</p>";
+    return;
+  }
+  const byDate = {};
+  days.forEach((d) => { if (d.capture_date) byDate[d.capture_date] = d; });
+  const latest = days[0].capture_date;
+  if (!calSelected || !byDate[calSelected]) calSelected = latest;
+  const parts = calSelected.split("-").map(Number);
+  if (!calMonth) calMonth = { y: parts[0], m: parts[1] };
+  const y = calMonth.y, m = calMonth.m;
+  const first = new Date(y, m - 1, 1);
+  const startPad = first.getDay();
+  const dim = new Date(y, m, 0).getDate();
+  const dows = ["日","一","二","三","四","五","六"];
+  let cells = dows.map((d) => `<div class="cal-dow">${d}</div>`).join("");
+  for (let i = 0; i < startPad; i++) cells += `<div class="cal-cell is-muted"></div>`;
+  for (let d = 1; d <= dim; d++) {
+    const dateStr = `${y}-${String(m).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
+    const rec = byDate[dateStr];
+    const sel = dateStr === calSelected ? " is-selected" : "";
+    if (rec) {
+      const dayV = rec.daily_profit && rec.daily_profit.usdt;
+      const cumV = rec.cumulative && rec.cumulative.usdt;
+      cells += `<button type="button" class="cal-cell${sel}" data-date="${dateStr}"><span class="cal-num">${d}</span>`
+        + `<span class="cal-amt ${cls(dayV)}">單日：${dayV == null || dayV === "" ? "—" : signed(dayV) + "U"}</span>`
+        + `<span class="cal-amt">累積：${cumV == null || cumV === "" ? "—" : n(cumV, 2) + "U"}</span></button>`;
+    } else {
+      cells += `<div class="cal-cell${sel}"><span class="cal-num">${d}</span></div>`;
+    }
+  }
+  const selected = byDate[calSelected] || {};
+  const rows = selected.rows || [];
+  const rowHtml = rows.length ? rows.map((r) => {
+    const day = r.daily_profit && r.daily_profit.usdt;
+    return `<tr class="clickable" data-id="${r.bu_order_id || ""}">
+      <td>${r.symbol || "—"}</td>
+      <td>${eventCell(r, calSelected)}</td>
+      <td class="n">${usdt(r.investment || r.size)}</td>
+      <td class="n ${cls(day)}">${signed(day)}</td>
+      <td class="n">${usdt(r.grid_profit)}</td>
+    </tr>`;
+  }).join("") : `<tr><td colspan="5" class="muted">當日無倉位明細</td></tr>`;
+  app.innerHTML = `
+    <div class="card">
+      <div class="cal-head">
+        <button type="button" id="calPrev">‹</button>
+        <strong>${y} 年 ${m} 月</strong>
+        <button type="button" id="calNext">›</button>
+      </div>
+      <div class="cal">${cells}</div>
+      <p class="muted">有紀錄的日子可點。單＝當日網格利潤（基準日為 0；幣本位是當天新增的幣×抓取價，不含幣價重估）；累＝當日仍開著的倉（畫面 USDT，含幣價）；真＝基準日之後記到的複投／提取／關倉加回。加倉不算利潤。</p>
+      ${rows.some((r) => String(r.event || "").split("+").includes("review"))
+        ? `<p class="warn">有倉位變多、網格利潤也掉了一截，對不上是加倉還是複投。請在列上選一次。</p>`
+        : ""}
+    </div>
+    <div class="stats">
+      <div class="stat"><span>點選日</span><strong>${calSelected}</strong></div>
+      <div class="stat">${tip("每日利潤", "U 本位：畫面網格利潤的日差。幣本位（ETH）：當天新增的幣×抓取現貨價，不含舊庫存被幣價重估。第一天基準是 0。")}<strong class="${cls(selected.daily_profit && selected.daily_profit.usdt)}">${bothSigned(selected.daily_profit)}</strong></div>
+      <div class="stat">${tip("累積利潤", "那天還開著的倉，派網畫面上的網格利潤加總（USDT，幣本位含幣價）。關倉後這筆會掉。")}<strong>${both(selected.cumulative)}</strong></div>
+      <div class="stat">${tip("真實網格總利潤", "從基準日開始記的網格：開著的倉＋這段期間有記錄到的複投／提取／關倉。舊存量與加倉不加。")}<strong>${both(selected.true_profit || selected.cumulative)}</strong></div>
+    </div>
+    <div class="card">
+      <h3>${calSelected} 明細</h3>
+      <table class="plain"><thead><tr><th>標的</th><th>${tip("事件", "續存＝照常；加倉＝只是本金變多、網格利潤沒被重置；複投＝網格利潤打進倉位後從接近 0 再算。對不上才會出現待確認。")}</th><th>倉位</th><th>單日利潤</th><th>當時網格利潤</th></tr></thead>
+      <tbody>${rowHtml}</tbody></table>
+    </div>`;
+  document.getElementById("calPrev").onclick = () => {
+    calMonth.m -= 1;
+    if (calMonth.m < 1) { calMonth.m = 12; calMonth.y -= 1; }
+    paintCalendar();
+  };
+  document.getElementById("calNext").onclick = () => {
+    calMonth.m += 1;
+    if (calMonth.m > 12) { calMonth.m = 1; calMonth.y += 1; }
+    paintCalendar();
+  };
+  app.querySelectorAll("button.cal-cell[data-date]").forEach((btn) => {
+    btn.onclick = () => { calSelected = btn.dataset.date; paintCalendar(); };
+  });
+  bindEventDecisions();
+  bindHistoryClicks();
+}
+
+async function renderCalendar() {
+  calendarData = await get("/api/v1/days");
+  paintCalendar();
 }
 
 async function renderStatus() {
   const s = await get("/api/v1/status");
   app.innerHTML = `<div class="card">
-    <p>上次成功：${s.last_success ? s.last_success.captured_at : "尚無"}</p>
+    <p>上次成功：${s.last_success ? fmtTaipei(s.last_success.captured_at) : "尚無"}</p>
     <p>未決關倉：<span class="${s.unresolved?"warn":""}">${s.unresolved}</span></p>
     <p>漏抓日期：${(s.missing_dates||[]).join(", ") || "無"}</p>
+    <p>本月幣本位重估差（${s.coin_fx_gap_month_label || "—"}）：${s.coin_fx_gap_month && s.coin_fx_gap_month.usdt != null ? signed(s.coin_fx_gap_month.usdt) + " USDT" : "—"}<span class="muted">　月底再看要不要把幣價損益拆開。</span></p>
   </div>`;
 }
 
@@ -225,11 +622,11 @@ async function renderHistory() {
         <div class="stat"><span>現價 / Mark</span><strong>${n(b.mark_price, 4)}</strong></div>
         <div class="stat"><span>強平價</span><strong>${n(b.liq_price, 4)}</strong></div>
         <div class="stat"><span>強平距離</span><strong>${b.liq_distance_pct == null ? "—" : n(b.liq_distance_pct, 2) + "%"}</strong></div>
-        <div class="stat"><span>目前總損益</span><strong class="${cls(b.total_pnl && b.total_pnl.usdt)}">${bothSigned(b.total_pnl)}</strong></div>
-        <div class="stat"><span>趨勢盈虧</span><strong class="${cls(b.trend_profit && b.trend_profit.usdt)}">${bothSigned(b.trend_profit)}</strong></div>
+        <div class="stat">${tip("目前總損益", "趨勢盈虧 + 網格利潤。資金費另外顯示，沒有加進去。")}<strong class="${cls(b.total_pnl && b.total_pnl.usdt)}">${bothSigned(b.total_pnl)}</strong></div>
+        <div class="stat">${tip("趨勢盈虧", "價格相對開倉價的浮動盈虧：投入 × 槓桿 × 漲跌幅。")}<strong class="${cls(b.trend_profit && b.trend_profit.usdt)}">${bothSigned(b.trend_profit)}</strong></div>
         <div class="stat"><span>資金費</span><strong class="${cls(b.funding && b.funding.usdt)}">${bothSigned(b.funding)}</strong></div>
-        <div class="stat"><span>網格年化</span><strong class="${cls(b.grid_annualized_pct)}">${b.grid_annualized_pct == null ? "—" : signed(b.grid_annualized_pct) + "%"}</strong></div>
-        <div class="stat"><span>總年化報酬</span><strong class="${cls(b.annualized_pct)}">${b.annualized_pct == null ? "—" : signed(b.annualized_pct) + "%"}</strong></div>
+        <div class="stat">${tip("網格年化", "用網格利潤、投入、持有天數推算，API 沒有現成欄位。")}<strong class="${cls(b.grid_annualized_pct)}">${b.grid_annualized_pct == null ? "—" : signed(b.grid_annualized_pct) + "%"}</strong></div>
+        <div class="stat">${tip("總年化報酬", "用總損益（趨勢+網格）、投入、持有天數推算。")}<strong class="${cls(b.annualized_pct)}">${b.annualized_pct == null ? "—" : signed(b.annualized_pct) + "%"}</strong></div>
       </div>
       <p class="muted">目前總損益 = 趨勢盈虧 + 網格利潤（不含資金費）。網格年化／總年化用投資額與持有天數推算，API 沒有現成年化欄位。</p>
     </div>
@@ -270,17 +667,43 @@ async function renderHistory() {
 function bindHistoryClicks() {
   app.querySelectorAll("tr[data-id]").forEach((tr) => {
     if (!tr.dataset.id) return;
-    tr.onclick = () => {
+    tr.onclick = (ev) => {
+      if (ev.target.closest("[data-decide]")) return;
       historyId = tr.dataset.id;
       document.querySelector('[data-page="history"]').click();
     };
   });
 }
 
+function bindEventDecisions() {
+  app.querySelectorAll("[data-decide]").forEach((btn) => {
+    btn.onclick = async (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      btn.disabled = true;
+      try {
+        await postJson("/api/v1/event-decision", {
+          capture_date: btn.dataset.date,
+          bu_order_id: btn.dataset.id,
+          decision: btn.dataset.decide,
+        });
+        calendarData = await get("/api/v1/days");
+        dailyData = calendarData;
+        paintCalendar();
+      } catch (err) {
+        alert(err.message);
+        btn.disabled = false;
+      }
+    };
+  });
+}
+
 async function render() {
   try {
-    if (page === "board") await renderBoard();
+    if (page === "live") await renderLive();
+    else if (page === "records") await renderBoard();
     else if (page === "daily") await renderDaily();
+    else if (page === "calendar") await renderCalendar();
     else if (page === "history") await renderHistory();
     else await renderStatus();
   } catch (err) {

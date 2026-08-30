@@ -32,9 +32,31 @@ def node_path() -> str:
     return "node"
 
 
-def capture(credentials: Path, db_path: Path, replace_date: bool = False) -> dict:
+def collect_snapshot(credentials: Path) -> dict:
     if not credentials.exists():
         raise CaptureError(f"Credential file not found: {credentials}")
+    with tempfile.NamedTemporaryFile(prefix="pionex-v2-", suffix=".json", delete=False) as tmp:
+        out = Path(tmp.name)
+    try:
+        cmd = [node_path(), str(API_JS), "--credentials", str(credentials), "--include-finished", "--output", str(out)]
+        proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
+        if proc.returncode != 0:
+            raise CaptureError((proc.stderr or proc.stdout or "collector failed").strip())
+        return json.loads(out.read_text(encoding="utf-8"))
+    finally:
+        out.unlink(missing_ok=True)
+
+
+def capture_live(credentials: Path, dest: Path | None = None) -> dict:
+    from .live import save_live_snapshot, snapshot_to_board
+
+    snapshot = collect_snapshot(credentials)
+    save_live_snapshot(snapshot, dest)
+    board = snapshot_to_board(snapshot)
+    return {"ok": True, "kind": "live", "as_of": snapshot.get("CapturedAt"), "position_count": board["position_count"], "board": board}
+
+
+def capture(credentials: Path, db_path: Path, replace_date: bool = False, skip_publish: bool = False) -> dict:
     if not replace_date and Path(db_path).exists():
         con = connect(db_path)
         try:
@@ -43,31 +65,47 @@ def capture(credentials: Path, db_path: Path, replace_date: bool = False) -> dic
                 replace_date = True
         finally:
             con.close()
-    with tempfile.NamedTemporaryFile(prefix="pionex-v2-", suffix=".json", delete=False) as tmp:
-        out = Path(tmp.name)
+    snapshot = collect_snapshot(credentials)
+    result = ingest(snapshot, db_path=db_path, replace_date=replace_date)
+    if skip_publish:
+        result["publish"] = {"ok": False, "skipped": True, "reason": "skip-publish"}
+        return result
     try:
-        cmd = [node_path(), str(API_JS), "--credentials", str(credentials), "--include-finished", "--output", str(out)]
-        proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
-        if proc.returncode != 0:
-            raise CaptureError((proc.stderr or proc.stdout or "collector failed").strip())
-        snapshot = json.loads(out.read_text(encoding="utf-8"))
-        return ingest(snapshot, db_path=db_path, replace_date=replace_date)
-    finally:
-        out.unlink(missing_ok=True)
+        from .gist_publish import publish_ledger
+        result["publish"] = publish_ledger(db_path)
+    except Exception as exc:
+        result["publish"] = {"ok": False, "error": str(exc)}
+    return result
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Capture Pionex grids into the v2 SQLite ledger")
+    parser = argparse.ArgumentParser(description="Capture Pionex grids into the SQLite ledger")
     parser.add_argument("--credentials", default=str(V1_CREDENTIALS))
     parser.add_argument("--db", default=str(DEFAULT_DB))
     parser.add_argument("--replace-date", action="store_true")
+    parser.add_argument("--skip-publish", action="store_true", help="Do not PATCH Gist after ingest")
+    parser.add_argument("--live", action="store_true", help="Fetch current positions only; do not write daily sqlite")
     args = parser.parse_args()
     try:
-        result = capture(Path(args.credentials), Path(args.db), replace_date=args.replace_date)
+        if args.live:
+            result = capture_live(Path(args.credentials))
+            print(json.dumps({"ok": True, "kind": "live", "as_of": result.get("as_of"), "position_count": result.get("position_count")}, ensure_ascii=False, indent=2))
+            return 0
+        result = capture(
+            Path(args.credentials),
+            Path(args.db),
+            replace_date=args.replace_date,
+            skip_publish=args.skip_publish,
+        )
     except CaptureError as exc:
         print(f"v2 capture failed: {exc}", file=sys.stderr)
         return 1
     print(json.dumps(result, ensure_ascii=False, indent=2))
+    pub = result.get("publish") or {}
+    if pub.get("skipped"):
+        print(f"v2 gist publish skipped: {pub.get('reason')}", file=sys.stderr)
+    elif not pub.get("ok"):
+        print(f"v2 gist publish failed: {pub.get('error') or 'unknown'}", file=sys.stderr)
     return 0
 
 

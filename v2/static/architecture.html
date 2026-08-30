@@ -1,0 +1,327 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pionex Grid 架構與決策紀錄</title>
+  <style>
+    :root { --ink:#172026; --muted:#5c6b73; --line:#d7e0e4; --surface:#fff; --soft:#eef3f5; --accent:#2e6970; --accent-soft:#dceced; --warn:#8b5e22; --warn-soft:#fff3df; --up:#1f7a4d; }
+    * { box-sizing:border-box; }
+    body { margin:0; color:var(--ink); background:#f4f7f8; font:16px/1.7 system-ui,"Segoe UI","Noto Sans TC",sans-serif; }
+    main { max-width:1080px; margin:0 auto; padding:40px 22px 80px; }
+    header { background:#1f2c31; color:#fff; border-radius:12px; padding:30px 32px; }
+    h1 { margin:0 0 8px; font-size:clamp(26px,4vw,40px); }
+    h2 { margin:36px 0 12px; font-size:24px; padding-top:8px; border-top:1px solid var(--line); }
+    header + * { border-top:0; }
+    h2:first-of-type { border-top:0; }
+    h3 { margin:22px 0 8px; font-size:18px; }
+    p { margin:8px 0 14px; }
+    code { background:#e8eef0; padding:2px 5px; border-radius:4px; overflow-wrap:anywhere; }
+    header code { background:#42555b; color:#fff; }
+    .meta { color:#d8e3e6; margin:0; }
+    .grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px; margin:18px 0; }
+    .card { background:var(--surface); border:1px solid var(--line); border-radius:8px; padding:16px 18px; }
+    .card strong { display:block; color:var(--accent); margin-bottom:4px; }
+    .callout { background:var(--accent-soft); border-left:4px solid var(--accent); padding:14px 16px; border-radius:6px; margin:14px 0; }
+    .warning { background:var(--warn-soft); border-left-color:var(--warn); }
+    .flow { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; counter-reset:step; }
+    .flow div { background:#fff; border:1px solid var(--line); padding:14px; border-radius:8px; }
+    .flow div::before { counter-increment:step; content:counter(step); display:inline-grid; place-items:center; width:26px; height:26px; margin:0 8px 8px 0; background:var(--accent); color:#fff; border-radius:50%; font-weight:700; }
+    table { width:100%; border-collapse:collapse; background:#fff; border:1px solid var(--line); margin:10px 0 18px; }
+    th, td { border:1px solid var(--line); padding:9px 11px; text-align:left; vertical-align:top; }
+    th { background:#e4ecef; }
+    ul, ol { padding-left:24px; }
+    .small { color:var(--muted); font-size:14px; }
+    nav.toc a { color:var(--accent); }
+    .back { display:inline-block; margin-bottom:14px; color:#d8e3e6; }
+    @media (max-width:760px) {
+      main { padding:22px 14px 48px; }
+      header { padding:24px 20px; }
+      .grid, .flow { grid-template-columns:1fr; }
+      table { font-size:14px; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <a class="back" href="/">← 回到儀表板</a>
+    <h1>Pionex Grid 架構與決策紀錄</h1>
+    <p class="meta">Excel 每日紀錄 與 SQLite 本機儀表板是兩條線。最後更新：2026-08-26。不含金鑰、不含即時帳本數字。</p>
+  </header>
+
+  <nav class="toc card">
+    <strong>目錄</strong>
+    <ol>
+      <li><a href="#goal">目標與不變原則</a></li>
+      <li><a href="#dual">雙線架構</a></li>
+      <li><a href="#fetch">資料怎麼取得</a></li>
+      <li><a href="#store">資料怎麼記住</a></li>
+      <li><a href="#ui">畫面與報表</a></li>
+      <li><a href="#math">最終採用的計算</a></li>
+      <li><a href="#events">加倉 vs 複投怎麼分</a></li>
+      <li><a href="#history">解決問題的過程</a></li>
+      <li><a href="#ops">日常怎麼跑</a></li>
+      <li><a href="#next">刻意沒做、之後可改</a></li>
+    </ol>
+  </nav>
+
+  <h2 id="goal">1. 目標與不變原則</h2>
+  <p>這個專案只做一件事：把派網<strong>合約網格</strong>（futures grid）每天的倉位與利潤差，用可追溯的方式記下來。不是交易機器人，也不改倉。</p>
+  <div class="callout">
+    <p><strong>硬限制（改程式時不要破）</strong></p>
+    <ul>
+      <li>只呼叫 GET。白名單以外的私有路徑一律擋掉。不建立、不調整、不暫停、不取消 Bot。</li>
+      <li>API key 只開 Bot reading（加上錢包讀取）。金鑰檔 <code>PIONEX API.txt</code> 不進 Git、Notion、Excel、日誌。</li>
+      <li>公開 GitHub（<a href="https://github.com/forsmileangel/Pionex-Grid">forsmileangel/Pionex-Grid</a>）只同步程式。真實 xlsx、sqlite、snapshot、利潤數字留本機。</li>
+      <li>v1 的 08:00 Excel 排程是生產基準，v2 開發期間不要改它的工作目錄或腳本。</li>
+    </ul>
+  </div>
+
+  <h2 id="dual">2. 雙線架構</h2>
+  <div class="grid">
+    <div class="card">
+      <strong>Excel 每日紀錄</strong>
+      資料夾 <code>D:\My-project\pionex grid record</code>。每天 08:00 跑 <code>pionex-grid-daily.ps1</code>，寫長期 Excel。識別 Key 是「交易對 + 建立時間」。
+    </div>
+    <div class="card">
+      <strong>SQLite 本機儀表板</strong>
+      資料夾仍叫 <code>pionex grid record-v2</code>（git worktree），畫面上不叫 v2。用 SQLite 記帳 + 本機 HTML（<code>127.0.0.1:8787</code>）。同一天 capture 覆蓋當天，隔天才多一列。開／關伺服器用 <code>儀表板開關.cmd</code>。
+    </div>
+    <div class="card">
+      <strong>共用收集器</strong>
+      兩邊都跑 <code>pionex-grid-api.mjs</code>（Node、HMAC GET）。v2 多讀 finished 清單、錢包、Mark、資金費，再交給 Python ingest。
+    </div>
+  </div>
+  <p>為什麼拆兩條：v1 已經在記帳，不能在改欄位時把 08:00 弄壞。v2 用資料庫重做儀表板與長天期報表，滿意再考慮取代或接 Portfolio Tracker。</p>
+  <table>
+    <thead><tr><th>層</th><th>Excel 每日紀錄</th><th>SQLite 本機儀表板</th></tr></thead>
+    <tbody>
+      <tr><td>收集</td><td>Node → JSON → PowerShell</td><td>同一份 Node → JSON → <code>python -m v2.capture</code></td></tr>
+      <tr><td>保存</td><td><code>data/pionex-grid-history.xlsx</code></td><td><code>v2-data/pionex-grid.sqlite</code></td></tr>
+      <tr><td>觀看</td><td>Excel</td><td><code>http://127.0.0.1:8787</code></td></tr>
+      <tr><td>排程</td><td>08:00 Daily API</td><td>登入後自動開 dashboard；capture 仍手動</td></tr>
+      <tr><td>識別一筆倉</td><td>交易對 + 建立時間</td><td>API <code>buOrderId</code></td></tr>
+    </tbody>
+  </table>
+
+  <h3>本機目錄（v2）</h3>
+  <table>
+    <thead><tr><th>路徑</th><th>做什麼</th></tr></thead>
+    <tbody>
+      <tr><td><code>pionex-grid-api.mjs</code></td><td>唯讀收集器。白名單：Bot 清單／詳情、錢包、公開 ticker。</td></tr>
+      <tr><td><code>v2/capture.py</code></td><td>跑 Node，ingest 進 SQLite。同日已有紀錄則覆蓋。</td></tr>
+      <tr><td><code>v2/store.py</code></td><td>schema、差額、儀表板 payload、Excel 匯出。</td></tr>
+      <tr><td><code>v2/liq.py</code></td><td>強平價顯示：U 本位為主，幣本位才倒數。</td></tr>
+      <tr><td><code>v2/fx.py</code></td><td>USDT→TWD = 臺銀美金現金買入 × USDT/USD。</td></tr>
+      <tr><td><code>v2/server.py</code></td><td>只綁 127.0.0.1:8787，不讀金鑰。</td></tr>
+      <tr><td><code>v2/static/index.html</code></td><td>儀表板。開著不會自動刷新。</td></tr>
+      <tr><td><code>v2-data/</code></td><td>sqlite、匯率快取、備份。gitignore。</td></tr>
+      <tr><td><code>start-dashboard-server.ps1</code></td><td>登入自動上線；埠被占用就略過。</td></tr>
+    </tbody>
+  </table>
+
+  <h2 id="fetch">3. 資料怎麼取得</h2>
+  <div class="flow">
+    <div>讀本機兩行金鑰檔</div>
+    <div>HMAC-SHA256 簽 <code>GET{path}?{sortedQuery}</code></div>
+    <div>拉 running（+ v2 的 finished）合約網格詳情</div>
+    <div>公開 PERP ticker、錢包總額，寫成一份 JSON</div>
+  </div>
+  <h3>實際打過的端點</h3>
+  <table>
+    <thead><tr><th>方法</th><th>路徑</th><th>用途</th></tr></thead>
+    <tbody>
+      <tr><td>GET 私有</td><td><code>/api/v1/bot/orders</code></td><td>分頁 <code>futures_grid</code>。v2 再抓 <code>status=finished</code> 才能關倉差額。</td></tr>
+      <tr><td>GET 私有</td><td><code>/api/v1/bot/orders/futuresGrid/order</code></td><td>單筆詳情：Investment、GridProfit、gridProfit24h、totalFundingFee、強平估計、槓桿、區間。</td></tr>
+      <tr><td>GET 私有</td><td><code>/api/v1/wallet/balancesFull</code></td><td>錢包總市值 <code>totalInUsdt</code>。需要 Enable reading。</td></tr>
+      <tr><td>GET 公開</td><td><code>/api/v1/market/tickers</code></td><td>標的 <code>{BASE}_USDT_PERP</code> 的 Mark。幣本位換算與趨勢盈虧都靠它。</td></tr>
+    </tbody>
+  </table>
+  <p>派網沒有「給我台幣總資產」的欄位，也沒有現成總年化。年化、台幣、單日% 都是本機用公式算的。屯幣寶公開 API 沒回，v1 獨立工作表標記略過，不混進合約網格總計。</p>
+  <div class="callout warning">
+    收集器<strong>不會</strong>在儀表板開著時一直打 API。HTML 只讀 SQLite。要新數字必須再跑 <code>python -m v2.capture</code> 或 <code>capture-v2.cmd</code>，然後重整瀏覽器。
+  </div>
+
+  <h2 id="store">4. 資料怎麼記住</h2>
+  <p>金額在 SQLite 用整數 × 10<sup>8</sup> 存，避免浮點誤差。一天一筆總帳（<code>daily_summary</code>），一倉 × 一天一筆明細（<code>daily_grid_profit</code>）。倉位主檔是 <code>grid_positions</code>（主鍵 <code>bu_order_id</code>），每次 capture 再寫一張 <code>grid_snapshots</code>。</p>
+  <h3>當日利潤（日記帳，Excel 用這條）</h3>
+  <ol>
+    <li>資料庫是空的：整批標 <code>baseline</code>，當日利潤 = 0。只記住當天的累計網格利潤。</li>
+    <li>隔天還在跑的舊倉：<code>continue</code>，當日利潤 = 今天 GridProfit − 昨天記住的 GridProfit。</li>
+    <li>新開的倉：<code>new</code>，當天也是 0，隔天起才開始減。</li>
+    <li>finished 清單對得上、資料完整：<code>closed</code>，最後一天仍算差額。</li>
+    <li>人消失但 finished 對不上：<code>closed_unresolved</code>，當日利潤空白，不要猜。</li>
+  </ol>
+  <p>同一日再 capture 會刪掉該日 summary／明細／snapshot 再寫。所以 8/25 按十次還是只有 8/25 一列。8/26 第一次成功才會出現第二天，且通常<strong>不是 0</strong>（除非過夜網格利潤完全沒動）。</p>
+  <p>漏抓的日子不會自動補。v1 的 08:00 <strong>不會</strong>寫進 v2 sqlite。長天期 Excel 要靠每天至少一次 v2 capture。</p>
+
+  <h2 id="ui">5. 畫面與報表</h2>
+  <h3>儀表板 <code>http://127.0.0.1:8787</code></h3>
+  <ul>
+    <li><strong>目前倉位</strong>：最後一次成功 capture 的 running 倉。頂部有錢包、24h 總利潤、24h 總倉位%、投資加總。列上「單日利潤」在這頁是 API 的 <code>gridProfit24h</code>，不是日記帳差額。</li>
+    <li><strong>每日詳情</strong>：資料庫裡每一天，點開看當天每一倉。這裡的單日利潤才是 snapshot 差額。</li>
+    <li><strong>單一網格</strong>：該倉歷史差額 + 趨勢／資金費／總損益／年化 + API 原始欄位。</li>
+    <li>表頭可排序（建倉日到單天%）。開著頁面不會輪詢。</li>
+  </ul>
+  <h3>Excel（長天期，依日期）</h3>
+  <table>
+    <thead><tr><th>工作表</th><th>一列是什麼</th><th>單日%</th></tr></thead>
+    <tbody>
+      <tr><td>每日總覽</td><td>一天</td><td>當天總網格利潤 ÷ 當天投資加總</td></tr>
+      <tr><td>每日倉位明細</td><td>一倉 × 一天</td><td>該倉當日利潤 ÷ 該倉投資</td></tr>
+      <tr><td>倉位×日期</td><td>列=倉、欄=日期</td><td>格子裡是當日利潤 USDT（同一份數字轉 90 度）</td></tr>
+      <tr><td>網格設定／執行紀錄</td><td>最新設定、capture log</td><td>—</td></tr>
+    </tbody>
+  </table>
+  <p>匯出<strong>不是</strong>再打一次派網。它把 sqlite 裡已有的所有日期倒出來。只有一天基準時，三張表都會看起來像「只有現在」。</p>
+
+  <h2 id="math">6. 最終採用的計算</h2>
+  <table>
+    <thead><tr><th>項目</th><th>公式</th><th>注意</th></tr></thead>
+    <tbody>
+      <tr><td>倉位大小</td><td>API <code>Investment</code></td><td>不要用倉位數量 × 現價（那是名目，會跟標的「很歪」）。</td></tr>
+      <tr><td>畫面單天 %</td><td>該列單日利潤 ÷ Investment</td><td>目前倉位頁的單日利潤是 24h；每日詳情是日記帳。</td></tr>
+      <tr><td>頂部 24h 總倉位%</td><td>Σ gridProfit24h ÷ Σ Investment</td><td>顯示在「過去 24 小時總利潤」的 TWD 下面。</td></tr>
+      <tr><td>趨勢盈虧</td><td>Investment × 槓桿 × (Mark−開倉)/開倉 × 方向</td><td>做空方向為 −1。對齊派網單倉總損益頁。</td></tr>
+      <tr><td>目前總損益</td><td>趨勢 + 網格利潤</td><td><strong>不加</strong>資金費。資金費用 <code>totalFundingFee</code> 另列。</td></tr>
+      <tr><td>網格年化</td><td>網格利潤 / Investment / 持有天數 × 365</td><td>API 沒有現成年化。</td></tr>
+      <tr><td>總年化</td><td>總損益 / Investment / 持有天數 × 365</td><td>總損益仍不含資金費。</td></tr>
+      <tr><td>U 本位強平距離</td><td>(Mark−強平)/Mark（多）或 (強平−Mark)/Mark（空）</td><td>結果必須在 0–100%。負的就夾成 0，不要倒數。</td></tr>
+      <tr><td>幣本位強平價</td><td>合約價太小（例如 0.000769）時取倒數</td><td>ETH 強平應對齊 UI 約 1300，不是 inverse。自動偵測：距離為負或與 Mark 差兩個數量級。</td></tr>
+      <tr><td>台幣</td><td>USDT × 臺銀 USD<strong>現金買入</strong> × USDT/USD</td><td>用來對齊派網「約 172 萬」口徑，不是中間價 USD/TWD，也不是 MAX 的 USDT/TWD。</td></tr>
+      <tr><td>單日利潤（U 本位）</td><td>今天畫面 GridProfit − 昨天</td><td>加倉本金、舊 <code>profitReinvest</code> 存量不算當天賺到。</td></tr>
+      <tr><td>單日利潤（幣本位）</td><td>(今天累積幣 − 昨天累積幣) × 抓取當下現貨價</td><td>ETH 8/26 是 +0.00154 ETH × ~2444 ≈ +3.8U，不是 USDT 庫存差 −7.48。幣價把舊庫存重估的部分記成 <code>fx_gap</code>，月底再看。</td></tr>
+      <tr><td>累積（月曆）</td><td>當天還開著的倉，畫面 GridProfit（USDT）加總</td><td>幣本位日子，單日加總可以不等於累積的日差：單日不含幣價，累積含。</td></tr>
+      <tr><td>真實網格總利潤</td><td>基準日之後用單日（幣本位用新增幣×當日價）往上加</td><td>舊存量與加倉不加。還沒複投／提取／關倉時，U 本位會跟畫面加總接近；幣本位會跟畫面分岔，那是刻意的。</td></tr>
+    </tbody>
+  </table>
+
+  <h2 id="events">7. 加倉 vs 複投怎麼分</h2>
+  <p>程式<strong>不會改你的倉</strong>。每天只拿兩張已存快照（昨天、今天）比對：倉位大小變了多少、網格利潤變了多少。U 本位看畫面 USDT；<strong>幣本位（ETH）看累積幣的增減</strong>，再乘當天抓取價，不當成畫面 USDT 庫存差（否則 ETH 跌就會被誤判成虧損或提取）。單元測試裡的 AMD 複投、待確認案例是假資料；本機真實帳本從 2026-08-25 起。</p>
+  <div class="callout">
+    <p><strong>實際定義（你對過的）</strong></p>
+    <ul>
+      <li><strong>複投</strong>：把已經賺到的網格利潤打進倉位。以 AMD 為例，倉位 3500、網格利潤 1418 時若複投，倉位會變成約 4918，網格利潤加總會少掉約 1400（從接近 0 再算）。通常沒有 100～200U 以上不會想做。</li>
+      <li><strong>加倉</strong>：只是本金變多。網格利潤仍正常走、沒有突然少一大截。額度通常 ≥ 200U（8/26 MUX +417、網格 +5）。不到 100U 很少加倉；100～200U 只在湊整時才較像加倉，且網格不該大跌。</li>
+    </ul>
+  </div>
+  <p>判斷順序在 <code>v2/store.py</code> 的 <code>_classify_event</code>。先看你是否已在月曆上手動點過「這是加倉／這是複投」；沒點才走自動規則。加倉門檻用 200U 而不是 100U：誤把複投當成加倉，真實總利潤會少一截；100～200U 又碰上網格下跌時改待確認，比硬判更低風險。</p>
+  <table>
+    <thead><tr><th>條件（相對前一天同一筆倉）</th><th>判定</th><th>單日利潤怎麼算</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>倉位增加 ≥ 20U，<strong>且</strong>網格利潤少掉 ≥ 20U，<strong>且</strong>兩筆金額接近（差距 ≤ 50U 或較大那邊的 25%）</td>
+        <td>複投</td>
+        <td>最像「網格打進倉位」。金額對得上時，即使不到 100U 也算複投。</td>
+      </tr>
+      <tr>
+        <td>派網 <code>profitReinvest</code> 當天增加 ≥ 20U，同時網格利潤也少掉 ≥ 20U</td>
+        <td>複投</td>
+        <td>旁證，不當唯一證據。</td>
+      </tr>
+      <tr>
+        <td>倉位增加不到 100U，網格利潤少掉 ≥ 20U（金額不一定接近）</td>
+        <td>複投</td>
+        <td>這種額度很少加倉，比較像小額複投。真實總利潤把掉下去的網格加回。</td>
+      </tr>
+      <tr>
+        <td>網格幾乎沒重置（少掉不到 20U，或還在往上走），倉位卻變多</td>
+        <td>加倉</td>
+        <td>含 100～200U 湊整。本金不列為利潤。</td>
+      </tr>
+      <tr>
+        <td>倉位增加 ≥ 200U，網格利潤少掉不到 100U</td>
+        <td>加倉</td>
+        <td>典型加倉（8/26 MUX +417、網格 +5）。</td>
+      </tr>
+      <tr>
+        <td>倉位增加 100～200U 且網格少掉 ≥ 20U，或倉位增加同時網格少掉 ≥ 100U 但金額對不上</td>
+        <td>待確認</td>
+        <td>100～200U 很少加倉，大跌又對不齊也不敢自動判。月曆該列可點「這是加倉／這是複投」。單日先只記網格自己的加減。</td>
+      </tr>
+      <tr>
+        <td>其餘（倉位沒變、或只有幾 U 的網格晃動）</td>
+        <td>續存</td>
+        <td>U 本位：今天畫面網格 − 昨天。幣本位：今天累積幣 − 昨天累積幣（×當日價才進單日）。ETH 跌使畫面 USDT 變少，若幣還在增加，是續存不是提取。</td>
+      </tr>
+    </tbody>
+  </table>
+  <h3>刻意不算複投的情況</h3>
+  <ul>
+    <li>派網 <code>profitReinvest</code> 只是<strong>累積存量</strong>。TSMX／SNDKX 在 8/25 快照裡就已經有 300～400U 的存量，8/26 倉位沒變、網格利潤還在往上走，所以那是以前複投過，不是那天又複投。不當日利潤，也<strong>不加進真實網格總利潤</strong>——我們從基準日才開始記。</li>
+    <li>倉位變大但網格利潤一切正常 → 加倉。8/26 日曆曾經出現的 +1253，就是把這些存量／加倉誤當成當天複投。</li>
+    <li>網格利潤自己掉一點、倉位沒變（例如 ETH −7.5U）→ 續存，不是提取、也不是複投。</li>
+  </ul>
+  <p class="small">8/26 自動結果：MUX 加倉；其餘 14 筆續存；沒有待確認。真實帳本沒有被單元測試改倉，測試是另開暫存 sqlite 用假快照。</p>
+
+  <h2 id="history">8. 解決問題的過程</h2>
+  <p>下面是實作時對過的坑。改計算前先看這裡，避免又繞回去。</p>
+  <table>
+    <thead><tr><th>現象</th><th>誤判</th><th>後來怎麼定</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>倉位大小跟標的差很多（例如 6959 vs 3500）</td>
+        <td>用持倉數量 × 現價當大小</td>
+        <td>大小 = Investment。% 的分母也是它。</td>
+      </tr>
+      <tr>
+        <td>ETH 強平距離爆掉，UI 是 1300.34、程式是 0.000769</td>
+        <td>所有倉都當 U 本位；或全部倒數</td>
+        <td>大多數是 U 本位。只有幣本位／數量級差才倒數。U 本位距離為負 → 夾 0。</td>
+      </tr>
+      <tr>
+        <td>AMDX 總利潤對不齊</td>
+        <td>總損益把資金費加進去；或用錯資金費欄</td>
+        <td>總 = 趨勢+網格。資金費顯示 <code>totalFundingFee</code>（約 −152.6 那檔）。</td>
+      </tr>
+      <tr>
+        <td>錢包台幣 174.1 萬，派網約 172.5 萬</td>
+        <td>USDT≠USD 就夠解釋（其實只差約 350 元）</td>
+        <td>市場 USDT/TWD 更高。對齊派網要用臺銀<strong>現金買入</strong>×USDT/USD（約 31.49），不是 er-api 的 31.81。</td>
+      </tr>
+      <tr>
+        <td>Excel 不像長天期、沒有單日%</td>
+        <td>把當下快照再匯一次就好</td>
+        <td>依 <code>capture_date</code> 出總覽＋明細＋矩陣。% 用已存利潤／投資現算。第一天仍是 0。</td>
+      </tr>
+      <tr>
+        <td>HTML 開著，24h 利潤以為會跳</td>
+        <td>server 會背景打 API</td>
+        <td>不會。頻率 = 你手動 capture 的次數。</td>
+      </tr>
+      <tr>
+        <td>8/26 月曆單日 +1253；真實網格總利潤約 7980</td>
+        <td>把派網 <code>profitReinvest</code> 舊存量、或倉位變多，當成那天複投並加進真實總利潤</td>
+        <td>複投必須網格利潤明顯掉進倉位。MUX +417 本金、網格 +5 → 加倉。舊存量不加真實。單日約 +55；真實應跟網格利潤加總一樣（約 6781）。</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 id="ops">9. 日常怎麼跑</h2>
+  <ol>
+    <li>雙擊 <code>儀表板開關.cmd</code> 可開啟或關閉本機伺服器。登入後工作排程 <code>Pionex Grid SQLite Dashboard</code> 也會自動開（不開瀏覽器也可以，網址仍是 8787）。</li>
+    <li><strong>目前倉位</strong>一鍵即時抓派網，存在 <code>v2-data/live-snapshot.json</code>，不寫每日 sqlite、不 PATCH Gist。<strong>倉位紀錄</strong>才是每日快照。備援「寫入今日倉位紀錄」要點兩次，且 POST 必須帶台北今天日期。</li>
+    <li>要新資料：雙擊 <code>capture-v2.cmd</code>（或 <code>python -m v2.capture</code>）。同日覆蓋、隔日新增。</li>
+    <li>硬重新整理儀表板。點表頭可排序。</li>
+    <li>長天期報表：頁上「匯出 Excel」。看的是資料庫歷史，不是再抓一次派網。</li>
+    <li>v1 Excel 繼續 08:00 自己跑，跟 v2 互不覆寫。</li>
+  </ol>
+  <p class="small">金鑰仍用 v1 資料夾的 <code>PIONEX API.txt</code>（兩行：key、secret）。v2 capture 預設指向那裡，不要複製進 Git。</p>
+
+  <h2 id="next">10. 刻意沒做、之後可改</h2>
+  <ul>
+    <li><strong>待確認目前沒有真實列。</strong> 規則已寫好，月曆有按鈕，但 8/26 全部自動判定完成。若之後同一天又加倉又大跌網格、金額對不上，再請你點一次。</li>
+    <li><strong>08:05 shadow capture。</strong> <code>install-v2-daily-capture.ps1</code> 另建任務，不改 v1 08:00。沒設這任務就不會自動出第二天。</li>
+    <li><strong>儀表板不即時。</strong> 若要開著就更新，需要獨立的輪詢 capture（注意 API 頻率與同日覆蓋）。</li>
+    <li><strong>Portfolio Tracker 讀 Gist 第二檔。</strong> 契約寫在專案根目錄 <code>PORTFOLIO-TRACKER-GIST.md</code>。改 ledger JSON／Gist 檔名／<code>schema</code> 前必讀，否則 PT 網格頁會空白。ingest 成功後 PATCH <code>pionex-grid-ledger.json</code>；失敗只略過，不回滾 sqlite。PT 只讀、不持有派網金鑰、不改 holdings 檔。本機 8787 仍只綁 127.0.0.1、不加 CORS。</li>
+    <li><strong>派網沒有官方 USDT/TWD。</strong> 現在用臺銀現金買入對齊 App 顯示。若派網改口徑，先對錢包總市值，再改 <code>v2/fx.py</code>。</li>
+    <li><strong>基準日當日利潤永遠是 0。</strong> 這是為了避免把歷史累計利潤當成那天賺到的。不要為了「看起來有數字」拿掉。正式基準日是 <code>2026-08-26</code>（8/25 試跑已清空）。</li>
+  </ul>
+  <div class="callout">
+    改計算時的建議順序：先對單一網格（AMDX 那套總損益／年化），再對錢包台幣，最後才動 Excel。U 本位強平不要為了修一筆 ETH 而去倒數所有倉。
+  </div>
+  <p class="small">Notion 專案頁：<a href="https://app.notion.com/p/3c6fec73b1638137ad10cd571614f976">Pionex Grid — 派網合約網格自動記錄</a>（在 Codex → 專案紀錄）。本頁也可從儀表板「架構說明」打開。</p>
+</main>
+</body>
+</html>
