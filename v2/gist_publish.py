@@ -1,4 +1,4 @@
-"""Publish the compact ledger JSON to a private Gist second file.
+"""Publish compact JSON files to a private Gist.
 
 Never writes portfolio-tracker-holdings.json. Missing credentials or HTTP
 errors are returned as a status dict — callers must not fail capture.
@@ -16,6 +16,10 @@ from .store import DEFAULT_DB, ledger_publish_payload
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CREDS = ROOT / "GIST PUBLISH.txt"
 LEDGER_FILENAME = "pionex-grid-ledger.json"
+LIVE_FILENAME = "pionex-grid-live.json"
+LIVE_SCHEMA = 1
+LIVE_SOURCE = "pionex-grid-v2-live"
+HOLDINGS_FILENAME = "portfolio-tracker-holdings.json"
 USER_AGENT = "pionex-grid-v2-publish"
 
 
@@ -36,13 +40,57 @@ def read_publish_credentials(path: Path | None = None) -> tuple[str, str] | None
     return gist_id, token
 
 
-def patch_ledger_payload(payload: dict, creds_path: Path | None = None) -> dict:
+def _usdt_of(money) -> str | None:
+    if money is None:
+        return None
+    if isinstance(money, dict):
+        value = money.get("usdt")
+        return None if value in (None, "") else str(value)
+    return str(money)
+
+
+def live_publish_payload(board: dict) -> dict:
+    rows = []
+    for row in board.get("rows") or []:
+        rows.append(
+            {
+                "symbol": row.get("symbol"),
+                "leverage": row.get("leverage"),
+                "trend": row.get("trend"),
+                "investment_usdt": _usdt_of(row.get("investment") or row.get("size")),
+                "grid_profit_usdt": _usdt_of(row.get("grid_profit")),
+                "profit_24h_usdt": _usdt_of(row.get("profit_24h")),
+                "mark_price": row.get("mark_price"),
+                "liq_price": row.get("liq_price"),
+            }
+        )
+    wallet = board.get("wallet_total") or {}
+    return {
+        "schema": LIVE_SCHEMA,
+        "source": LIVE_SOURCE,
+        "captured_at": board.get("as_of"),
+        "position_count": board.get("position_count") or 0,
+        "wallet": {
+            "usdt": None if wallet.get("usdt") in (None, "") else str(wallet.get("usdt")),
+            "twd": wallet.get("twd"),
+        },
+        "total_profit_24h_usdt": _usdt_of(board.get("total_profit_24h")),
+        "total_investment_usdt": _usdt_of(board.get("total_investment")),
+        "total_grid_profit_usdt": _usdt_of(board.get("total_grid_profit")),
+        "profit_24h_pct": board.get("profit_24h_pct"),
+        "rows": rows,
+    }
+
+
+def patch_gist_file(filename: str, payload: dict, creds_path: Path | None = None, extra: dict | None = None) -> dict:
+    if filename in (HOLDINGS_FILENAME,):
+        return {"ok": False, "error": "refusing to patch holdings file"}
     creds = read_publish_credentials(creds_path)
     if not creds:
         return {"ok": False, "skipped": True, "reason": "missing GIST PUBLISH.txt"}
     gist_id, token = creds
     body = json.dumps(
-        {"files": {LEDGER_FILENAME: {"content": json.dumps(payload, ensure_ascii=False)}}},
+        {"files": {filename: {"content": json.dumps(payload, ensure_ascii=False)}}},
         ensure_ascii=False,
     ).encode("utf-8")
     req = urllib.request.Request(
@@ -60,13 +108,14 @@ def patch_ledger_payload(payload: dict, creds_path: Path | None = None) -> dict:
     try:
         with urllib.request.urlopen(req, timeout=30) as res:
             data = json.loads(res.read().decode("utf-8"))
-            return {
+            result = {
                 "ok": True,
-                "filename": LEDGER_FILENAME,
-                "capture_date": payload.get("capture_date"),
+                "filename": filename,
                 "updated_at": data.get("updated_at"),
-                "days": len(payload.get("days") or []),
             }
+            if extra:
+                result.update(extra)
+            return result
     except urllib.error.HTTPError as exc:
         status = exc.code
         msg = f"HTTP {status}"
@@ -81,6 +130,15 @@ def patch_ledger_payload(payload: dict, creds_path: Path | None = None) -> dict:
         return {"ok": False, "error": str(exc)}
 
 
+def patch_ledger_payload(payload: dict, creds_path: Path | None = None) -> dict:
+    return patch_gist_file(
+        LEDGER_FILENAME,
+        payload,
+        creds_path=creds_path,
+        extra={"capture_date": payload.get("capture_date"), "days": len(payload.get("days") or [])},
+    )
+
+
 def publish_ledger(db_path: Path | None = None, creds_path: Path | None = None) -> dict:
     if not read_publish_credentials(creds_path):
         return {"ok": False, "skipped": True, "reason": "missing GIST PUBLISH.txt"}
@@ -88,3 +146,17 @@ def publish_ledger(db_path: Path | None = None, creds_path: Path | None = None) 
     if not payload.get("days"):
         return {"ok": False, "skipped": True, "reason": "empty ledger"}
     return patch_ledger_payload(payload, creds_path=creds_path)
+
+
+def publish_live(board: dict, creds_path: Path | None = None) -> dict:
+    if not read_publish_credentials(creds_path):
+        return {"ok": False, "skipped": True, "reason": "missing GIST PUBLISH.txt"}
+    if not board or not board.get("available"):
+        return {"ok": False, "skipped": True, "reason": "empty live board"}
+    payload = live_publish_payload(board)
+    return patch_gist_file(
+        LIVE_FILENAME,
+        payload,
+        creds_path=creds_path,
+        extra={"captured_at": payload.get("captured_at"), "position_count": payload.get("position_count")},
+    )

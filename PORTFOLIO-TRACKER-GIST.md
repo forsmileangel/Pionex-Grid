@@ -9,10 +9,12 @@ Excel 那條線（`pionex grid record`、08:00）**不走 Gist**，跟這份無�
 | 角色 | 專案 | 做什麼 |
 |---|---|---|
 | 唯一寫入方 | SQLite 儀表板 `python -m v2.capture` | ingest 成功後 PATCH Gist **第二檔** |
-| 只讀方 | Portfolio Tracker（v15.954 起） | 啟動／pull 時讀同一檔；失敗保留舊 cache，不中斷持倉同步 |
+| 目前倉位寫入 | `python -m v2.capture --live` 或儀表板「更新目前倉位」或 30 分鐘排程 | 成功後 PATCH **第三檔** `pionex-grid-live.json` |
+| 只讀方 | Portfolio Tracker（v15.954 起帳本；v15.962 起目前倉位） | 啟動／pull／進網格頁時讀；失敗保留舊 cache，不中斷持倉同步 |
 
 - Gist 第一檔永遠是 PT 的 `portfolio-tracker-holdings.json`。SQLite 這邊 **禁止** 把這個檔名放進 PATCH body。
-- 第二檔檔名固定：`pionex-grid-ledger.json`（`v2/gist_publish.py` 的 `LEDGER_FILENAME`）。**不要改檔名**，PT 用常數對這個字串。
+- 第二檔檔名固定：`pionex-grid-ledger.json`（`LEDGER_FILENAME`）。**不要改檔名**。
+- 第三檔檔名固定：`pionex-grid-live.json`（`LIVE_FILENAME`）。PATCH 時 **只帶這一檔**，不要順便重寫第二檔。
 - SQLite 用本機 `GIST PUBLISH.txt`（第 1 行 Gist ID、第 2 行 token）。PT 用自己存的同一組 Gist ID。兩邊必須指到**同一個** gist。
 - 缺 `GIST PUBLISH.txt`、或 PATCH 失敗：只略過發布，**sqlite capture 仍算成功**。不要為了 Gist 去回滾資料庫。
 - PT **不放** 派網 API 金鑰，也 **不 PATCH** `pionex-grid-ledger.json`。
@@ -63,12 +65,20 @@ Array.isArray(obj.days)
 
 幣本位（ETH）的 `rows[].daily_profit_usdt` 是「當天新增的幣 × 抓取現貨價」，不是畫面 USDT 庫存相減。PT 不必改 HTML，pull 後單日數字會自己變。
 
+## 第三檔目前倉位（`pionex-grid-live.json`）
+
+PT 驗：`schema === 1` 且 `rows` 是陣列。不是帳本、沒有 `days`。失敗只讓「目前倉位」區空白，月曆仍用第二檔。
+
+頂層：`schema`、`source`（`"pionex-grid-v2-live"`）、`captured_at`、`position_count`、`wallet.usdt`／`wallet.twd`、`total_profit_24h_usdt`、`total_investment_usdt`、`total_grid_profit_usdt`、`profit_24h_pct`、`rows[]`（`symbol`、`leverage`、`trend`、`investment_usdt`、`grid_profit_usdt`、`profit_24h_usdt`、`mark_price`、`liq_price`）。
+
+不要放 raw API、金鑰、sqlite。live 發布失敗不刪本機 `live-snapshot.json`。
+
 ## 改程式時的檢查清單
 
 動到下面任何一項，先問「PT 網格頁 / 填入加密欄還活著嗎」：
 
 1. `ledger_publish_payload()` 的 key、巢狀結構、`schema` 數字
-2. `LEDGER_FILENAME`、Gist PATCH 的 `files` 物件（只能有 ledger 那一檔）
+2. `LEDGER_FILENAME`／`LIVE_FILENAME`、Gist PATCH 的 `files` 物件（每次只動一檔；永遠不要帶 holdings）
 3. 基準日規則、當日利潤 0、累計定義
 4. `wallet.twd` 的算法或單位（必須是整數台幣，不是萬、不是字串 `"約 xxx"`）
 5. capture 成功後是否還呼叫 `publish_ledger`（預設要呼叫；`--skip-publish` 是例外）

@@ -68,6 +68,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\install-v2-daily-capture.p
 
 That registers `Pionex Grid v2 Daily Capture` at 08:05. After ingest it PATCHes `pionex-grid-ledger.json` on the same private Gist used by Portfolio Tracker. Copy `GIST PUBLISH.example.txt` to `GIST PUBLISH.txt` (line 1 = Gist ID, line 2 = Gist token). Missing that file skips publish; sqlite capture still succeeds. Use `--skip-publish` to ingest only.
 
+Current positions (does **not** write daily sqlite or Excel):
+
+```powershell
+python -m v2.capture --live
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install-v2-live-publish.ps1
+```
+
+That registers `Pionex Grid v2 Live Publish` every 30 minutes: fetch running grids into `v2-data/live-snapshot.json` and PATCH Gist third file `pionex-grid-live.json`. Manual 「更新目前倉位」 on the dashboard does the same publish. The dashboard at `http://127.0.0.1:8787` reads the live file on open.
+
 ## Portfolio Tracker
 
 Portfolio Tracker reads `pionex-grid-ledger.json` from the private Gist. It never holds Pionex API keys and never PATCHes that file. Holdings stay in `portfolio-tracker-holdings.json`. The local dashboard remains `127.0.0.1:8787` only.

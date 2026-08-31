@@ -32,6 +32,22 @@ def node_path() -> str:
     return "node"
 
 
+def _collector_run_kwargs() -> dict:
+    kwargs = {
+        "capture_output": True,
+        "text": True,
+        "encoding": "utf-8",
+        "stdin": subprocess.DEVNULL,
+    }
+    if os.name == "nt":
+        kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+        info = subprocess.STARTUPINFO()
+        info.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        info.wShowWindow = 0
+        kwargs["startupinfo"] = info
+    return kwargs
+
+
 def collect_snapshot(credentials: Path) -> dict:
     if not credentials.exists():
         raise CaptureError(f"Credential file not found: {credentials}")
@@ -39,7 +55,7 @@ def collect_snapshot(credentials: Path) -> dict:
         out = Path(tmp.name)
     try:
         cmd = [node_path(), str(API_JS), "--credentials", str(credentials), "--include-finished", "--output", str(out)]
-        proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
+        proc = subprocess.run(cmd, **_collector_run_kwargs())
         if proc.returncode != 0:
             raise CaptureError((proc.stderr or proc.stdout or "collector failed").strip())
         return json.loads(out.read_text(encoding="utf-8"))
@@ -47,13 +63,28 @@ def collect_snapshot(credentials: Path) -> dict:
         out.unlink(missing_ok=True)
 
 
-def capture_live(credentials: Path, dest: Path | None = None) -> dict:
+def capture_live(credentials: Path, dest: Path | None = None, skip_publish: bool = False) -> dict:
     from .live import save_live_snapshot, snapshot_to_board
 
     snapshot = collect_snapshot(credentials)
     save_live_snapshot(snapshot, dest)
     board = snapshot_to_board(snapshot)
-    return {"ok": True, "kind": "live", "as_of": snapshot.get("CapturedAt"), "position_count": board["position_count"], "board": board}
+    result = {
+        "ok": True,
+        "kind": "live",
+        "as_of": snapshot.get("CapturedAt"),
+        "position_count": board["position_count"],
+        "board": board,
+    }
+    if skip_publish:
+        result["publish"] = {"ok": False, "skipped": True, "reason": "skip-publish"}
+        return result
+    try:
+        from .gist_publish import publish_live
+        result["publish"] = publish_live(board)
+    except Exception as exc:
+        result["publish"] = {"ok": False, "error": str(exc)}
+    return result
 
 
 def capture(credentials: Path, db_path: Path, replace_date: bool = False, skip_publish: bool = False) -> dict:
@@ -88,8 +119,19 @@ def main() -> int:
     args = parser.parse_args()
     try:
         if args.live:
-            result = capture_live(Path(args.credentials))
-            print(json.dumps({"ok": True, "kind": "live", "as_of": result.get("as_of"), "position_count": result.get("position_count")}, ensure_ascii=False, indent=2))
+            result = capture_live(Path(args.credentials), skip_publish=args.skip_publish)
+            print(json.dumps({
+                "ok": True,
+                "kind": "live",
+                "as_of": result.get("as_of"),
+                "position_count": result.get("position_count"),
+                "publish": result.get("publish"),
+            }, ensure_ascii=False, indent=2))
+            pub = result.get("publish") or {}
+            if pub.get("skipped"):
+                print(f"v2 live gist publish skipped: {pub.get('reason')}", file=sys.stderr)
+            elif not pub.get("ok"):
+                print(f"v2 live gist publish failed: {pub.get('error') or 'unknown'}", file=sys.stderr)
             return 0
         result = capture(
             Path(args.credentials),
