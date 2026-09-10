@@ -36,6 +36,24 @@ PORT = 8787
 SERVER_LOG = ROOT.parent / "v2-data" / "dashboard-server.log"
 
 
+def local_post_allowed(origin: str, referer: str, port: int) -> bool:
+    """Only the dashboard page itself may POST. Blocks other websites hitting 127.0.0.1."""
+    allowed = {
+        f"http://127.0.0.1:{port}",
+        f"http://localhost:{port}",
+        f"http://[::1]:{port}",
+    }
+    origin = (origin or "").strip().rstrip("/")
+    if origin in allowed:
+        return True
+    referer = (referer or "").strip()
+    if referer:
+        for base in allowed:
+            if referer == base or referer.startswith(base + "/") or referer.startswith(base + "?"):
+                return True
+    return False
+
+
 def _write_log(message: str) -> None:
     line = message if message.endswith("\n") else message + "\n"
     stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -161,7 +179,14 @@ class Handler(BaseHTTPRequestHandler):
             return {}
         return json.loads(raw.decode("utf-8"))
 
+    def _post_allowed(self) -> bool:
+        port = int(self.server.server_address[1])
+        return local_post_allowed(self.headers.get("Origin") or "", self.headers.get("Referer") or "", port)
+
     def do_POST(self):
+        if not self._post_allowed():
+            self._json({"error": "forbidden"}, 403)
+            return
         try:
             self._handle_post()
         except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError, ConnectionError):

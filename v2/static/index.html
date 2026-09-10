@@ -279,7 +279,15 @@ const bothSigned = (m) => {
   return signed(m.usdt) + `<span class="unit">USDT</span>` + (extra ? `<span class="twd">${extra}</span>` : "");
 };
 const cls = (v) => { const x = Number(v); if (!Number.isFinite(x) || x === 0) return ""; return x > 0 ? "up" : "down"; };
-const tip = (label, text) => `<span class="hint" tabindex="0" data-tip="${String(text).replace(/"/g, "&quot;")}">${label}</span>`;
+function esc(s) {
+  return String(s == null ? "" : s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+const tip = (label, text) => `<span class="hint" tabindex="0" data-tip="${esc(text)}">${label}</span>`;
 const cell = (main, sub) => `<span class="v">${main}</span><span class="sub">${sub || ""}</span>`;
 
 let tipHost = null;
@@ -415,10 +423,10 @@ function positionTable(rows, profitKey, sort) {
     const openDate = opened.split(" ")[0] || "";
     const openTime = opened.split(" ")[1] || "";
     const chip = profitKey === "daily" ? eventChip(r.event || r.status) : "";
-    return `<tr class="clickable" data-id="${r.bu_order_id || ""}">
+    return `<tr class="clickable" data-id="${esc(r.bu_order_id || "")}">
       <td class="t c-date">${cell(openDate || "—", openTime)}</td>
       <td class="n c-size">${cell(usdt(size), twd(size))}</td>
-      <td class="t c-sym">${cell(r.symbol || "—", (r.leverage || "") + chip)}</td>
+      <td class="t c-sym">${cell(esc(r.symbol || "—"), esc(r.leverage || "") + chip)}</td>
       <td class="n c-mark">${cell(n(r.mark_price, 4), "")}</td>
       <td class="n c-liq">${cell(n(r.liq_price, 4), "")}</td>
       <td class="n c-dist ${cls(r.liq_distance_pct)}">${cell(r.liq_distance_pct == null ? "—" : n(r.liq_distance_pct, 2) + "%", "")}</td>
@@ -526,7 +534,7 @@ function paintLive() {
     } catch (err) {
       liveBusy = false;
       paintLive();
-      app.insertAdjacentHTML("afterbegin", `<p class="warn">${err.message}</p>`);
+      app.insertAdjacentHTML("afterbegin", `<p class="warn">${esc(err.message)}</p>`);
       return;
     }
     liveBusy = false;
@@ -607,7 +615,7 @@ async function renderDaily() {
 
 function eventLabel(ev) {
   const map = { baseline:"基準", new:"新增", continue:"續存", closed:"關倉", closed_unresolved:"關倉未對上", reinvest:"複投", add:"加倉", review:"待確認", withdraw:"提取", reduce:"減倉" };
-  return String(ev || "").split("+").map((p) => map[p] || p).filter(Boolean).join("＋") || "—";
+  return String(ev || "").split("+").map((p) => map[p] || esc(p)).filter(Boolean).join("＋") || "—";
 }
 
 function eventChip(ev) {
@@ -623,8 +631,8 @@ function eventCell(r, date) {
   let html = `<span class="event-tag${review ? " is-review" : String(ev).split("+").includes("add") ? " is-add" : ""}">${eventLabel(ev)}</span>`;
   if (review && r.bu_order_id) {
     html += `<div class="decide">
-      <button type="button" class="btn tiny" data-decide="add" data-date="${date}" data-id="${r.bu_order_id}">這是加倉</button>
-      <button type="button" class="btn tiny" data-decide="reinvest" data-date="${date}" data-id="${r.bu_order_id}">這是複投</button>
+      <button type="button" class="btn tiny" data-decide="add" data-date="${esc(date)}" data-id="${esc(r.bu_order_id)}">這是加倉</button>
+      <button type="button" class="btn tiny" data-decide="reinvest" data-date="${esc(date)}" data-id="${esc(r.bu_order_id)}">這是複投</button>
     </div>`;
   }
   return html;
@@ -667,8 +675,8 @@ function paintCalendar() {
   const rows = selected.rows || [];
   const rowHtml = rows.length ? rows.map((r) => {
     const day = r.daily_profit && r.daily_profit.usdt;
-    return `<tr class="clickable" data-id="${r.bu_order_id || ""}">
-      <td>${r.symbol || "—"}</td>
+    return `<tr class="clickable" data-id="${esc(r.bu_order_id || "")}">
+      <td>${esc(r.symbol || "—")}</td>
       <td>${eventCell(r, calSelected)}</td>
       <td class="n">${usdt(r.investment || r.size)}</td>
       <td class="n ${cls(day)}">${signed(day)}</td>
@@ -756,7 +764,7 @@ function fmt(value) {
 
 function kvTable(rows) {
   if (!rows || !rows.length) return "<p class='muted'>無</p>";
-  return `<table class="kv">${rows.map((r) => `<tr><th>${r.key}</th><td>${fmt(r.value)}</td></tr>`).join("")}</table>`;
+  return `<table class="kv">${rows.map((r) => `<tr><th>${esc(r.key)}</th><td>${esc(fmt(r.value))}</td></tr>`).join("")}</table>`;
 }
 
 async function renderHistory() {
@@ -764,14 +772,14 @@ async function renderHistory() {
   if (!list.length) { app.innerHTML = "<p class='muted'>沒有網格</p>"; return; }
   if (!historyId || !list.some((g) => g.bu_order_id === historyId)) historyId = list[0].bu_order_id;
   const data = await get("/api/v1/grids/" + encodeURIComponent(historyId) + "/history");
-  const options = list.map((g) => `<option value="${g.bu_order_id}" ${g.bu_order_id===historyId?"selected":""}>${g.symbol} · ${g.created_at} · ${g.lifecycle}</option>`).join("");
+  const options = list.map((g) => `<option value="${esc(g.bu_order_id)}" ${g.bu_order_id===historyId?"selected":""}>${esc(g.symbol)} · ${esc(g.created_at)} · ${esc(g.lifecycle)}</option>`).join("");
   const b = data.board || {};
   const pos = data.position || {};
   app.innerHTML = `
     <div class="card">
       <p><label>選擇網格 <select id="gridPick">${options}</select></label></p>
       <div class="stats">
-        <div class="stat"><span class="label">標的</span><strong>${pos.symbol || "—"}</strong></div>
+        <div class="stat"><span class="label">標的</span><strong>${esc(pos.symbol || "—")}</strong></div>
         <div class="stat"><span class="label">倉位大小</span><strong>${both(b.investment || b.size)}</strong></div>
         <div class="stat"><span class="label">網格利潤</span><strong>${both(b.grid_profit)}</strong></div>
         <div class="stat"><span class="label">過去 24 小時</span><strong class="${cls(b.profit_24h && b.profit_24h.usdt)}">${bothSigned(b.profit_24h)}</strong></div>
@@ -790,7 +798,7 @@ async function renderHistory() {
       <h3>每日差額</h3>
       <table class="plain"><thead><tr><th>日期</th><th>狀態</th><th>投資額</th><th>前次利潤</th><th>當次利潤</th><th>當日差額</th><th>累計</th></tr></thead>
       <tbody>${(data.profits||[]).map((p)=>`<tr>
-        <td>${p.capture_date}</td><td>${p.status}</td>
+        <td>${esc(p.capture_date)}</td><td>${esc(p.status)}</td>
         <td>${usdt(p.investment)}</td>
         <td>${usdt(p.prev_grid_profit)}</td>
         <td>${usdt(p.grid_profit)}</td>
@@ -863,7 +871,7 @@ async function render() {
     else if (page === "history") await renderHistory();
     else await renderStatus();
   } catch (err) {
-    app.innerHTML = `<p class="warn">${err.message}</p>`;
+    app.innerHTML = `<p class="warn">${esc(err.message)}</p>`;
   }
 }
 render();
