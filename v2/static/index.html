@@ -228,6 +228,7 @@
     <button data-page="daily">每日詳情</button>
     <button data-page="calendar">月曆</button>
     <button data-page="history">單一網格</button>
+    <button data-page="settlements">關倉紀錄</button>
     <button data-page="status">執行狀態</button>
     <a class="btn" href="/api/v1/export.xlsx">匯出 Excel</a>
     <a class="btn" href="/architecture.html">架構說明</a>
@@ -462,8 +463,8 @@ function summaryCards(board, timeLabel, timeValue, gridTip, trueTip) {
       <div class="stat wide"><span class="label">錢包總市值</span><strong>${board.wallet_total && board.wallet_total.usdt != null ? both(board.wallet_total) : "—"}</strong></div>
       <div class="stat wide">${tip("過去 24 小時總利潤", "派網回傳的近 24 小時網格利潤加總。下面的％＝這筆 ÷ 目前倉位加總。")}<strong class="${cls(total)}">${bothSigned(board.total_profit_24h)}${pct24 == null || pct24 === "" ? "" : `<span class="pct ${cls(pct24)}">${signed(pct24)}%</span>`}</strong></div>
       <div class="stat wide"><span class="label">目前倉位加總</span><strong>${both(board.total_investment)}</strong></div>
-      <div class="stat">${tip("網格利潤加總", gridTip)}<strong>${both(board.total_grid_profit)}</strong></div>
-      <div class="stat">${tip("真實網格總利潤", trueTip)}<strong>${both(board.true_grid_profit || board.total_grid_profit)}</strong></div>
+      <div class="stat">${tip("運行中配對利潤", gridTip)}<strong>${both(board.total_grid_profit)}</strong></div>
+      <div class="stat">${tip(board.kind === "live" ? "歷史累計配對利潤" : "歷史累計配對利潤（含已關倉）", trueTip)}<strong>${board.kind === "live" ? '<span style="font-size:14px">請見每日倉位紀錄</span>' : both(board.true_grid_profit)}</strong></div>
       <div class="stat"><span class="label">倉位數</span><strong>${board.position_count || 0}</strong></div>
       <div class="stat meta"><span class="label">${timeLabel}</span><strong>${timeValue}</strong></div>
     </div>`;
@@ -586,7 +587,7 @@ function paintDaily() {
     const dayV = d.daily_profit && d.daily_profit.usdt;
     return `
     <section class="day" data-date="${d.capture_date}">
-      <h3><span>${d.capture_date}</span><span class="meta">${d.active_count} 筆 · 當日 <b class="${cls(dayV)}">${signed(dayV)}</b> USDT · 累計 ${usdt(d.cumulative)} USDT</span></h3>
+      <h3><span>${d.capture_date}</span><span class="meta">${d.active_count} 筆 · 當日 <b class="${cls(dayV)}">${signed(dayV)}</b> USDT · 運行中配對 ${usdt(d.cumulative)} USDT</span></h3>
       <div class="body" ${open ? "" : "hidden"}>${positionTable(d.rows || [], "daily", dailySort)}</div>
     </section>`;
   }).join("");
@@ -666,7 +667,7 @@ function paintCalendar() {
       const cumV = rec.cumulative && rec.cumulative.usdt;
       cells += `<button type="button" class="cal-cell${sel}" data-date="${dateStr}"><span class="cal-num">${d}</span>`
         + `<span class="cal-amt"><span>單日</span><b class="${cls(dayV)}">${dayV == null || dayV === "" ? "—" : signed(dayV) + "U"}</b></span>`
-        + `<span class="cal-amt"><span>累積</span><b>${cumV == null || cumV === "" ? "—" : n(cumV, 2) + "U"}</b></span></button>`;
+        + `<span class="cal-amt"><span>運行中</span><b>${cumV == null || cumV === "" ? "—" : n(cumV, 2) + "U"}</b></span></button>`;
     } else {
       cells += `<div class="cal-cell is-empty${sel}"><span class="cal-num">${d}</span></div>`;
     }
@@ -693,8 +694,8 @@ function paintCalendar() {
       <div class="cal">${cells}</div>
       <div class="legend">
         <span><b>單日</b> 當日網格利潤，基準日為 0；幣本位是當天新增的幣×抓取現貨價，不含幣價重估</span>
-        <span><b>累積</b> 當日仍開著的倉，畫面 USDT，含幣價</span>
-        <span><b>真實</b> 基準日之後記到的複投／提取／關倉加回，加倉不算利潤</span>
+        <span><b>運行中</b> 當日仍開著的倉，畫面 USDT，含幣價</span>
+        <span><b>歷史累計</b> 基準日之後記到的複投／提取／關倉加回，加倉不算利潤</span>
         <span>有紀錄的日子可點。</span>
       </div>
       ${rows.some((r) => String(r.event || "").split("+").includes("review"))
@@ -704,11 +705,12 @@ function paintCalendar() {
     <div class="stats">
       <div class="stat"><span class="label">點選日</span><strong>${calSelected}</strong></div>
       <div class="stat">${tip("每日利潤", "U 本位：畫面網格利潤的日差。幣本位（ETH）：當天新增的幣×抓取現貨價，不含舊庫存被幣價重估。第一天基準是 0。")}<strong class="${cls(selected.daily_profit && selected.daily_profit.usdt)}">${bothSigned(selected.daily_profit)}</strong></div>
-      <div class="stat">${tip("累積利潤", "那天還開著的倉，派網畫面上的網格利潤加總（USDT，幣本位含幣價）。關倉後這筆會掉。")}<strong>${both(selected.cumulative)}</strong></div>
-      <div class="stat">${tip("真實網格總利潤", "從基準日開始記的網格：開著的倉＋這段期間有記錄到的複投／提取／關倉。舊存量與加倉不加。")}<strong>${both(selected.true_profit || selected.cumulative)}</strong></div>
+      <div class="stat">${tip("運行中配對利潤", "那天還開著的倉，派網畫面上的網格利潤加總（USDT，幣本位含幣價）。關倉後這筆會掉。")}<strong>${both(selected.cumulative)}</strong></div>
+      <div class="stat">${tip("歷史累計配對利潤（含已關倉）", "截至當日快照，含基準日帶入與之後記錄到的複投／提取／關倉；記錄開始前已提領的收益可能未涵蓋。")}<strong>${both(selected.true_profit)}</strong></div>
     </div>
     <div class="card">
       <h3>${calSelected} 明細</h3>
+      ${Number(selected.unresolved_count) > 0 ? '<p class="warn">有關倉配對資料待補，單日與歷史合計為暫計，補齊後重算。</p>' : ''}
       <table class="plain"><thead><tr><th>標的</th><th>${tip("事件", "續存＝照常；加倉＝只是本金變多、網格利潤沒被重置；複投＝網格利潤打進倉位後從接近 0 再算。對不上才會出現待確認。")}</th><th>倉位</th><th>單日利潤</th><th>當時網格利潤</th></tr></thead>
       <tbody>${rowHtml}</tbody></table>
     </div>`;
@@ -862,6 +864,87 @@ function bindEventDecisions() {
   });
 }
 
+let settlementData = null;
+let settlementEditId = "";
+let settlementNotice = "";
+const settlementStatus = { settled: "結算已確認", partial: "部分資料待補", pending: "待結算資料" };
+
+function paintSettlements() {
+  const rows = (settlementData && settlementData.rows) || [];
+  const selected = rows.find(r => r.id === settlementEditId);
+  app.innerHTML = `<div class="card">
+    <div class="live-bar"><h3 style="margin:0">關倉紀錄</h3><button class="btn" id="settlementRefresh">補抓關倉資料</button></div>
+    <p class="note">${rows.length} 筆關倉，${settlementData.pending_count || 0} 筆結算資料待補。配對利潤保留在歷史；最終淨損益另列，不會再從錢包扣除。每日利潤仍以快照區間計算。</p>
+    ${settlementNotice ? `<p class="note">${esc(settlementNotice)}</p>` : ''}
+    <table class="plain" style="min-width:960px"><thead><tr><th>標的／時間</th><th>狀態／來源</th><th>最終配對</th><th>最終淨損益</th><th>非配對淨損益</th><th>資金費</th><th>操作</th></tr></thead>
+    <tbody>${rows.map(r => `<tr>
+      <td>${esc(r.symbol)}<br><small>${esc(r.closed_at ? fmtTaipei(r.closed_at) : '關倉時間待補')}</small><br><small class="muted">首次記錄 ${esc(fmtTaipei(r.observed_at))}</small></td>
+      <td>${esc(settlementStatus[r.status] || r.status)}<br><small>${r.source === 'api' ? 'API' : 'API＋人工補登'} · ${r.audit_count || 0} 次修改</small><br><small>${r.daily_reconciled ? '配對日報已對帳' : '配對日報尚待對帳'}</small></td>
+      <td>${signed(r.grid_profit)}<br><small>${esc(r.currency)}</small></td>
+      <td class="${cls(r.net_profit)}">${signed(r.net_profit)}<br><small>${esc(r.currency)}</small></td>
+      <td class="${cls(r.non_grid_profit)}">${signed(r.non_grid_profit)}<br><small>${esc(r.currency)}</small></td>
+      <td>${signed(r.funding_fee)}<br><small>${esc(r.currency)}</small></td>
+      <td><button class="btn ghost" data-settlement-edit="${esc(r.id)}">補登／修正</button></td>
+    </tr>`).join('') || '<tr><td colspan="7">尚無關倉紀錄</td></tr>'}</tbody></table>
+    <p class="note">「最終配對」為派網最後顯示的 GridProfit。含已提領／複投的完整配對收益須另行核對；未確認完整口徑時不計算非配對淨損益。幣本位以原幣顯示。</p>
+  </div>${selected ? settlementForm(selected) : ''}`;
+  app.querySelectorAll('[data-settlement-edit]').forEach(btn => btn.onclick = () => {
+    settlementEditId = btn.dataset.settlementEdit;
+    paintSettlements();
+    document.getElementById('settlementForm').scrollIntoView({block:'start', behavior:'smooth'});
+  });
+  document.getElementById('settlementRefresh').onclick = async (event) => {
+    const btn = event.currentTarget;
+    btn.disabled = true; btn.textContent = '抓取中…';
+    try {
+      settlementData = await postJson('/api/v1/settlements/refresh', {});
+      settlementNotice = settlementData.publish && settlementData.publish.ok ? '關倉資料已更新並發布至 Portfolio。' : '本機已更新；Portfolio 發布尚未成功，稍後可再補抓重試。';
+      if (page === 'settlements') paintSettlements();
+    } catch (error) { alert(error.message); btn.disabled = false; btn.textContent = '補抓關倉資料'; }
+  };
+  if (selected) {
+    document.getElementById('settlementCancel').onclick = () => { settlementEditId = ''; paintSettlements(); };
+    document.getElementById('settlementForm').onsubmit = async (event) => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const body = Object.fromEntries(new FormData(form));
+      const btn = form.querySelector('[type=submit]'); btn.disabled = true;
+      try {
+        settlementData = await postJson('/api/v1/settlements/' + encodeURIComponent(selected.id), body);
+        settlementNotice = settlementData.publish && settlementData.publish.ok ? '補登已保存、重新計算並發布至 Portfolio。' : '補登已保存並重新計算；Portfolio 發布尚未成功，請稍後補抓重試。';
+        settlementEditId = '';
+        if (page === 'settlements') paintSettlements();
+      } catch (error) { alert(error.message); btn.disabled = false; }
+    };
+  }
+}
+
+function settlementForm(row) {
+  const manual = row.manual || {};
+  const input = (key,label,hint='') => `<label style="display:block">${label}<input name="${key}" inputmode="decimal" value="${esc(manual[key] ?? '')}" placeholder="${esc(hint)}" style="display:block;width:100%;padding:8px;border:1px solid var(--line-strong);border-radius:5px;margin:5px 0 12px"></label>`;
+  return `<form class="card" id="settlementForm"><h3>${esc(row.symbol)} · 人工補登（${esc(row.currency)}）</h3>
+    <p class="note">依派網結算明細填寫。最終淨損益須已包含所有手續費與資金費，系統不會再扣一次；空白表示使用 API 值，API 也缺值時保持待補。修改會留下紀錄。</p>
+    <p class="note">API 回報總利潤：${signed(row.reported_total_profit)} ${esc(row.currency)}（費用口徑未確認，不視為最終淨損益）。</p>
+    <p class="note">API 已實現損益：${signed(row.reported_realized_profit)} ${esc(row.currency)}；總手續費：${signed(row.fee)} ${esc(row.currency)}。以上保留派網原值，費用是否已含須核對結算明細。</p>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:0 20px">
+      <label>實際關倉時間（台北）<input name="closed_at" type="datetime-local" step="1" value="${esc(manual.closed_at ? fmtTaipei(manual.closed_at).slice(0,19).replace(' ','T') : '')}" style="display:block;padding:8px;width:100%;margin:5px 0 12px"></label>
+      ${input('grid_profit','最終配對利潤（派網最後顯示值）', 'API：' + n(row.grid_profit,8))}
+      ${input('net_profit','最終淨損益（含全部費用）')}
+      ${input('lifetime_grid_profit','完整累計配對利潤（含已提領／複投，可選）')}
+      ${input('funding_fee','資金費（收入正數、支出負數；僅供對帳）')}
+      ${input('fee','手續費（僅供對帳，不重複扣除）')}
+      ${row.currency !== 'USDT' ? input('settlement_usdt_rate','結算時每單位原幣的 USDT 換算價') : ''}
+    </div>
+    <label>結算依據／備註<textarea name="note" maxlength="1000" rows="2" style="display:block;width:100%;margin:5px 0 12px">${esc(manual.note || '')}</textarea></label>
+    <button type="submit" class="btn">保存補登並重新計算</button> <button type="button" class="btn ghost" id="settlementCancel">取消</button>
+  </form>`;
+}
+
+async function renderSettlements() {
+  settlementData = await get('/api/v1/settlements');
+  paintSettlements();
+}
+
 async function render() {
   try {
     if (page === "live") await renderLive();
@@ -869,6 +952,7 @@ async function render() {
     else if (page === "daily") await renderDaily();
     else if (page === "calendar") await renderCalendar();
     else if (page === "history") await renderHistory();
+    else if (page === "settlements") await renderSettlements();
     else await renderStatus();
   } catch (err) {
     app.innerHTML = `<p class="warn">${esc(err.message)}</p>`;

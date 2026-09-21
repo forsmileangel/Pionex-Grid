@@ -7,9 +7,10 @@ import json
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlparse, unquote
 
-from .capture import V1_CREDENTIALS, capture_live
+from .capture import V1_CREDENTIALS, capture_live, collect_snapshot
+from .settlements import get_settlements, refresh as refresh_settlements, save_manual
 from .live import REFRESH_LOCK, commit_live_to_daily, live_payload
 from .store import (
     CaptureError,
@@ -127,6 +128,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/v1/live":
             self._json(live_payload())
             return
+        if path == "/api/v1/settlements":
+            self._json(get_settlements(self.db_path))
+            return
         if path == "/api/v1/days":
             self._json(days_payload(self.db_path))
             return
@@ -201,6 +205,26 @@ class Handler(BaseHTTPRequestHandler):
     def _handle_post(self):
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/") or "/"
+        if path == "/api/v1/settlements/refresh" or path.startswith("/api/v1/settlements/"):
+            if not REFRESH_LOCK.acquire(blocking=False):
+                self._json({"error": "refresh already running"}, 409)
+                return
+            try:
+                if path == "/api/v1/settlements/refresh":
+                    result = refresh_settlements(collect_snapshot(V1_CREDENTIALS), self.db_path)
+                else:
+                    result = save_manual(unquote(path[len('/api/v1/settlements/'):]), self._read_json_body(), self.db_path)
+                from .gist_publish import publish_ledger
+                try:
+                    result['publish'] = publish_ledger(self.db_path)
+                except Exception as exc:
+                    result['publish'] = {'ok': False, 'error': str(exc)}
+                self._json(result)
+            except (CaptureError, ValueError) as exc:
+                self._json({'error': str(exc)}, 400)
+            finally:
+                REFRESH_LOCK.release()
+            return
         if path == "/api/v1/live/refresh":
             if not REFRESH_LOCK.acquire(blocking=False):
                 self._json({"error": "refresh already running"}, 409)

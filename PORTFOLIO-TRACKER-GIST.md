@@ -63,6 +63,16 @@ Array.isArray(obj.days)
 
 可加、不可拿掉：`true_profit_usdt`、`daily_profit_coin`、`fx_gap_usdt` 等新欄位 PT 現在不驗證，**加**沒問題；**刪上面列出的舊欄位**或改名字會壞。
 
+## v15.968 關倉結算
+
+- `days[].true_profit_usdt`／`true_profit_twd`：截至該快照的歷史配對收益，含基準帶入及記錄期間已關倉、提領、複投。記錄前已提領的收益可能未涵蓋。
+- `days[].unresolved_count`：該區間配對資料待補數；數值合計是已知部分，PT 月平均暫不計入待補日，補齊後重算。
+- 頂層新增 `settlements[]`，`schema` 仍為 `1`。每筆以訂單 `id` 唯一識別，含 `symbol`、`currency`、`closed_at`（可空）、`observed_at`、`capture_date`、`status`（pending/partial/settled）、`source`、`grid_profit`、`net_profit`、`reported_total_profit`、`funding_fee`、`fee`、`lifetime_grid_profit`、`non_grid_profit`、`daily_reconciled`。
+- 結算金額預設是 `currency` 原幣；`*_usdt` 只有 U 本位或已人工確認結算換算價時提供。API `TotalProfit` 僅為回報值，不假定已含所有費用；`net_profit` 必須明確核對後補登。
+- `grid_profit` 是派網最後顯示值；提領／複投倉須確認完整 `lifetime_grid_profit` 才能計算 `non_grid_profit = net_profit - lifetime_grid_profit`。資金費、手續費只供對帳，不從淨損益再次扣除。
+- 缺值用 `null`，不可改成 0；延遲取得結算時回補首次關倉的快照區間。手動補登紀錄存 SQLite，後續 API 不覆蓋人工值。
+- PT 只讀關倉紀錄，不建立 dirty/pending、不修改 holdings 或錢包。缺少 `settlements` 的舊帳本仍可顯示。
+
 幣本位（ETH）的 `rows[].daily_profit_usdt` 是「當天新增的幣 × 抓取現貨價」，不是畫面 USDT 庫存相減。PT 不必改 HTML，pull 後單日數字會自己變。
 
 ## 第三檔目前倉位（`pionex-grid-live.json`）

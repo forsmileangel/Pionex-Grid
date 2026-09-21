@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import shutil
 import sqlite3
+from contextlib import closing
 from datetime import datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
@@ -14,7 +15,7 @@ from .fx import attach_twd, attach_twd_tree, usdt_twd
 from .liq import normalize_liq
 
 SCALE = 100_000_000
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 EVENT_EPS = 1_000_000
 ADD_MIN_I = 10 * SCALE
 REINVEST_MIN_I = 20 * SCALE
@@ -295,7 +296,7 @@ def _coin_from_snapshot(snap) -> tuple[int | None, int | None, str | None]:
     sym = _rowget(snap, "conversion_symbol")
     data = _raw_bu_data(_rowget(snap, "raw_json"))
     raw = _number_from(data, "gridProfit", "grid_profit")
-    if coin_i in (None, 0) and raw:
+    if coin_i is None and raw:
         coin_i = to_fixed(raw)
     if px_i in (None, 0) and raw and _rowget(snap, "grid_profit_i"):
         try:
@@ -617,6 +618,8 @@ def connect(db_path: Path | None = None) -> sqlite3.Connection:
 
 
 def _migrate(con: sqlite3.Connection) -> None:
+    from .settlements import install, seed_history
+    install(con)
     cols = {row[1] for row in con.execute("PRAGMA table_info(grid_snapshots)")}
     for name, decl in (
         ("mark_price_s", "TEXT"),
@@ -688,6 +691,7 @@ def _migrate(con: sqlite3.Connection) -> None:
     latest = con.execute("SELECT version FROM schema_meta ORDER BY version DESC LIMIT 1").fetchone()
     current = int(latest["version"]) if latest is not None else 0
     if current < SCHEMA_VERSION:
+        seed_history(con)
         if current < 10:
             rebuild_daily_profits(con)
         con.execute("INSERT INTO schema_meta(version, applied_at) VALUES (?, ?)", (SCHEMA_VERSION, datetime.now(TAIPEI).isoformat()))
@@ -823,7 +827,6 @@ def ingest(snapshot: dict, db_path: Path | None = None, replace_date: bool = Fal
             prev_date = datetime.fromisoformat(last["capture_date"]).date()
             gap_days = max(0, (captured.date() - prev_date).days - 1)
         by_id = _positions(con)
-        finished_by_id = {str(r["ApiOrderId"]): r for r in finished}
 
         con.execute("BEGIN")
         if replace_date:
@@ -954,76 +957,26 @@ def ingest(snapshot: dict, db_path: Path | None = None, replace_date: bool = Fal
             daily_total += daily_i
             investment_total += investment_i or 0
 
+        # Lifecycle may already say closed after a same-day replacement. Use the
+        # remaining daily history, not the mutable position flag, as the basis.
         for oid, pos in by_id.items():
-            if pos["lifecycle"] != "active" or oid in running_ids:
+            if oid in running_ids:
                 continue
-            rec = finished_by_id.get(oid)
+            already_closed = con.execute(
+                "SELECT 1 FROM daily_grid_profit WHERE bu_order_id=? AND status IN ('closed','closed_unresolved') LIMIT 1", (oid,)
+            ).fetchone()
             prev_row = _latest_profit(con, oid)
-            prev_i = prev_row["grid_profit_i"] if prev_row else None
-            if rec:
-                withdrawn_i, reinvest_i, reduce_i = _rec_stock_triple(rec)
-            else:
-                withdrawn_i = _rowget(prev_row, "withdrawn_i", 0)
-                reinvest_i = _rowget(prev_row, "reinvest_i", 0)
-                reduce_i = _rowget(prev_row, "reduce_i", 0)
-            coin_i = daily_coin_i = px_i = fx_gap = None
-            if rec is not None and rec.get("Complete") and rec.get("GridProfit") is not None and prev_i is not None:
-                final_i = to_fixed(rec.get("GridProfit"))
-                coin_i, px_i, px_sym = _coin_from_rec(rec)
-                class_grid = _mul_fixed(coin_i, px_i) if coin_i is not None and px_i else final_i
-                class_prev = _prev_revalued(prev_row, px_i) if coin_i is not None else prev_row
-                event, daily_i, life_i = _classify_event(
-                    "closed", class_prev, class_grid, to_fixed(rec.get("Investment")), withdrawn_i or 0, reinvest_i or 0, reduce_i or 0,
-                    override=overrides.get((capture_date, oid)),
-                )
-                daily_coin_i = None if coin_i is None else coin_i - _nz(_rowget(prev_row, "grid_profit_coin_i"))
-                fx_gap = _fx_gap_i(prev_row, coin_i, px_i, final_i)
-                cum_i = final_i
-                status = "closed"
-                closed_count += 1
-                daily_total += daily_i
-                con.execute(
-                    """INSERT INTO grid_snapshots(run_id, bu_order_id, list_status, bot_status, symbol, created_at, closed_at, product,
-                        leverage, trend, grid_type, top_s, bottom_s, row_n, per_volume_s, top_i, bottom_i, per_volume_i,
-                        open_price_s, position_s, position_open_price_s, base_amount_s, quote_amount_s,
-                        investment_i, grid_profit_i, total_profit_i, grid_profit_24h_i, fee_i, funding_fee_i,
-                        profit_reinvest_i, profit_withdrawn_i, profit_reduce_i, extra_margin_i, margin_balance_i, init_margin_i,
-                        risk_status, margin_status, estimate_liq_up_i, estimate_liq_down_i, liquidation_price_i,
-                        liquidation_triggered, matched_grids, order_count, volume_s, loss_stop_type, loss_stop,
-                        profit_stop_type, profit_stop, pause_price_s, moving_indicator_type, moving_top_s, moving_bottom_s,
-                        estimated_step_pct_s, estimated_step_price_s, estimated_range_pct_s, complete, raw_json)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                    _snapshot_fields(run_id, rec),
-                )
-                _apply_live_fields(con, run_id, rec)
-                if coin_i is not None or px_i is not None:
-                    con.execute(
-                        "UPDATE grid_snapshots SET grid_profit_coin_i=?, conversion_price_i=?, conversion_symbol=? WHERE run_id=? AND bu_order_id=?",
-                        (coin_i, px_i, px_sym, run_id, oid),
-                    )
-                con.execute(
-                    "UPDATE grid_positions SET lifecycle='closed', closed_at=? WHERE bu_order_id=?",
-                    (rec.get("Closed") or captured.strftime("%Y-%m-%d %H:%M:%S"), oid),
-                )
-            else:
-                status = "closed_unresolved"
-                daily_i = None
-                final_i = None
-                event = "closed_unresolved"
-                life_i = _rowget(prev_row, "lifetime_i")
-                if life_i is None:
-                    life_i = _nz(prev_i)
-                cum_i = prev_row["cumulative_i"] if prev_row else None
-                withdrawn_i = _rowget(prev_row, "withdrawn_i", 0)
-                reinvest_i = _rowget(prev_row, "reinvest_i", 0)
-                reduce_i = _rowget(prev_row, "reduce_i", 0)
-                unresolved += 1
-                con.execute("UPDATE grid_positions SET lifecycle='closed_unresolved' WHERE bu_order_id=?", (oid,))
+            if already_closed or prev_row is None:
+                continue
+            prev_i = prev_row["grid_profit_i"]
+            life_i = prev_row["lifetime_i"] if prev_row["lifetime_i"] is not None else prev_i
             profit_rows.append((
-                run_id, capture_date, oid, status, prev_i, final_i if status == "closed" else None, daily_i, cum_i,
-                None, withdrawn_i or 0, reinvest_i or 0, reduce_i or 0, life_i, event, gap_days,
-                coin_i, daily_coin_i, px_i, fx_gap,
+                run_id, capture_date, oid, "closed_unresolved", prev_i, None, None,
+                prev_row["cumulative_i"], None, prev_row["withdrawn_i"], prev_row["reinvest_i"],
+                prev_row["reduce_i"], life_i, "closed_unresolved", gap_days, None, None, None, None,
             ))
+            unresolved += 1
+            con.execute("UPDATE grid_positions SET lifecycle='closed_unresolved' WHERE bu_order_id=?", (oid,))
 
         for row in profit_rows:
             con.execute(
@@ -1049,6 +1002,11 @@ def ingest(snapshot: dict, db_path: Path | None = None, replace_date: bool = Fal
             (capture_date, run_id, daily_total, new_cum, true_i, investment_total, len(running), new_count, closed_count, unresolved, gap_days, fx_gap_total),
         )
         con.execute("UPDATE capture_runs SET status='success' WHERE id=?", (run_id,))
+        from .settlements import observe, apply_to_daily
+        observe(con, snapshot)
+        apply_to_daily(con)
+        updated = con.execute("SELECT * FROM daily_summary WHERE capture_date=?", (capture_date,)).fetchone()
+        daily_total, closed_count, unresolved = updated["daily_profit_i"], updated["closed_count"], updated["unresolved_count"]
         con.commit()
         _backup(Path(db_path or DEFAULT_DB))
         return {
@@ -1074,7 +1032,10 @@ def _backup(db_path: Path) -> None:
         return
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(TAIPEI).strftime("%Y%m%d-%H%M%S")
-    shutil.copy2(db_path, BACKUP_DIR / f"pionex-grid-{stamp}.sqlite")
+    # SQLite can have committed pages in WAL; copying only .sqlite loses them.
+    with closing(sqlite3.connect(str(db_path))) as source:
+        with closing(sqlite3.connect(str(BACKUP_DIR / f"pionex-grid-{stamp}.sqlite"))) as target:
+            source.backup(target)
     backups = sorted(BACKUP_DIR.glob("pionex-grid-*.sqlite"), reverse=True)
     for old in backups[30:]:
         old.unlink(missing_ok=True)
@@ -1696,6 +1657,7 @@ def _twd_from_usdt(usdt, rate) -> int | None:
 
 def ledger_publish_payload(db_path: Path | None = None) -> dict:
     """Compact daily-profit JSON for Portfolio Tracker. Does not include raw API blobs."""
+    from .settlements import payload as settlement_payload
     con = connect(db_path)
     try:
         live = usdt_twd()
@@ -1757,6 +1719,7 @@ def ledger_publish_payload(db_path: Path | None = None) -> dict:
                     "active_count": summary["active_count"],
                     "new_count": summary["new_count"],
                     "closed_count": summary["closed_count"],
+                    "unresolved_count": summary["unresolved_count"],
                     "wallet_usdt": None if wallet_usdt in (None, "") else str(wallet_usdt),
                     "wallet_twd": _twd_from_usdt(wallet_usdt, rate),
                     "rows": rows,
@@ -1797,7 +1760,7 @@ def ledger_publish_payload(db_path: Path | None = None) -> dict:
                 "gap_days": latest_row["gap_days"],
             },
             "days": days,
+            "settlements": settlement_payload(con)["rows"],
         }
     finally:
         con.close()
-

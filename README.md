@@ -79,6 +79,13 @@ That registers `Pionex Grid v2 Live Publish` every 30 minutes: fetch running gri
 
 ## Portfolio Tracker
 
+關倉紀錄（v15.968）：本機新增「關倉紀錄」分頁，可補抓 API 或依派網結算明細人工補登。
+API 未確認的最終淨損益保持待補；配對增量回補原快照區間，關倉淨損益不混入配對利潤或再次扣錢包。
+人工補登保留修改歷史，清空欄位代表取消該欄人工覆蓋、回到 API 值或待補。
+`GET /api/v1/settlements` 讀清單；`POST /api/v1/settlements/refresh` 補抓；
+`POST /api/v1/settlements/{order_id}` 保存完整人工覆蓋表單（closed_at、grid_profit、lifetime_grid_profit、net_profit、funding_fee、fee、settlement_usdt_rate、note）。
+資料庫 schema 11 自動相容升級；Gist schema 維持 1。補抓不覆寫當日錢包快照。
+
 Portfolio Tracker reads `pionex-grid-ledger.json` from the private Gist. It never holds Pionex API keys and never PATCHes that file. Holdings stay in `portfolio-tracker-holdings.json`. The local dashboard remains `127.0.0.1:8787` only.
 
 **Before changing capture, ledger JSON, Gist publish, or PT 網格頁:** read [PORTFOLIO-TRACKER-GIST.md](PORTFOLIO-TRACKER-GIST.md). Changing `schema`, the filename, or removing fields PT already reads will blank the remote 網格 tab.
