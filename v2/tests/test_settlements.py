@@ -159,8 +159,8 @@ class SettlementTests(unittest.TestCase):
     def test_realized_and_total_fee_preserved_but_not_assumed_net(self):
         self.capture('2026-09-18',[rec(GridProfit=100)])
         self.capture('2026-09-19',[rec(ListStatus='finished',GridProfit=105,RawJson={
-            'order': {'buOrderData': {'totalRealizedProfit':'-510.24677','totalFee':'-117.61731318'}}
+            'order': {'buOrderData': {'totalRealizedProfit':'-200.5','totalFee':'-2.5'}}
         })])
-        self.assertEqual(self.row()['reported_realized_profit'],'-510.24677')
-        self.assertEqual(self.row()['fee'],'-117.61731318')
+        self.assertEqual(self.row()['reported_realized_profit'],'-200.5')
+        self.assertEqual(self.row()['fee'],'-2.5')
         self.assertIsNone(self.row()['net_profit'])
