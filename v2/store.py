@@ -330,6 +330,11 @@ def _prev_revalued(prev, px_today_i):
     else:
         copied = dict(prev)
     copied["grid_profit_i"] = _mul_fixed(prev_coin, px_today_i)
+    prev_px = _rowget(prev, "conversion_price_i")
+    if prev_px:
+        # Compare cumulative withdrawals at the same FX rate, just like grid profit.
+        copied["withdrawn_i"] = int((Decimal(_nz(_rowget(prev, "withdrawn_i")))
+            * Decimal(px_today_i) / Decimal(prev_px)).quantize(Decimal(1), rounding=ROUND_HALF_UP))
     return copied
 
 
@@ -389,8 +394,8 @@ def _classify_event(status: str, prev, grid_i, inv_i, withdrawn_i, reinvest_i, r
     grid_drop = max(0, -g_d)
     if re_d > EVENT_EPS and g_d >= -EVENT_EPS:
         re_d = 0
-    if wd_d > EVENT_EPS and g_d >= -EVENT_EPS:
-        wd_d = 0
+    # Withdrawals are cumulative: delta(grid + withdrawn) remains valid even
+    # when new earnings offset the withdrawal and the displayed grid profit rises.
     if rd_d > EVENT_EPS and g_d >= -EVENT_EPS:
         rd_d = 0
     events = []

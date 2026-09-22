@@ -251,6 +251,58 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(summary["true_profit_i"], to_fixed(105))
         con.close()
 
+    def test_withdraw_uses_cumulative_delta_even_when_grid_profit_grows(self):
+        samples = [
+            ("2026-08-25", 1500, 0, 0, 1500),
+            ("2026-08-26", 505, 1000, 5, 1505),
+            ("2026-08-27", 510, 1000, 5, 1510),
+            ("2026-08-28", 610, 2000, 1100, 2610),
+            ("2026-08-29", 610, 2100, 100, 2710),
+            ("2026-08-30", 620, 2100, 10, 2720),
+        ]
+        for date, grid, withdrawn, daily, lifetime in samples:
+            ingest(snap(date, [rec(GridProfit=grid, ProfitWithdrawn=withdrawn)]), self.db)
+        last = snap(samples[-1][0], [rec(GridProfit=620, ProfitWithdrawn=2100)])
+        ingest(last, self.db, replace_date=True)
+        con = connect(self.db)
+        try:
+            for _ in range(2):
+                rebuild_daily_profits(con)
+            con.commit()
+        finally:
+            con.close()
+        con = connect(self.db)
+        try:
+            rows = list(con.execute("SELECT * FROM daily_grid_profit ORDER BY capture_date"))
+            self.assertEqual(len(rows), len(samples))
+            for row, (date, grid, withdrawn, daily, lifetime) in zip(rows, samples):
+                with self.subTest(date=date):
+                    self.assertEqual(row["daily_profit_i"], to_fixed(daily))
+                    self.assertEqual(row["lifetime_i"], to_fixed(lifetime))
+            payload = ledger_publish_payload(self.db)
+            self.assertEqual({d["date"]: d["daily_profit_usdt"] for d in payload["days"]},
+                             {s[0]: str(s[3]) for s in samples})
+        finally:
+            con.close()
+
+    def test_coin_withdraw_counter_ignores_exchange_rate_changes(self):
+        for date, grid, price in [("2026-08-25", 0.15, 2000),
+                                  ("2026-08-26", 0.155, 2100),
+                                  ("2026-08-27", 0.16, 1900)]:
+            raw = {"order": {"quote": "ETH", "buOrderData": {
+                "gridProfit": grid, "profitWithdrawn": 0.05}}}
+            ingest(snap(date, [rec(Product="coin_margined_contract_grid", Symbol="ETH",
+                GridProfit=grid * price, RawGridProfit=grid, ConversionPrice=price,
+                ConversionSymbol="ETH_USDT", RawJson=raw)]), self.db)
+        con = connect(self.db)
+        try:
+            rows = list(con.execute("SELECT * FROM daily_grid_profit ORDER BY capture_date"))
+            self.assertEqual([r["daily_profit_i"] for r in rows],
+                             [0, to_fixed(10.5), to_fixed(9.5)])
+            self.assertTrue(all("withdraw" not in r["event"] for r in rows))
+        finally:
+            con.close()
+
     def test_inferred_reinvest_from_investment_jump(self):
         ingest(snap("2026-08-26", [rec(GridProfit=80, Investment=1000)]), self.db)
         ingest(snap("2026-08-27", [rec(GridProfit=3, Investment=1080)]), self.db)
