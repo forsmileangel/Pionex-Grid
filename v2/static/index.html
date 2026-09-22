@@ -356,11 +356,18 @@ function moneyNum(m) {
   return Number.isFinite(x) ? x : null;
 }
 
+function efficiency3x(profit, investment, leverage) {
+  const multiple = parseFloat(leverage);
+  if (!Number.isFinite(profit) || !Number.isFinite(investment) || investment <= 0
+      || !Number.isFinite(multiple) || multiple <= 0) return null;
+  return profit / investment * 100 * 3 / multiple;
+}
+
 function sortValue(r, key, profitKey) {
   const day = profitKey === "daily" ? r.daily_profit : r.profit_24h;
   const dayV = moneyNum(day);
   const sizeV = moneyNum(r.investment) != null ? moneyNum(r.investment) : moneyNum(r.size);
-  const pct = dayV != null && sizeV ? dayV / sizeV * 100 : null;
+  const pct = efficiency3x(dayV, sizeV, r.leverage);
   if (key === "opened_at") return r.opened_at || "";
   if (key === "size") return sizeV;
   if (key === "symbol") return (r.symbol || "").toLowerCase();
@@ -413,13 +420,12 @@ function positionTable(rows, profitKey, sort) {
     <col class="c-liq"><col class="c-dist"><col class="c-grid"><col class="c-day"><col class="c-pct">
   </colgroup><thead><tr>
     ${h("opened_at", "t c-date", "建倉日期", "台北時間")}${h("size", "n c-size", "倉位大小", "USDT", "實際投入的本金，不是持倉數量乘現價。")}${h("symbol", "t c-sym", "標的", "槓桿 / 方向")}${h("mark", "n c-mark", "現價", "Mark")}
-    ${h("liq", "n c-liq", "強平價", "預估")}${h("dist", "n c-dist", "強平距離", "剩餘 %", "離強平還剩多少％，0 到 100。多數是 U 本位；幣本位會另外換算。")}${h("grid", "n c-grid", "網格利潤", "USDT", "這筆倉目前帳上的累計網格利潤。複投後會從 0 再算。")}${h("day", "n c-day", "單日利潤", "USDT", dayTip)}${h("pct", "n c-pct", "每U效率", "%", "單日利潤 ÷ 倉位大小。投入 1 USDT，這段時間賺了多少％。數字越大表示這筆倉的 U 用得越有效率。")}
+    ${h("liq", "n c-liq", "強平價", "預估")}${h("dist", "n c-dist", "強平距離", "剩餘 %", "離強平還剩多少％，0 到 100。多數是 U 本位；幣本位會另外換算。")}${h("grid", "n c-grid", "網格利潤", "USDT", "這筆倉目前帳上的累計網格利潤。複投後會從 0 再算。")}${h("day", "n c-day", "單日利潤", "USDT", dayTip)}${h("pct", "n c-pct", "每U效率", "3 倍 · %", "單日利潤 ÷ 倉位大小 × 3 ÷ 原槓桿倍率 × 100%。統一按比例換算為 3 倍槓桿，比較不同倉位的配對收益效率。")}
   </tr></thead><tbody>${ordered.map((r) => {
     const day = profitKey === "daily" ? r.daily_profit : r.profit_24h;
     const dayV = day && day.usdt;
     const size = r.investment && r.investment.usdt != null ? r.investment : r.size;
-    const sizeV = size && size.usdt != null ? Number(size.usdt) : null;
-    const pct = dayV != null && sizeV ? Number(dayV) / sizeV * 100 : null;
+    const pct = efficiency3x(moneyNum(day), moneyNum(size), r.leverage);
     const opened = String(r.opened_at || "").replace("T", " ");
     const openDate = opened.split(" ")[0] || "";
     const openTime = opened.split(" ")[1] || "";
