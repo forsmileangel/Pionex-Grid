@@ -6,9 +6,9 @@ This public repository contains **program files only**. Live Excel ledgers, SQLi
 
 ## Local paths
 
-Two recorders, different ledgers:
+Two views, one shared SQLite ledger:
 
-- **Excel 每日紀錄** (08:00 production): `D:\My-project\pionex grid record`
+- **Excel 每日紀錄** (08:12 production): `D:\My-project\pionex grid record`
 - **SQLite 本機儀表板** (HTML at 127.0.0.1:8787): `D:\My-project\pionex grid record-v2`
 
 The folder name still has `-v2` because it is a git worktree. On screen it is the SQLite dashboard, not “v2”.
@@ -20,22 +20,24 @@ The folder name still has `-v2` because it is a git worktree. On screen it is th
 - Scripts only call GET endpoints. They never create, adjust, reduce, pause, or cancel bots.
 - Never commit `PIONEX API.txt`, `GIST PUBLISH.txt`, `data/*.xlsx`, `*.sqlite`, logs, or `exports/`.
 
-## v1.0 — daily Excel
+## v15.968 — Excel from the shared ledger
 
-1. `pionex-grid-api.mjs` pages running `futures_grid` orders and fetches each detail.
-2. `pionex-grid-daily.ps1` writes a complete snapshot to Excel, or restores the `.bak` on failure.
-3. First appearance of a grid is a baseline (daily profit 0). Later days use `today − previous`.
-4. Savings products are skipped when the public API does not return them.
+The original 16-column Excel report reads v2 SQLite through `v2.legacy_excel`.
+`Pionex Grid Record - Daily API` now runs at **08:12**, after the 08:05 capture;
+`install-legacy-excel-task.ps1` updates the existing trigger/action and saves its old XML.
+The 08:10 daily report continues using SQLite as before.
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\pionex-grid-daily.ps1 -DryRun
-```
-
-Windows Task Scheduler `Pionex Grid Record - Daily API` runs the **Excel** recorder at 08:00 from `pionex grid record`. Do not point that task at the SQLite folder.
+Every export rebuilds ledger dates, including late settlement corrections. Withdrawn
+profit is already included in API gridProfit, closing paired increments appear once,
+and native-coin daily profits exclude price revaluation. The original Excel cumulative
+column remains recorded-period income (baseline zero), not lifetime profit.
+The savings sheet and table structure remain intact. Timestamped backups and atomic
+replacement protect existing files; stale/missing data and unknown dates stop the export.
+`-DryRun` previews metadata; `-Backfill` / `-AllowStale` allow historical ledger exports.
 
 ## SQLite 本機儀表板
 
-Worktree `D:\My-project\pionex grid record-v2` (branch `v2/sqlite-dashboard`). Records into `v2-data/pionex-grid.sqlite` and serves `http://127.0.0.1:8787`. The 08:00 Excel task is unchanged.
+Worktree `D:\My-project\pionex grid record-v2` (branch `v2/sqlite-dashboard`). Records into `v2-data/pionex-grid.sqlite` and serves `http://127.0.0.1:8787`. The legacy Excel report now reads this ledger at 08:12.
 
 Double-click `儀表板開關.cmd` to start or stop the local server (works even when the page is down). Double-click `抓取SQLite紀錄.cmd` (or `capture-v2.cmd`) to snapshot Pionex into SQLite.
 
@@ -53,14 +55,14 @@ After login / reboot the SQLite dashboard can start by itself:
 powershell -NoProfile -ExecutionPolicy Bypass -File .\install-dashboard-autostart.ps1
 ```
 
-That registers Task Scheduler `Pionex Grid SQLite Dashboard`: start at logon, then re-check `http://127.0.0.1:8787` every 30 minutes (HTTP down → restart). It does not change the 08:00 Excel task. Logs: `v2-data/dashboard.log` and `v2-data/dashboard-server.log` (local only).
+That registers Task Scheduler `Pionex Grid SQLite Dashboard`: start at logon, then re-check `http://127.0.0.1:8787` every 30 minutes (HTTP down → restart). It does not change the Excel export task. Logs: `v2-data/dashboard.log` and `v2-data/dashboard-server.log` (local only).
 
 - SQLite file: `v2-data/pionex-grid.sqlite` (local only)
 - Export: `exports/` (does not overwrite v1 Excel)
 - First successful v2 capture is a baseline (daily profit 0)
 - Server binds `127.0.0.1` only and never reads the API key
 
-Daily sqlite capture (does **not** replace the v1 08:00 Excel task):
+Daily SQLite capture (08:05, before the Excel exports):
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\install-v2-daily-capture.ps1
@@ -92,7 +94,7 @@ API 未確認的最終淨損益保持待補；配對增量回補原快照區間�
 - 每日擷取、即時快照寫入今日、關倉補抓、人工補登及歷史重算共用帳本算法；本機月曆、每日詳情、Excel 匯出、Gist／Portfolio 從帳本讀取結果。
 - 寫入今日必須使用台北當日的即時快照，保留原擷取時間。跨日或時間缺失時須先更新即時資料，不能把舊快照改標為現在。
 - 關倉待補時保留訂單 ID、標的及已知歷史收益；補到最後配對值時回填首次發現關倉的區間，之後日期不重複入帳。關倉總損益不作配對收益。
-- 08:10 `pionex grid daily report` 報表讀取此帳本，修正歷史後須重跑報表才能更新既有 Excel。舊版 08:00 `pionex-grid-daily.ps1` 獨立相減運行中倉位，未補抓最終關倉增量，也未排除幣本位匯率重估；它不是 v2 帳本的同口徑報表，依既有要求保留原流程。
+- 08:10 新報表及 08:12 原格式 Excel 都讀取此帳本，修正歷史後重跑即可回填關倉原區間與後續累計。原 08:00 Excel 已移除獨立相減算法，不再混入幣價重估或漏掉關倉最後配對增量。
 
 Portfolio Tracker reads `pionex-grid-ledger.json` from the private Gist. It never holds Pionex API keys and never PATCHes that file. Holdings stay in `portfolio-tracker-holdings.json`. The local dashboard remains `127.0.0.1:8787` only.
 
