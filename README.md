@@ -86,6 +86,14 @@ API 未確認的最終淨損益保持待補；配對增量回補原快照區間�
 `POST /api/v1/settlements/{order_id}` 保存完整人工覆蓋表單（closed_at、grid_profit、lifetime_grid_profit、net_profit、funding_fee、fee、settlement_usdt_rate、note）。
 資料庫 schema 11 自動相容升級；Gist schema 維持 1。補抓不覆寫當日錢包快照。
 
+每日配對核對（v15.968）：
+
+- API `gridProfit` 已包含已提領收益，`profitWithdrawn` 只標示提領事件，不再次加到每日／歷史配對利潤。近 24 小時另讀 API `gridProfit24h`，與每日快照區間不同。
+- 每日擷取、即時快照寫入今日、關倉補抓、人工補登及歷史重算共用帳本算法；本機月曆、每日詳情、Excel 匯出、Gist／Portfolio 從帳本讀取結果。
+- 寫入今日必須使用台北當日的即時快照，保留原擷取時間。跨日或時間缺失時須先更新即時資料，不能把舊快照改標為現在。
+- 關倉待補時保留訂單 ID、標的及已知歷史收益；補到最後配對值時回填首次發現關倉的區間，之後日期不重複入帳。關倉總損益不作配對收益。
+- 08:10 `pionex grid daily report` 報表讀取此帳本，修正歷史後須重跑報表才能更新既有 Excel。舊版 08:00 `pionex-grid-daily.ps1` 獨立相減運行中倉位，未補抓最終關倉增量，也未排除幣本位匯率重估；它不是 v2 帳本的同口徑報表，依既有要求保留原流程。
+
 Portfolio Tracker reads `pionex-grid-ledger.json` from the private Gist. It never holds Pionex API keys and never PATCHes that file. Holdings stay in `portfolio-tracker-holdings.json`. The local dashboard remains `127.0.0.1:8787` only.
 
 **Before changing capture, ledger JSON, Gist publish, or PT 網格頁:** read [PORTFOLIO-TRACKER-GIST.md](PORTFOLIO-TRACKER-GIST.md). Changing `schema`, the filename, or removing fields PT already reads will blank the remote 網格 tab.

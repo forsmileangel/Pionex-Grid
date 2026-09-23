@@ -1406,7 +1406,8 @@ def days_payload(db_path: Path | None = None) -> dict:
         for summary in summaries:
             snaps = _rows(
                 con,
-                """SELECT s.*, p.lifecycle, p.created_at AS position_created, d.status, d.event, d.daily_profit_i, d.prev_grid_profit_i, d.cumulative_i
+                """SELECT s.*, p.bu_order_id AS position_id, p.symbol AS position_symbol,
+                          p.lifecycle, p.created_at AS position_created, d.status, d.event, d.daily_profit_i, d.prev_grid_profit_i, d.cumulative_i
                    FROM daily_grid_profit d
                    JOIN grid_positions p ON p.bu_order_id=d.bu_order_id
                    LEFT JOIN grid_snapshots s ON s.run_id=d.run_id AND s.bu_order_id=d.bu_order_id
@@ -1417,6 +1418,10 @@ def days_payload(db_path: Path | None = None) -> dict:
             rows = []
             for snap in snaps:
                 merged = dict(snap)
+                # A pending close has no final snapshot yet; its identity still
+                # comes from the position so the calendar can open its history.
+                merged['bu_order_id'] = snap['position_id']
+                merged['symbol'] = snap['position_symbol']
                 rows.append(_board_row(merged, merged.get("grid_profit_24h_i"), merged.get("daily_profit_i"), merged.get("investment_i")))
             item = dict(summary)
             item["daily_profit"] = money(summary["daily_profit_i"])

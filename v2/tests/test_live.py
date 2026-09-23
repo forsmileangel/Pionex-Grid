@@ -80,16 +80,33 @@ class LiveTests(unittest.TestCase):
         con.close()
         self.assertEqual(row["grid_profit_i"], to_fixed(10))
 
-    def test_commit_writes_today_and_skips_gist_without_creds(self):
-        save_live_snapshot(live_snap([rec(GridProfit=22, Investment=1000)]), self.live)
+    def test_commit_preserves_snapshot_time_and_skips_gist_without_creds(self):
         today = datetime.now(TAIPEI).date().isoformat()
+        snapshot = live_snap([rec(GridProfit=22, Investment=1000)])
+        snapshot['CapturedAt'] = today + 'T00:00:00+08:00'
+        save_live_snapshot(snapshot, self.live)
         with patch("v2.gist_publish.publish_ledger", return_value={"ok": False, "skipped": True, "reason": "test"}):
             result = commit_live_to_daily(today, self.db, self.live)
         self.assertEqual(result["capture_date"], today)
         con = connect(self.db)
         row = con.execute("SELECT grid_profit_i FROM daily_grid_profit WHERE capture_date=?", (today,)).fetchone()
+        captured = con.execute("SELECT captured_at FROM capture_runs").fetchone()[0]
         con.close()
         self.assertEqual(row["grid_profit_i"], to_fixed(22))
+        self.assertEqual(captured, snapshot['CapturedAt'])
+
+    def test_commit_rejects_stale_or_missing_snapshot_time_without_publishing(self):
+        today = datetime.now(TAIPEI).date().isoformat()
+        for captured in ['1999-01-01T12:00:00+08:00', None, 'invalid']:
+            with self.subTest(captured=captured):
+                snapshot = live_snap([rec(GridProfit=22)])
+                snapshot['CapturedAt'] = captured
+                save_live_snapshot(snapshot, self.live)
+                with patch('v2.gist_publish.publish_ledger') as publish:
+                    with self.assertRaises(CaptureError):
+                        commit_live_to_daily(today, self.db, self.live)
+                    publish.assert_not_called()
+                self.assertFalse(self.db.exists())
 
 
 if __name__ == "__main__":

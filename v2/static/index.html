@@ -480,8 +480,8 @@ function paintBoard() {
   const board = boardData;
   const fxRate = board.fx && (board.fx.usdt_twd != null ? board.fx.usdt_twd : board.fx.usd_twd);
   app.innerHTML = summaryCards(board, "每日快照時間", board.as_of ? fmtTaipei(board.as_of) : "尚無",
-      "現在還開著的倉，把派網畫面上的網格利潤加起來。關倉、複投、提取後，這筆會變少。",
-      "基準日之後有記錄到的複投、提取、關倉，會加回網格利潤。派網帳上舊的複投存量、加倉本金都不加。還沒做那些事時，會跟左邊加總一樣。")
+      "目前運行中倉位的配對利潤加總，已包含已提領收益。關倉後該倉位移出加總。",
+      "基準日帶入加上之後的每日配對增量，保留已關倉成果並調整複投。提領已含在派網回報值，不另加一次；加倉本金不算利潤。")
     + `<div class="card">
       <p class="muted">這頁是上一次每日快照（約 08:05 或手動抓取），不是即時。台幣 USDT→TWD ${fxRate != null ? n(fxRate, 3) : "—"}。虛線名稱可點說明；表頭可排序。</p>
       ${positionTable(board.rows || [], "24h", boardSort)}
@@ -523,7 +523,7 @@ function paintLive() {
     </div>`
     + summaryCards(board, "即時更新時間", hasLive ? fmtTaipei(board.as_of) : "尚未抓過",
         "現在還開著的倉，把派網畫面上的網格利潤加起來。",
-        "這屏開著的倉，網格利潤加總。不加派網舊的複投存量。基準日之後若有複投／提取／關倉，加回的數字在倉位紀錄。")
+        "目前運行中倉位的配對利潤加總，已包含已提領收益。含已關倉成果及複投調整的歷史累計請見每日倉位紀錄。")
     + `<div class="card">
       <p class="muted">這一頁是暫存屏，跟每日 8 點快照分開。按「更新目前倉位」只抓此刻並留在這裡。台幣 USDT→TWD ${fxRate != null ? n(fxRate, 3) : "—"}。</p>
       ${hasLive ? positionTable(board.rows || [], "24h", boardSort) : "<p class='muted'>按「更新目前倉位」後才會出現表格。</p>"}
@@ -701,7 +701,7 @@ function paintCalendar() {
       <div class="legend">
         <span><b>單日</b> 當日網格利潤，基準日為 0；幣本位是當天新增的幣×抓取現貨價，不含幣價重估</span>
         <span><b>運行中</b> 當日仍開著的倉，畫面 USDT，含幣價</span>
-        <span><b>歷史累計</b> 基準日之後記到的複投／提取／關倉加回，加倉不算利潤</span>
+        <span><b>歷史累計</b> 基準帶入加每日配對增量，保留關倉成果並調整複投；提領不重複加回</span>
         <span>有紀錄的日子可點。</span>
       </div>
       ${rows.some((r) => String(r.event || "").split("+").includes("review"))
@@ -712,7 +712,7 @@ function paintCalendar() {
       <div class="stat"><span class="label">點選日</span><strong>${calSelected}</strong></div>
       <div class="stat">${tip("每日利潤", "U 本位：畫面網格利潤的日差。幣本位（ETH）：當天新增的幣×抓取現貨價，不含舊庫存被幣價重估。第一天基準是 0。")}<strong class="${cls(selected.daily_profit && selected.daily_profit.usdt)}">${bothSigned(selected.daily_profit)}</strong></div>
       <div class="stat">${tip("運行中配對利潤", "那天還開著的倉，派網畫面上的網格利潤加總（USDT，幣本位含幣價）。關倉後這筆會掉。")}<strong>${both(selected.cumulative)}</strong></div>
-      <div class="stat">${tip("歷史累計配對利潤（含已關倉）", "截至當日快照，含基準日帶入與之後記錄到的複投／提取／關倉；記錄開始前已提領的收益可能未涵蓋。")}<strong>${both(selected.true_profit)}</strong></div>
+      <div class="stat">${tip("歷史累計配對利潤（含已關倉）", "截至當日快照，含基準帶入、每日配對增量、已關倉成果與複投調整。派網配對值已含已提領收益，不再加回；記錄開始前未保留的複投收益可能未涵蓋。")}<strong>${both(selected.true_profit)}</strong></div>
     </div>
     <div class="card">
       <h3>${calSelected} 明細</h3>

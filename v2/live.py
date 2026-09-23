@@ -136,8 +136,14 @@ def commit_live_to_daily(confirm_date: str, db_path: Path, live_file: Path | Non
     snapshot = load_live_snapshot(live_file)
     if snapshot is None:
         raise CaptureError("No live snapshot to write")
-    snapshot = dict(snapshot)
-    snapshot["CapturedAt"] = taipei_now().isoformat()
+    try:
+        if not isinstance(snapshot.get("CapturedAt"), str) or not snapshot["CapturedAt"]:
+            raise ValueError("missing timestamp")
+        captured = taipei_now(snapshot["CapturedAt"])
+    except (TypeError, ValueError):
+        raise CaptureError("即時快照缺少有效擷取時間，請先更新即時資料")
+    if captured.date().isoformat() != today:
+        raise CaptureError("即時快照不是台北今日資料，請先更新即時資料")
     result = ingest(snapshot, db_path=db_path, replace_date=True)
     try:
         from .gist_publish import publish_ledger
