@@ -95,7 +95,7 @@ class SettlementTests(unittest.TestCase):
 
     def test_withdrawal_not_double_counted_and_full_scope_required(self):
         self.capture('2026-09-18',[rec(GridProfit=100)])
-        self.capture('2026-09-19',[rec(ListStatus='finished',GridProfit=55,ProfitWithdrawn=50)])
+        self.capture('2026-09-19',[rec(ListStatus='finished',GridProfit=105,ProfitWithdrawn=50)])
         self.assertEqual(self.day('2026-09-19')['daily_profit_i'],store.to_fixed(5))
         settlements.save_manual('g1',{'net_profit':'-195'},self.db)
         self.assertIsNone(self.row()['non_grid_profit'])

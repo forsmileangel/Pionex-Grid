@@ -394,8 +394,6 @@ def _classify_event(status: str, prev, grid_i, inv_i, withdrawn_i, reinvest_i, r
     grid_drop = max(0, -g_d)
     if re_d > EVENT_EPS and g_d >= -EVENT_EPS:
         re_d = 0
-    # Withdrawals are cumulative: delta(grid + withdrawn) remains valid even
-    # when new earnings offset the withdrawal and the displayed grid profit rises.
     if rd_d > EVENT_EPS and g_d >= -EVENT_EPS:
         rd_d = 0
     events = []
@@ -434,7 +432,9 @@ def _classify_event(status: str, prev, grid_i, inv_i, withdrawn_i, reinvest_i, r
         events.append("withdraw")
     if rd_d > EVENT_EPS:
         events.append("reduce")
-    daily = g_d + re_d + wd_d + rd_d + inferred
+    # Pionex API gridProfit already includes withdrawn profit. The withdrawal
+    # delta labels a cash transfer; adding it again would duplicate grid income.
+    daily = g_d + re_d + rd_d + inferred
     prev_life = _rowget(prev, "lifetime_i")
     if prev_life is None:
         prev_life = _nz(prev_grid)

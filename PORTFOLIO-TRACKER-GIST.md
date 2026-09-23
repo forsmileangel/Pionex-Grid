@@ -59,6 +59,7 @@ Array.isArray(obj.days)
 
 - 基準日 `daily_profit_*` = 0
 - `cumulative_usdt` = 當天還開著的倉，GridProfit 加總（不是從專案第一天加到現在的流水帳）
+- `GridProfit` 直接來自派網 API 的 `gridProfit`，已包含已提領的配對利潤，不是剩餘可提領額。`ProfitWithdrawn` 用於標記提領事件與對帳，不可再加進每日或歷史配對收益。例如前日 `gridProfit=1500`，次日 `gridProfit=1505`、`profitWithdrawn=1000`，每日收益是 5，不是 1005。即時近 24 小時數值另讀 `gridProfit24h`。
 - `wallet.twd` = 臺銀美金現金買入口徑，跟 SQLite 儀表板同一套
 
 可加、不可拿掉：`true_profit_usdt`、`daily_profit_coin`、`fx_gap_usdt` 等新欄位 PT 現在不驗證，**加**沒問題；**刪上面列出的舊欄位**或改名字會壞。

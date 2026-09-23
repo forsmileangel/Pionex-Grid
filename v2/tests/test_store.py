@@ -2,6 +2,7 @@ import json
 import sqlite3
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -240,29 +241,34 @@ class StoreTests(unittest.TestCase):
         self.assertNotIn("withdraw", row["event"] or "")
         con.close()
 
-    def test_withdraw_adds_back_to_true_profit(self):
+    def test_withdraw_is_already_in_api_grid_profit(self):
         ingest(snap("2026-08-26", [rec(GridProfit=100, Investment=1000)]), self.db)
-        ingest(snap("2026-08-27", [rec(GridProfit=55, Investment=1000, ProfitWithdrawn=50)]), self.db)
+        raw = {"order": {"buOrderData": {"gridProfit": "105", "profitWithdrawn": "50"}}}
+        ingest(snap("2026-08-27", [rec(GridProfit=105, Investment=1000, RawJson=raw)]), self.db)
         con = connect(self.db)
-        row = con.execute("SELECT * FROM daily_grid_profit WHERE capture_date='2026-08-27'").fetchone()
-        self.assertIn("withdraw", row["event"])
-        self.assertEqual(row["lifetime_i"], to_fixed(105))
-        summary = con.execute("SELECT * FROM daily_summary WHERE capture_date='2026-08-27'").fetchone()
-        self.assertEqual(summary["true_profit_i"], to_fixed(105))
-        con.close()
+        try:
+            row = con.execute("SELECT * FROM daily_grid_profit WHERE capture_date='2026-08-27'").fetchone()
+            self.assertIn("withdraw", row["event"])
+            self.assertEqual(row["withdrawn_i"], to_fixed(50))
+            self.assertEqual(row["daily_profit_i"], to_fixed(5))
+            self.assertEqual(row["lifetime_i"], to_fixed(105))
+            summary = con.execute("SELECT * FROM daily_summary WHERE capture_date='2026-08-27'").fetchone()
+            self.assertEqual(summary["true_profit_i"], to_fixed(105))
+        finally:
+            con.close()
 
-    def test_withdraw_uses_cumulative_delta_even_when_grid_profit_grows(self):
+    def test_withdraw_does_not_duplicate_cumulative_grid_profit(self):
         samples = [
             ("2026-08-25", 1500, 0, 0, 1500),
-            ("2026-08-26", 505, 1000, 5, 1505),
-            ("2026-08-27", 510, 1000, 5, 1510),
-            ("2026-08-28", 610, 2000, 1100, 2610),
-            ("2026-08-29", 610, 2100, 100, 2710),
-            ("2026-08-30", 620, 2100, 10, 2720),
+            ("2026-08-26", 1505, 1000, 5, 1505),
+            ("2026-08-27", 1510, 1000, 5, 1510),
+            ("2026-08-28", 2610, 2000, 1100, 2610),
+            ("2026-08-29", 2710, 2100, 100, 2710),
+            ("2026-08-30", 2720, 2100, 10, 2720),
         ]
         for date, grid, withdrawn, daily, lifetime in samples:
             ingest(snap(date, [rec(GridProfit=grid, ProfitWithdrawn=withdrawn)]), self.db)
-        last = snap(samples[-1][0], [rec(GridProfit=620, ProfitWithdrawn=2100)])
+        last = snap(samples[-1][0], [rec(GridProfit=2720, ProfitWithdrawn=2100)])
         ingest(last, self.db, replace_date=True)
         con = connect(self.db)
         try:
@@ -282,6 +288,18 @@ class StoreTests(unittest.TestCase):
             payload = ledger_publish_payload(self.db)
             self.assertEqual({d["date"]: d["daily_profit_usdt"] for d in payload["days"]},
                              {s[0]: str(s[3]) for s in samples})
+        finally:
+            con.close()
+
+    def test_withdraw_without_new_grid_profit_is_not_income(self):
+        ingest(snap("2026-08-25", [rec(GridProfit=1500, ProfitWithdrawn=200)]), self.db)
+        ingest(snap("2026-08-26", [rec(GridProfit=1500, ProfitWithdrawn=1200)]), self.db)
+        con = connect(self.db)
+        try:
+            row = con.execute("SELECT * FROM daily_grid_profit WHERE capture_date='2026-08-26'").fetchone()
+            self.assertIn("withdraw", row["event"])
+            self.assertEqual(row["daily_profit_i"], 0)
+            self.assertEqual(row["lifetime_i"], to_fixed(1500))
         finally:
             con.close()
 
@@ -560,7 +578,9 @@ class StoreTests(unittest.TestCase):
             MarkPrice=456.97,
         )]), self.db)
         from v2.store import board_payload
-        row = board_payload(self.db)["rows"][0]
+        with patch("v2.store.datetime", wraps=datetime) as clock:
+            clock.now.return_value = datetime.fromisoformat("2026-08-25T00:00:00+08:00")
+            row = board_payload(self.db)["rows"][0]
         self.assertAlmostEqual(float(row["trend_profit"]["usdt"]), -508.7, delta=8)
         self.assertAlmostEqual(float(row["total_pnl"]["usdt"]), 902, delta=8)
         self.assertAlmostEqual(float(row["funding"]["usdt"]), -152.6, delta=0.2)
