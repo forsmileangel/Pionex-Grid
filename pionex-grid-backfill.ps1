@@ -1,6 +1,5 @@
 param(
-    [Parameter(Mandatory = $true)]
-    [string]$SnapshotJson,
+    [string]$SnapshotJson = "",
     [datetime]$CaptureAt = [datetime]::MinValue,
     [string]$RootDir = "D:\My-project\pionex grid record"
 )
