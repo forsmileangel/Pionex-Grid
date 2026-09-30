@@ -1200,6 +1200,27 @@ def _pnl_metrics(snap: dict, mark: float | None, as_of: datetime | None = None) 
     }
 
 
+def _display_direction(snap: dict) -> tuple:
+    """Display coin/USDT direction, retaining API direction for inverse-price math."""
+    trend, leverage = snap.get("trend"), snap.get("leverage")
+    raw = snap.get("raw_json") or {}
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except json.JSONDecodeError:
+            raw = {}
+    order = (raw.get("order") or {}) if isinstance(raw, dict) else {}
+    base = str(order.get("base") or "").upper().removesuffix(".PERP")
+    quote = str(order.get("quote") or "").upper().removesuffix(".PERP")
+    if (snap.get("product") == "coin_margined_contract_grid"
+            and base == "USDT" and quote not in ("", "USDT") and trend in ("long", "short")):
+        display = "long" if trend == "short" else "short"
+        if leverage and str(leverage).endswith(trend):
+            leverage = str(leverage)[:-len(trend)] + display
+        return display, leverage
+    return trend, leverage
+
+
 def _board_row(snap: dict, profit_24h_i: int | None, daily_i: int | None, size_i: int | None) -> dict:
     mark = _num(snap.get("mark_price_s"))
     if mark is None and snap.get("mark_price_i") is not None:
@@ -1219,12 +1240,13 @@ def _board_row(snap: dict, profit_24h_i: int | None, daily_i: int | None, size_i
     if profit_i is not None and size_i:
         pct = float(Decimal(profit_i) / Decimal(size_i) * 100)
     pnl = _pnl_metrics(snap, mark)
+    display_trend, display_leverage = _display_direction(snap)
     return {
         "bu_order_id": snap.get("bu_order_id"),
         "opened_at": snap.get("position_created") or snap.get("created_at"),
         "symbol": snap.get("symbol"),
-        "trend": snap.get("trend"),
-        "leverage": snap.get("leverage"),
+        "trend": display_trend,
+        "leverage": display_leverage,
         "size": money(size_i),
         "investment": money(snap.get("investment_i")),
         "mark_price": None if mark is None else str(mark),

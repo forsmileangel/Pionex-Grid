@@ -59,6 +59,7 @@ def record_to_snap(rec: dict) -> dict:
         "leverage": rec.get("Leverage"),
         "trend": rec.get("Trend"),
         "product": rec.get("Product"),
+        "raw_json": rec.get("RawJson"),
         "investment_i": to_fixed(rec.get("Investment")),
         "grid_profit_i": to_fixed(rec.get("GridProfit")),
         "grid_profit_24h_i": to_fixed(rec.get("GridProfit24h")),

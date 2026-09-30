@@ -84,6 +84,8 @@ PT 驗：`schema === 1` 且 `rows` 是陣列。不是帳本、沒有 `days`。�
 
 不要放 raw API、金鑰、sqlite。live 發布失敗不刪本機 `live-snapshot.json`。
 
+方向欄位採畫面交易對口徑：API `USDT.PERP/ETH` 等反向合約的 `short` 顯示為 ETH/USDT 的 `long`，`Leverage` 文字同步轉換。只在確認反向交易對時轉換；SQLite 與原始快照仍保留 API 方向，供反向價格、強平及盈虧計算使用，避免二次反轉。本機即時、每日及歷史倉位摘要與 Gist live 共用此顯示轉換。
+
 ## 改程式時的檢查清單
 
 動到下面任何一項，先問「PT 網格頁 / 填入加密欄還活著嗎」：

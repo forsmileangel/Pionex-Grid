@@ -60,6 +60,50 @@ class LiveTests(unittest.TestCase):
         self.assertEqual(board["total_grid_profit"]["usdt"], "12.5")
         self.assertEqual(board["true_grid_profit"]["usdt"], "12.5")
 
+    def test_inverse_contract_displays_coin_direction_without_flipping_pnl(self):
+        from v2 import store
+        from v2.gist_publish import live_publish_payload
+
+        record = rec(Symbol='ETH', Product='coin_margined_contract_grid',
+                     Trend='short', Leverage='4x short', MarkPrice=2500,
+                     OpenPrice=.0005, LiqPrice=1250, EstimateLiqUp=.0008,
+                     RawJson={'order': {'base': 'USDT.PERP', 'quote': 'ETH'}})
+        board = snapshot_to_board(live_snap([record]))
+        row = board['rows'][0]
+        self.assertEqual((row['trend'], row['leverage']), ('long', '4x long'))
+        self.assertAlmostEqual(float(row['liq_distance_pct']), 50)
+        self.assertAlmostEqual(float(row['trend_profit']['usdt']), 1000)
+        self.assertEqual(record['Trend'], 'short')
+        self.assertEqual(live_publish_payload(board)['rows'][0]['leverage'], '4x long')
+
+        ingest(snap('2026-08-26', [record]), self.db)
+        historical = store.days_payload(self.db)['days'][0]['rows'][0]
+        self.assertEqual((historical['trend'], historical['leverage']), ('long', '4x long'))
+        con = connect(self.db)
+        try:
+            raw = con.execute('SELECT trend,leverage FROM grid_snapshots').fetchone()
+            self.assertEqual(tuple(raw), ('short', '4x short'))
+        finally:
+            con.close()
+
+    def test_display_direction_only_flips_confirmed_inverse_pairs(self):
+        cases = [
+            ('USDT.PERP', 'ETH', 'short', 'long'),
+            ('USDT.PERP', 'BTC', 'long', 'short'),
+            ('ETH.PERP', 'USDT', 'short', 'short'),
+            ('ETH.PERP', 'BTC', 'long', 'long'),
+            ('USDT.PERP', 'ETH', 'neutral', 'neutral'),
+            ('', '', 'short', 'short'),
+        ]
+        for base, quote, raw_side, expected in cases:
+            with self.subTest(base=base, quote=quote, raw_side=raw_side):
+                row = snapshot_to_board(live_snap([rec(
+                    Product='coin_margined_contract_grid' if quote != 'USDT' else 'contract_grid',
+                    Trend=raw_side, Leverage='4x ' + raw_side,
+                    RawJson={'order': {'base': base, 'quote': quote}})]))['rows'][0]
+                self.assertEqual(row['trend'], expected)
+                self.assertEqual(row['leverage'], '4x ' + expected)
+
     def test_save_live_does_not_ingest(self):
         snapshot = live_snap([rec(GridProfit=15)])
         save_live_snapshot(snapshot, self.live)
