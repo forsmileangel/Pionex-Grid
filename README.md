@@ -23,9 +23,14 @@ The folder name still has `-v2` because it is a git worktree. On screen it is th
 ## v15.968 — Excel from the shared ledger
 
 The original 16-column Excel report reads v2 SQLite through `v2.legacy_excel`.
-`Pionex Grid Record - Daily API` now runs at **08:12**, after the 08:05 capture;
-`install-legacy-excel-task.ps1` updates the existing trigger/action and saves its old XML.
-The 08:10 daily report continues using SQLite as before.
+`python -m v2.pipeline` at 08:05 captures that ledger, then writes both workbooks:
+the 16-column file through `pionex-grid-daily.ps1`, and the daily report through
+`python -m v2.daily_report`. A logon catch-up runs `python -m v2.pipeline --if-missing`.
+Export runs only when the ledger date is newer than `v2-data/pipeline-state.json`.
+An Excel failure is written to `v2-data/pipeline.log` and does not fail the capture.
+
+Until deploy, the old 08:10 and 08:12 tasks still update those files. After
+`install-v2-daily-capture.ps1` is run again, disable those two tasks. Do not delete them.
 
 Every export rebuilds ledger dates, including late settlement corrections. Withdrawn
 profit is already included in API gridProfit, closing paired increments appear once,
@@ -37,7 +42,7 @@ replacement protect existing files; stale/missing data and unknown dates stop th
 
 ## SQLite 本機儀表板
 
-Worktree `D:\My-project\pionex grid record-v2` (branch `v2/sqlite-dashboard`). Records into `v2-data/pionex-grid.sqlite` and serves `http://127.0.0.1:8787`. The legacy Excel report now reads this ledger at 08:12.
+Worktree `D:\My-project\pionex grid record-v2` (branch `v2/sqlite-dashboard`). Records into `v2-data/pionex-grid.sqlite` and serves `http://127.0.0.1:8787`. The 08:05 pipeline writes this ledger and then both Excel workbooks.
 
 Double-click `儀表板開關.cmd` to start or stop the local server (works even when the page is down). Double-click `抓取SQLite紀錄.cmd` (or `capture-v2.cmd`) to snapshot Pionex into SQLite.
 
@@ -62,13 +67,13 @@ That registers Task Scheduler `Pionex Grid SQLite Dashboard`: start at logon, th
 - First successful v2 capture is a baseline (daily profit 0)
 - Server binds `127.0.0.1` only and never reads the API key
 
-Daily SQLite capture (08:05, before the Excel exports):
+Daily pipeline (08:05 capture, then both Excel exports):
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\install-v2-daily-capture.ps1
 ```
 
-That registers `Pionex Grid v2 Daily Capture` at 08:05, plus `Pionex Grid v2 Daily Capture Catch-up` at logon (`python -m v2.capture --if-missing`): if Windows restarted overnight and the PC sat at the login screen at 08:05, the catch-up captures today's record after login; it skips when today already exists, so it never replaces the 08:05 snapshot.
+That registers `Pionex Grid v2 Daily Capture` at 08:05 (`python -m v2.pipeline`), plus `Pionex Grid v2 Daily Capture Catch-up` at logon (`python -m v2.pipeline --if-missing`). If Windows restarted overnight and the PC sat at the login screen at 08:05, the catch-up captures today's record after login. It skips the capture when today already exists, so it never replaces the 08:05 snapshot, and it still exports an Excel file when the ledger date is newer than the last export.
 
 A day that was still missed can be filled from the 30-minute intraday record of that day (first record at or after 08:05): `python -m v2.backfill --date YYYY-MM-DD` previews, `--apply` writes the ledger, logs the change in `corrections[]` and republishes the Gist ledger. After ingest it PATCHes `pionex-grid-ledger.json` on the same private Gist used by Portfolio Tracker. Copy `GIST PUBLISH.example.txt` to `GIST PUBLISH.txt` (line 1 = Gist ID, line 2 = Gist token). Missing that file skips publish; sqlite capture still succeeds. Use `--skip-publish` to ingest only.
 
@@ -107,7 +112,7 @@ API 未確認的最終淨損益保持待補；配對增量回補原快照區間�
 - 每日擷取、即時快照寫入今日、關倉補抓、人工補登及歷史重算共用帳本算法；本機月曆、每日詳情、Excel 匯出、Gist／Portfolio 從帳本讀取結果。
 - 寫入今日必須使用台北當日的即時快照，保留原擷取時間。跨日或時間缺失時須先更新即時資料，不能把舊快照改標為現在。
 - 關倉待補時保留訂單 ID、標的及已知歷史收益；補到最後配對值時回填首次發現關倉的區間，之後日期不重複入帳。關倉總損益不作配對收益。
-- 08:10 新報表及 08:12 原格式 Excel 都讀取此帳本，修正歷史後重跑即可回填關倉原區間與後續累計。原 08:00 Excel 已移除獨立相減算法，不再混入幣價重估或漏掉關倉最後配對增量。
+- 08:05 的 `v2.pipeline` 寫入每日報表與原格式 Excel，兩者都讀取此帳本。修正歷史後重跑即可回填關倉原區間與後續累計。原 08:00 Excel 已移除獨立相減算法，不再混入幣價重估或漏掉關倉最後配對增量。
 
 Portfolio Tracker reads `pionex-grid-ledger.json` from the private Gist. It never holds Pionex API keys and never PATCHes that file. Holdings stay in `portfolio-tracker-holdings.json`. The local dashboard remains `127.0.0.1:8787` only.
 

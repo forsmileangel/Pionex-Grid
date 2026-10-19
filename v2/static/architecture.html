@@ -74,7 +74,7 @@
       <li>只呼叫 GET。白名單以外的私有路徑一律擋掉。不建立、不調整、不暫停、不取消 Bot。</li>
       <li>API key 只開 Bot reading（加上錢包讀取）。金鑰檔 <code>PIONEX API.txt</code> 不進 Git、Notion、Excel、日誌。</li>
       <li>公開 GitHub（<a href="https://github.com/forsmileangel/Pionex-Grid">forsmileangel/Pionex-Grid</a>）只同步程式。真實 xlsx、sqlite、snapshot、利潤數字留本機。</li>
-      <li>v1 的 08:00 Excel 排程是生產基準，v2 開發期間不要改它的工作目錄或腳本。</li>
+      <li>08:10 報表與 08:12 舊版 Excel 的腳本仍在 <code>pionex grid record</code>。部署前不要改那兩個排程；部署時只停用、不刪除。</li>
     </ul>
   </div>
 
@@ -100,7 +100,7 @@
       <tr><td>收集</td><td>Node → JSON → PowerShell</td><td>同一份 Node → JSON → <code>python -m v2.capture</code></td></tr>
       <tr><td>保存</td><td><code>data/pionex-grid-history.xlsx</code></td><td><code>v2-data/pionex-grid.sqlite</code></td></tr>
       <tr><td>觀看</td><td>Excel</td><td><code>http://127.0.0.1:8787</code></td></tr>
-      <tr><td>排程</td><td>08:00 Daily API</td><td>登入後自動開 dashboard；capture 仍手動</td></tr>
+      <tr><td>排程</td><td>檔案仍在這個資料夾。08:05 的 v2 pipeline 一併寫入；舊的 08:10、08:12 排程在重新註冊後只停用、不刪除</td><td>08:05 <code>python -m v2.pipeline</code>，登入補跑 <code>--if-missing</code>。儀表板登入後自動開</td></tr>
       <tr><td>識別一筆倉</td><td>交易對 + 建立時間</td><td>API <code>buOrderId</code></td></tr>
     </tbody>
   </table>
@@ -111,6 +111,8 @@
     <tbody>
       <tr><td><code>pionex-grid-api.mjs</code></td><td>唯讀收集器。白名單：Bot 清單／詳情、錢包、公開 ticker。網路一時斷線時同一個 GET 最多重試 3 次。派網只接受和它時間相差 10 秒內的簽名請求，收集器用每個回應附的伺服器時間校正時鐘，被拒（INVALID_TIMESTAMP）時用校正後的時間立刻重送一次；偏差記在快照 <code>ClockOffsetMs</code>，顯示在執行狀態頁。</td></tr>
       <tr><td><code>v2/capture.py</code></td><td>跑 Node，ingest 進 SQLite。同日已有紀錄則覆蓋。</td></tr>
+      <tr><td><code>v2/pipeline.py</code></td><td>08:05 與登入補跑。先擷取，再匯出舊版 Excel 與每日報表。Excel 失敗不讓擷取重跑。</td></tr>
+      <tr><td><code>v2/daily_report.py</code></td><td>每日報表，計算與原本的 08:10 程式相同。<code>python -m v2.daily_report</code>。</td></tr>
       <tr><td><code>v2/store.py</code></td><td>schema、差額、儀表板 payload、Excel 匯出。</td></tr>
       <tr><td><code>v2/liq.py</code></td><td>強平價顯示：U 本位為主，幣本位才倒數。</td></tr>
       <tr><td><code>v2/fx.py</code></td><td>USDT→TWD = 臺銀美金現金買入 × USDT/USD。</td></tr>
@@ -317,14 +319,13 @@
     <li>要新資料：雙擊 <code>capture-v2.cmd</code>（或 <code>python -m v2.capture</code>）。同日覆蓋、隔日新增。</li>
     <li>硬重新整理儀表板。點表頭可排序。</li>
     <li>長天期報表：頁上「匯出 Excel」。看的是資料庫歷史，不是再抓一次派網。</li>
-    <li>v1 Excel 繼續 08:00 自己跑，跟 v2 互不覆寫。</li>
+    <li>每天 08:05 <code>python -m v2.pipeline</code> 先擷取帳本，再更新舊版 Excel 與每日報表。08:05 沒開機時，登入後的 <code>--if-missing</code> 會補抓，兩份 Excel 也一起補。帳本日期沒有比上次新就略過。重新註冊後，舊的 08:10 與 08:12 排程只停用、不刪除。</li>
   </ol>
   <p class="small">金鑰仍用 v1 資料夾的 <code>PIONEX API.txt</code>（兩行：key、secret）。v2 capture 預設指向那裡，不要複製進 Git。</p>
 
   <h2 id="next">10. 刻意沒做、之後可改</h2>
   <ul>
     <li><strong>待確認目前沒有真實列。</strong> 規則已寫好，月曆有按鈕，但 8/26 全部自動判定完成。若之後同一天又加倉又大跌網格、金額對不上，再請你點一次。</li>
-    <li><strong>08:05 shadow capture。</strong> <code>install-v2-daily-capture.ps1</code> 另建任務，不改 v1 08:00。沒設這任務就不會自動出第二天。</li>
     <li><strong>儀表板不即時。</strong> 若要開著就更新，需要獨立的輪詢 capture（注意 API 頻率與同日覆蓋）。</li>
     <li><strong>Portfolio Tracker 讀 Gist 第二檔。</strong> 契約寫在專案根目錄 <code>PORTFOLIO-TRACKER-GIST.md</code>。改 ledger JSON／Gist 檔名／<code>schema</code> 前必讀，否則 PT 網格頁會空白。ingest 成功後 PATCH <code>pionex-grid-ledger.json</code>；失敗只略過，不回滾 sqlite。PT 只讀、不持有派網金鑰、不改 holdings 檔。本機 8787 仍只綁 127.0.0.1、不加 CORS。</li>
     <li><strong>派網沒有官方 USDT/TWD。</strong> 現在用臺銀現金買入對齊 App 顯示。若派網改口徑，先對錢包總市值，再改 <code>v2/fx.py</code>。</li>
