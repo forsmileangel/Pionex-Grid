@@ -78,6 +78,71 @@ def observe(con, snapshot):
                     (row['bu_order_id'], row['captured_at'], '{}', '{}', stamp))
 
 
+def _num(value):
+    if value is None or value == '':
+        return None
+    try:
+        number = Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        return None
+    return number if number.is_finite() else None
+
+
+def _text(number):
+    return None if number is None else store.from_fixed(store.to_fixed(number))
+
+
+def _auto_rate(order, data):
+    """USDT per settlement coin, frozen at close. Inverse pairs quote coin per USDT."""
+    price = _num(data.get('closedPrice'))
+    if not price or price <= 0:
+        return None
+    base = str(order.get('base') or '').upper()
+    return Decimal(1) / price if base.startswith('USDT') else price
+
+
+def _wallet_net(data, manual, currency):
+    """Net result in the settlement currency: what came back to the wallet minus own money in.
+
+    Reinvested profit is already inside the returned amount, so it is removed from
+    quoteInvestment instead of being counted again. Bonus (trial) principal is not
+    the user's money: only the unlocked amount counts.
+    """
+    received = _num(data.get('unlockQuoteAmount'))
+    if received is None:
+        received = _num(data.get('unlockUsdtAmount'))
+    bonus = 'BONUS' in str(data.get('investmentFrom') or '').upper()
+    withdrawn = _num(data.get('profitWithdrawn')) or Decimal(0)
+    invested = _num(data.get('quoteInvestment'))
+    extra = _num(data.get('extraMargin')) or Decimal(0)
+    reinvest = _num(data.get('profitReinvest')) or Decimal(0)
+    if 'own_cash_in' in manual:
+        own, own_source = _num(manual['own_cash_in']), 'manual'
+    elif bonus:
+        own, own_source = Decimal(0), 'bonus'
+    elif invested is not None:
+        own, own_source = invested + extra - reinvest, 'api'
+    else:
+        own, own_source = None, None
+    net = None if received is None or own is None else received + withdrawn - own
+    # Independent cross-check from Pionex realized figures.
+    realized = _num(data.get('totalRealizedProfit'))
+    check = None
+    if realized is not None:
+        check = realized + (_num(data.get('totalFee')) or 0) + (_num(data.get('totalFundingFee')) or 0)
+        check -= _num(data.get('bonusFee')) or 0
+        if bonus:
+            check = max(check, Decimal(0))
+    diff = None if net is None or check is None else net - check
+    base = (invested or Decimal(0)) + extra
+    floor = Decimal('0.05') if currency == 'USDT' else Decimal('0.00002')
+    tolerance = max(base * Decimal('0.001'), floor)
+    return dict(received=received, withdrawn=withdrawn, own=own, own_source=own_source,
+                investment=None if invested is None else invested + extra,
+                reinvest=reinvest, bonus=bonus, net=net, check=check, diff=diff,
+                check_ok=None if diff is None else abs(diff) <= tolerance)
+
+
 def _facts(row, pos):
     rec = json.loads(row['api_record_json'])
     manual = json.loads(row['manual_json'])
@@ -98,18 +163,29 @@ def _facts(row, pos):
     realized = rec.get('RawRealizedProfit')
     if realized is None:
         realized = data.get('totalRealizedProfit')
-    # No known API net-settlement field: totalProfit has unverified fee scope.
-    net = manual.get('net_profit')
-    rate = manual.get('settlement_usdt_rate') if coin else '1'
+    wallet = _wallet_net(data, manual, currency)
+    if 'net_profit' in manual:
+        net, net_method = manual['net_profit'], 'manual'
+    elif wallet['net'] is not None:
+        net, net_method = _text(wallet['net']), 'wallet'
+    else:
+        net, net_method = None, None
+    if not coin:
+        rate, rate_source = '1', 'usdt'
+    elif manual.get('settlement_usdt_rate') is not None:
+        rate, rate_source = manual['settlement_usdt_rate'], 'manual'
+    else:
+        auto = _auto_rate(raw, data)
+        rate, rate_source = (_text(auto), 'close_price') if auto else (None, None)
     rate_i = store.to_fixed(rate)
     def usd(amount):
         if amount is None or not rate_i:
             return None
         return store.from_fixed(store._mul_fixed(store.to_fixed(amount), rate_i))
-    return dict(rec=rec, manual=manual, coin=coin, currency=currency,
+    return dict(rec=rec, manual=manual, coin=coin, currency=currency, data=data, wallet=wallet,
                 closed_at=value('closed_at', rec.get('Closed')),
                 grid_profit=grid, reported_total_profit=reported, reported_realized_profit=realized, funding_fee=funding, fee=fee,
-                net_profit=net, settlement_usdt_rate=rate,
+                net_profit=net, net_method=net_method, settlement_usdt_rate=rate, settlement_rate_source=rate_source,
                 grid_profit_usdt=usd(grid), net_profit_usdt=usd(net),
                 funding_fee_usdt=usd(funding), fee_usdt=usd(fee))
 
@@ -195,6 +271,10 @@ def payload(con):
         lifetime = f['manual'].get('lifetime_grid_profit')
         if lifetime is None and not moved:
             lifetime = f['grid_profit']
+        elif lifetime is None and f['grid_profit'] is not None and 'profitReinvest' in f['data']:
+            # gridProfit already includes withdrawals; reinvested/reduced profit left it.
+            moved_out = (_num(f['data'].get('profitReinvest')) or 0) + (_num(f['data'].get('profitReduce')) or 0)
+            lifetime = _text(_num(f['grid_profit']) + moved_out)
         non_grid = None
         if lifetime is not None and f['net_profit'] is not None:
             non_grid = store.from_fixed(store.to_fixed(f['net_profit']) - store.to_fixed(lifetime))
@@ -211,9 +291,47 @@ def payload(con):
             'recorded_grid_profit_usdt': store.from_fixed(daily['lifetime_i']) if daily else None,
             'daily_reconciled': bool(daily and daily['status']=='closed'),
             'manual': f['manual'],
+            **_wallet_fields(f, pos),
             'audit_count': con.execute('SELECT count(*) FROM settlement_audit WHERE bu_order_id=?', (row['bu_order_id'],)).fetchone()[0],
         })
     return {'rows': rows, 'pending_count': sum(r['status']!='settled' for r in rows)}
+
+
+def _hold_days(start, end):
+    try:
+        delta = store.taipei_now(str(end).replace(' ', 'T')) - store.taipei_now(str(start).replace(' ', 'T'))
+    except (TypeError, ValueError):
+        return None
+    return round(delta.total_seconds() / 86400, 1)
+
+
+def _wallet_fields(f, pos):
+    w = f['wallet']
+    roi = None
+    if f['net_profit'] is not None and w['own'] and w['own'] > 0:
+        roi = float(round(Decimal(str(f['net_profit'])) / w['own'] * 100, 2))
+    reason = f['data'].get('reasonBy') or f['rec'].get('ReasonBy')
+    return {
+        'net_method': f['net_method'],
+        'received': _text(w['received']),
+        'own_cash_in': _text(w['own']),
+        'own_cash_in_source': w['own_source'],
+        'investment': _text(w['investment']),
+        'withdrawn_total': _text(w['withdrawn']),
+        'reinvest_total': _text(w['reinvest']),
+        'bonus': w['bonus'],
+        'net_check': _text(w['check']),
+        'net_check_diff': _text(w['diff']),
+        'net_check_ok': w['check_ok'],
+        # A confirmed own-money amount or a manual net closes the review, even if Pionex's realized figure differs.
+        'needs_review': w['check_ok'] is False and f['net_method'] != 'manual' and w['own_source'] != 'manual',
+        'roi_pct': roi,
+        'close_reason': reason,
+        'hold_days': _hold_days(pos['created_at'], f['closed_at']) if f['closed_at'] else None,
+        'settlement_rate_source': f['settlement_rate_source'],
+        'received_usdt': None if w['received'] is None or f['settlement_usdt_rate'] is None
+                         else store.from_fixed(store._mul_fixed(store.to_fixed(w['received']), store.to_fixed(f['settlement_usdt_rate']))),
+    }
 
 
 def get_settlements(db_path=None):
@@ -224,11 +342,22 @@ def get_settlements(db_path=None):
         con.close()
 
 
+def audit(oid, db_path=None):
+    con = store.connect(db_path)
+    try:
+        return [{'changed_at': r['changed_at'], 'before': json.loads(r['before_json']), 'after': json.loads(r['after_json'])}
+                for r in con.execute('SELECT * FROM settlement_audit WHERE bu_order_id=? ORDER BY id DESC', (oid,))]
+    finally:
+        con.close()
+
+
 def refresh(snapshot, db_path=None):
     con = store.connect(db_path)
     try:
+        before = store.summary_values(con)
         observe(con, snapshot)
         apply_to_daily(con)
+        store.record_corrections(con, before, '補抓關倉資料')
         con.commit()
         store._backup(store.Path(db_path or store.DEFAULT_DB))
         return payload(con)
@@ -237,7 +366,7 @@ def refresh(snapshot, db_path=None):
 
 
 def save_manual(oid, body, db_path=None):
-    allowed = {'closed_at','grid_profit','lifetime_grid_profit','net_profit','funding_fee','fee','settlement_usdt_rate','note'}
+    allowed = {'closed_at','grid_profit','lifetime_grid_profit','net_profit','own_cash_in','funding_fee','fee','settlement_usdt_rate','note'}
     if not isinstance(body, dict) or set(body) - allowed:
         raise store.CaptureError('補登欄位不正確')
     manual = {}
@@ -264,9 +393,11 @@ def save_manual(oid, body, db_path=None):
                     raise ValueError('out of range')
                 if key == 'settlement_usdt_rate' and number <= 0:
                     raise ValueError('non-positive rate')
+                if key == 'own_cash_in' and number < 0:
+                    raise ValueError('negative own cash')
                 manual[key] = store.from_fixed(store.to_fixed(number))
             except (InvalidOperation, ValueError, OverflowError):
-                raise store.CaptureError('金額須為有效數字，換算價須大於零')
+                raise store.CaptureError('金額須為有效數字；換算價須大於零，自有投入不可為負')
     con = store.connect(db_path)
     try:
         row = con.execute('SELECT * FROM grid_settlements WHERE bu_order_id=?', (oid,)).fetchone()
@@ -278,7 +409,10 @@ def save_manual(oid, body, db_path=None):
             con.execute('INSERT INTO settlement_audit(bu_order_id,changed_at,before_json,after_json) VALUES (?,?,?,?)',
                         (oid,stamp,row['manual_json'],encoded))
             con.execute('UPDATE grid_settlements SET manual_json=?,updated_at=? WHERE bu_order_id=?', (encoded,stamp,oid))
+            before = store.summary_values(con)
             apply_to_daily(con)
+            pos = con.execute('SELECT symbol FROM grid_positions WHERE bu_order_id=?', (oid,)).fetchone()
+            store.record_corrections(con, before, f"人工補登：{pos['symbol'] if pos else oid}")
             con.commit()
             store._backup(store.Path(db_path or store.DEFAULT_DB))
         return payload(con)

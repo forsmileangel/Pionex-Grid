@@ -476,6 +476,33 @@ class StoreTests(unittest.TestCase):
         self.assertNotIn("raw_json", blob)
         self.assertNotIn("userId", blob)
 
+    def test_ledger_adds_funding_and_equivalent_fields(self):
+        ingest(snap("2026-08-25", [rec(GridProfit=15, FundingFee=-10, Investment=1000, ExtraMargin=500,
+                                       Leverage="6x long")]), self.db)
+        ingest(snap("2026-08-26", [rec(GridProfit=17, FundingFee=-10.5, Investment=1000, ExtraMargin=500,
+                                       Leverage="6x long")]), self.db)
+        payload = ledger_publish_payload(self.db)
+        self.assertEqual(payload["schema"], 1)
+        day2, day1 = payload["days"]
+        # Old fields keep their meaning: daily profit stays grid profit only.
+        self.assertEqual(day2["daily_profit_usdt"], "2")
+        self.assertEqual(day2["investment_usdt"], "1000")
+        self.assertEqual(day2["funding_usdt"], "-0.5000")
+        self.assertEqual(day2["net_usdt"], "1.5000")
+        self.assertEqual(day2["funding_total_usdt"], "-10.5000")
+        self.assertEqual(day2["funding_span_days"], 1)
+        self.assertEqual(day2["leverage_equivalent"], 4.0)
+        # The first day has no earlier snapshot to compare, so funding stays unknown rather than 0.
+        self.assertIsNone(day1["funding_usdt"])
+        self.assertIsNone(day1["net_usdt"])
+        self.assertEqual(day1["funding_total_usdt"], "-10.0000")
+        row = day2["rows"][0]
+        self.assertEqual(row["equivalent_usdt"], "1500.00")
+        self.assertEqual(row["funding_usdt"], "-0.5000")
+        self.assertEqual(row["funding_total_usdt"], "-10.5000")
+        self.assertEqual(payload["latest"]["funding_total_usdt"], "-10.5000")
+        self.assertEqual(payload["latest"]["leverage_equivalent"], 4.0)
+
     def test_incomplete_running_aborts(self):
         with self.assertRaises(CaptureError):
             ingest(snap("2026-08-26", [rec()], expected=2), self.db)
@@ -594,3 +621,112 @@ class StoreTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MissingDayTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.db = Path(self.tmp.name) / "test.sqlite"
+        for p in [patch("v2.store.usdt_twd", return_value=FX), patch("v2.store.BACKUP_DIR", Path(self.tmp.name) / "bk")]:
+            p.start()
+            self.addCleanup(p.stop)
+
+    def point(self, grid, **kwargs):
+        base = {"bu_order_id": "g1", "symbol": "BTC/USDT", "product": "contract_grid", "created_at": "2026-08-01 10:00:00",
+                "leverage": "5x long", "trend": "long", "investment_i": to_fixed(1000), "grid_profit_i": to_fixed(grid),
+                "withdrawn_i": 0, "reinvest_i": 0, "reduce_i": 0, "grid_profit_24h_i": to_fixed(1)}
+        base.update(kwargs)
+        return base
+
+    def summary(self, date):
+        con = connect(self.db)
+        try:
+            return dict(con.execute("SELECT * FROM daily_summary WHERE capture_date=?", (date,)).fetchone())
+        finally:
+            con.close()
+
+    def test_fill_missed_day_splits_interval_and_is_published(self):
+        from v2.store import insert_missing_day, ledger_publish_payload
+        ingest(snap("2026-09-18", [rec(GridProfit=100)]), self.db)
+        ingest(snap("2026-09-20", [rec(GridProfit=110)]), self.db)
+        self.assertEqual(self.summary("2026-09-20")["daily_profit_i"], to_fixed(10))
+        self.assertEqual(self.summary("2026-09-20")["gap_days"], 1)
+        before_true = self.summary("2026-09-20")["true_profit_i"]
+        result = insert_missing_day("2026-09-19T08:45:09+08:00", [self.point(104)], "intraday manual 08:45", self.db)
+        self.assertEqual(result["capture_date"], "2026-09-19")
+        self.assertEqual(self.summary("2026-09-19")["daily_profit_i"], to_fixed(4))
+        self.assertEqual(self.summary("2026-09-20")["daily_profit_i"], to_fixed(6))
+        self.assertEqual(self.summary("2026-09-20")["gap_days"], 0)
+        self.assertEqual(self.summary("2026-09-20")["true_profit_i"], before_true)
+        ledger = ledger_publish_payload(self.db)
+        days = {d["date"]: d for d in ledger["days"]}
+        self.assertEqual(float(days["2026-09-19"]["daily_profit_usdt"]), 4)
+        self.assertIsNone(days["2026-09-19"]["wallet_usdt"])
+        fixed = {(c["capture_date"], c["field"]): c for c in ledger["corrections"]}
+        self.assertEqual(fixed[("2026-09-20", "daily_profit_i")]["new_value"], "6")
+        self.assertEqual(fixed[("2026-09-19", "daily_profit_i")]["new_value"], "4")
+        with self.assertRaises(CaptureError):
+            insert_missing_day("2026-09-19T09:00:00+08:00", [self.point(105)], "again", self.db)
+
+    def test_fill_rejects_mismatched_positions_or_edges(self):
+        from v2.store import insert_missing_day
+        ingest(snap("2026-09-18", [rec(GridProfit=100)]), self.db)
+        ingest(snap("2026-09-20", [rec(GridProfit=110)]), self.db)
+        with self.assertRaises(CaptureError):
+            insert_missing_day("2026-09-19T08:45:00+08:00", [self.point(104, bu_order_id="other")], "x", self.db)
+        with self.assertRaises(CaptureError):
+            insert_missing_day("2026-09-21T08:45:00+08:00", [self.point(111)], "x", self.db)
+        self.assertEqual(self.summary("2026-09-20")["gap_days"], 1)
+
+
+class EquivalentPositionTests(unittest.TestCase):
+    def test_moving_margin_to_extra_keeps_equivalent(self):
+        from v2.store import equivalent_i, position_totals
+        before = {"investment_i": to_fixed(7500), "extra_margin_i": 0, "leverage": "4x long", "product": "contract_grid"}
+        after = {"investment_i": to_fixed(3000), "extra_margin_i": to_fixed(4500), "leverage": "10x long", "product": "contract_grid"}
+        self.assertEqual(equivalent_i(before), equivalent_i(after))
+        t = position_totals([after, {"investment_i": to_fixed(5000), "extra_margin_i": 0, "leverage": "4x long",
+                                     "product": "contract_grid"}])
+        self.assertEqual(t["investment_i"], to_fixed(8000))
+        self.assertEqual(t["equivalent_i"], to_fixed(12500))
+        self.assertEqual(t["leverage_nominal"], 6.25)       # (3000*10 + 5000*4) / 8000
+        self.assertEqual(t["leverage_equivalent"], 4.0)     # 50000 / 12500
+        coin = {"investment_i": to_fixed(7000), "extra_margin_i": to_fixed(0.01), "conversion_price_i": to_fixed(2500),
+                "product": "coin_margined_contract_grid", "leverage": "4x long"}
+        self.assertEqual(equivalent_i(coin), to_fixed(7025))
+
+    def test_ledger_publishes_equivalent_alongside_investment(self):
+        with tempfile.TemporaryDirectory() as tmp, patch("v2.store.usdt_twd", return_value=FX), \
+                patch("v2.store.BACKUP_DIR", Path(tmp) / "bk"):
+            db = Path(tmp) / "t.sqlite"
+            ingest(snap("2026-10-12", [rec(Investment=3000, ExtraMargin=4500, Leverage="10x long")]), db)
+            ledger = ledger_publish_payload(db)
+            day = ledger["days"][0]
+            self.assertEqual(float(day["investment_usdt"]), 3000)
+            self.assertEqual(float(day["equivalent_usdt"]), 7500)
+            self.assertEqual(float(ledger["latest"]["equivalent_usdt"]), 7500)
+            self.assertEqual(ledger["schema"], 1)
+
+
+class EquivalentLeverageRowTests(unittest.TestCase):
+    def test_row_reports_equivalent_leverage(self):
+        from v2.store import _board_row
+        row = _board_row({"investment_i": to_fixed(3000), "extra_margin_i": to_fixed(4500), "leverage": "10x long",
+                          "trend": "long", "product": "contract_grid", "symbol": "AMDX/USDT"}, None, None, None)
+        self.assertEqual(row["equivalent_leverage"], 4.0)
+        self.assertEqual(float(row["equivalent"]["usdt"]), 7500)
+        plain = _board_row({"investment_i": to_fixed(4500), "leverage": "3x long", "trend": "long",
+                            "product": "contract_grid", "symbol": "SUI/USDT"}, None, None, None)
+        self.assertEqual(plain["equivalent_leverage"], 3.0)
+
+    def test_leverage_move_keeps_returns(self):
+        from v2.store import _board_row
+        base = {"trend": "long", "product": "contract_grid", "symbol": "CRCLX/USDT", "grid_profit_i": to_fixed(270),
+                "position_created": "2026-09-01 08:00:00", "open_price_s": "100", "mark_price_i": to_fixed(110)}
+        before = _board_row({**base, "investment_i": to_fixed(5000), "leverage": "4x long"}, to_fixed(20), None, None)
+        after = _board_row({**base, "investment_i": to_fixed(2000), "extra_margin_i": to_fixed(3000),
+                            "leverage": "10x long"}, to_fixed(20), None, None)
+        for key in ("day_pct", "grid_annualized_pct", "annualized_pct", "trend_profit", "total_pnl"):
+            self.assertEqual(after[key], before[key], key)
+        self.assertEqual(float(after["investment"]["usdt"]), 2000)

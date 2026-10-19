@@ -15,6 +15,7 @@ from .store import (
     _fx_view,
     _pct_value,
     ingest,
+    position_totals,
     money,
     taipei_now,
     to_fixed,
@@ -61,6 +62,8 @@ def record_to_snap(rec: dict) -> dict:
         "product": rec.get("Product"),
         "raw_json": rec.get("RawJson"),
         "investment_i": to_fixed(rec.get("Investment")),
+        "extra_margin_i": to_fixed(rec.get("ExtraMargin")),
+        "conversion_price_i": to_fixed(rec.get("ConversionPrice")),
         "grid_profit_i": to_fixed(rec.get("GridProfit")),
         "grid_profit_24h_i": to_fixed(rec.get("GridProfit24h")),
         "mark_price_s": None if rec.get("MarkPrice") is None else str(rec.get("MarkPrice")),
@@ -81,11 +84,13 @@ def snapshot_to_board(snapshot: dict) -> dict:
     fx = usdt_twd()
     rate = fx.get("usdt_twd")
     rows = []
+    snaps = []
     total_24h = 0
     total_investment = 0
     total_grid = 0
     for rec in running:
         snap = record_to_snap(rec)
+        snaps.append(snap)
         row = _board_row(snap, snap.get("grid_profit_24h_i"), None, snap.get("investment_i"))
         if snap.get("grid_profit_24h_i"):
             total_24h += snap["grid_profit_24h_i"]
@@ -97,6 +102,7 @@ def snapshot_to_board(snapshot: dict) -> dict:
     captured = snapshot.get("CapturedAt")
     wallet = (snapshot.get("Wallet") or {}).get("totalInUsdt")
     rows = [attach_twd_tree(row, rate) for row in rows]
+    totals = position_totals(snaps)
     return {
         "available": True,
         "kind": "live",
@@ -106,9 +112,13 @@ def snapshot_to_board(snapshot: dict) -> dict:
         "position_count": len(rows),
         "total_profit_24h": attach_twd(money(total_24h), rate),
         "total_investment": attach_twd(money(total_investment), rate),
+        "total_equivalent": attach_twd(money(totals["equivalent_i"]), rate),
+        "leverage_nominal": totals["leverage_nominal"],
+        "leverage_equivalent": totals["leverage_equivalent"],
         "total_grid_profit": attach_twd(money(total_grid), rate),
         "true_grid_profit": attach_twd(money(total_grid), rate),
-        "profit_24h_pct": _pct_value(total_24h, total_investment),
+        # Percent on the equivalent position, so moving margin to extra margin does not inflate it.
+        "profit_24h_pct": _pct_value(total_24h, totals["equivalent_i"] or total_investment),
         "wallet_total": attach_twd({"usdt": wallet} if wallet else None, rate),
         "fx": _fx_view(fx),
         "rows": rows,
@@ -137,6 +147,8 @@ def commit_live_to_daily(confirm_date: str, db_path: Path, live_file: Path | Non
     snapshot = load_live_snapshot(live_file)
     if snapshot is None:
         raise CaptureError("No live snapshot to write")
+    if snapshot.get("RunningSource") == "list":
+        raise CaptureError("即時快照是快速模式，寫入倉位歷史前必須先完整重抓")
     try:
         if not isinstance(snapshot.get("CapturedAt"), str) or not snapshot["CapturedAt"]:
             raise ValueError("missing timestamp")

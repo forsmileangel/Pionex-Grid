@@ -152,6 +152,16 @@ class LiveTests(unittest.TestCase):
                     publish.assert_not_called()
                 self.assertFalse(self.db.exists())
 
+    def test_commit_rejects_fast_mode_snapshot(self):
+        today = datetime.now(TAIPEI).date().isoformat()
+        snapshot = live_snap([rec(GridProfit=22)])
+        snapshot['CapturedAt'] = today + 'T00:00:00+08:00'
+        snapshot['RunningSource'] = 'list'
+        save_live_snapshot(snapshot, self.live)
+        with self.assertRaises(CaptureError):
+            commit_live_to_daily(today, self.db, self.live)
+        self.assertFalse(self.db.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

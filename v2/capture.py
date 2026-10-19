@@ -20,6 +20,9 @@ TAIPEI = ZoneInfo("Asia/Taipei")
 ROOT = Path(__file__).resolve().parent.parent
 V1_CREDENTIALS = Path(r"D:\My-project\pionex grid record\PIONEX API.txt")
 API_JS = ROOT / "pionex-grid-api.mjs"
+FINISHED_CACHE = ROOT / "v2-data" / "finished-details.json"
+# Pionex rewrites this timestamp on closed bots without any money field changing.
+_VOLATILE_RAW_KEYS = {"lastFundingFeeTs"}
 
 
 def node_path() -> str:
@@ -48,25 +51,170 @@ def _collector_run_kwargs() -> dict:
     return kwargs
 
 
-def collect_snapshot(credentials: Path) -> dict:
+def _stable_raw(value):
+    if isinstance(value, dict):
+        return {k: _stable_raw(v) for k, v in value.items() if k not in _VOLATILE_RAW_KEYS}
+    if isinstance(value, list):
+        return [_stable_raw(v) for v in value]
+    return value
+
+
+def _read_finished_cache(path: Path) -> dict:
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) and isinstance(data.get("records"), dict) else {}
+
+
+def _zero_like(value) -> bool:
+    if value is None or value == "" or value == [] or value == {}:
+        return True
+    try:
+        return float(value) == 0
+    except (TypeError, ValueError):
+        return False
+
+
+def _list_detail_check(snapshot: dict) -> dict:
+    """On a detail capture, find fields the running list leaves empty while the detail has a value.
+
+    The fast live refresh builds running bots from the list, so such a field would be lost there.
+    A trade between the two reads only changes values, so it is not counted.
+    """
+    checked = 0
+    missing = []
+    for rec in snapshot.get("Records") or []:
+        if rec.get("ListStatus") != "running":
+            continue
+        raw = rec.get("RawJson") or {}
+        listed = (raw.get("list") or {}).get("buOrderData")
+        detail = (raw.get("order") or {}).get("buOrderData")
+        if not isinstance(listed, dict) or not isinstance(detail, dict):
+            continue
+        checked += 1
+        for key, value in detail.items():
+            if listed.get(key) in (None, "") and not _zero_like(value):
+                missing.append(f"{rec.get('Symbol')}:{key}")
+    return {"checked": checked, "missing": len(missing), "fields": missing[:20]}
+
+
+def _list_mode_allowed(cache: Path) -> bool:
+    """Fast mode stays on until a daily detail capture finds a field the list leaves out."""
+    check = _read_finished_cache(cache).get("last_list_check")
+    return not (isinstance(check, dict) and (check.get("missing") or 0) > 0)
+
+
+def _update_finished_cache(snapshot: dict, path: Path, full: bool, list_check: dict | None = None) -> dict:
+    """Remember the detail of closed bots fetched in this capture.
+
+    Never raises: losing the cache only means the next live refresh fetches every closed bot.
+    A full capture also reports how many closed bots differ from the remembered copy.
+    """
+    try:
+        data = _read_finished_cache(path)
+        records = dict(data.get("records") or {})
+        stamp = snapshot.get("CapturedAt")
+        fetched = reused = checked = changed = 0
+        for rec in snapshot.get("Records") or []:
+            oid = str(rec.get("ApiOrderId") or "")
+            if rec.get("ListStatus") != "finished" or not oid:
+                continue
+            if rec.get("DetailSource") == "cache":
+                reused += 1
+                continue
+            fetched += 1
+            old = (records.get(oid) or {}).get("record")
+            if isinstance(old, dict):
+                checked += 1
+                if _stable_raw(old.get("RawJson")) != _stable_raw(rec.get("RawJson")):
+                    changed += 1
+            records[oid] = {"fetched_at": stamp, "record": rec}
+        out = {
+            "version": 1,
+            "records": records,
+            "last_full_check": data.get("last_full_check"),
+            "last_reuse": data.get("last_reuse"),
+            "last_list_check": data.get("last_list_check"),
+        }
+        if list_check is not None:
+            out["last_list_check"] = {"at": stamp, **list_check}
+        if full:
+            out["last_full_check"] = {"at": stamp, "fetched": fetched, "checked": checked, "changed": changed}
+        else:
+            out["last_reuse"] = {"at": stamp, "fetched": fetched, "reused": reused, "changed": changed}
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = None
+        try:
+            with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, prefix=path.name + ".",
+                                             suffix=".tmp", delete=False) as tmp:
+                tmp_path = Path(tmp.name)
+                tmp.write(json.dumps(out, ensure_ascii=False))
+            os.replace(tmp_path, path)
+        finally:
+            if tmp_path:
+                tmp_path.unlink(missing_ok=True)
+        return {"ok": True, "records": len(records), "fetched": fetched, "reused": reused, "changed": changed}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+def finished_cache_status(path: Path | None = None) -> dict:
+    data = _read_finished_cache(Path(path or FINISHED_CACHE))
+    if not data:
+        return {"available": False}
+    return {
+        "available": True,
+        "count": len(data["records"]),
+        "last_full_check": data.get("last_full_check"),
+        "last_reuse": data.get("last_reuse"),
+        "last_list_check": data.get("last_list_check"),
+    }
+
+
+def collect_snapshot(credentials: Path, reuse_finished: bool = False, cache_path: Path | None = None,
+                     running_from_list: bool = False) -> dict:
+    """Run the collector. reuse_finished lets it take settled closed bots from the local cache;
+    the daily capture leaves it off so every closed bot is fetched and re-checked once a day.
+    running_from_list builds running bots from the list (fast live mode); the daily detail capture
+    checks the list against the details and turns fast mode off if the list ever leaves a field out."""
     if not credentials.exists():
         raise CaptureError(f"Credential file not found: {credentials}")
+    cache = Path(cache_path or FINISHED_CACHE)
     with tempfile.NamedTemporaryFile(prefix="pionex-v2-", suffix=".json", delete=False) as tmp:
         out = Path(tmp.name)
     try:
         cmd = [node_path(), str(API_JS), "--credentials", str(credentials), "--include-finished", "--output", str(out)]
+        if reuse_finished and cache.exists():
+            cmd += ["--finished-cache", str(cache)]
+        if running_from_list and _list_mode_allowed(cache):
+            cmd += ["--running-from-list"]
         proc = subprocess.run(cmd, **_collector_run_kwargs())
         if proc.returncode != 0:
             raise CaptureError((proc.stderr or proc.stdout or "collector failed").strip())
-        return json.loads(out.read_text(encoding="utf-8"))
+        snapshot = json.loads(out.read_text(encoding="utf-8"))
     finally:
         out.unlink(missing_ok=True)
+    list_check = None if snapshot.get("RunningSource") == "list" else _list_detail_check(snapshot)
+    snapshot["FinishedCache"] = _update_finished_cache(snapshot, cache, full=not reuse_finished, list_check=list_check)
+    return snapshot
 
 
-def capture_live(credentials: Path, dest: Path | None = None, skip_publish: bool = False) -> dict:
+def record_intraday(snapshot: dict, source: str, db_path: Path | None = None, intraday_db: Path | None = None) -> dict:
+    """Keep every capture as an intraday point. Must never break the ledger or Gist path."""
+    try:
+        from .intraday import record_snapshot
+        return record_snapshot(snapshot, source, db_path=intraday_db, ledger_db=db_path)
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+def capture_live(credentials: Path, dest: Path | None = None, skip_publish: bool = False,
+                 source: str = "live", db_path: Path | None = None, intraday_db: Path | None = None) -> dict:
     from .live import save_live_snapshot, snapshot_to_board
 
-    snapshot = collect_snapshot(credentials)
+    snapshot = collect_snapshot(credentials, reuse_finished=True, running_from_list=True)
     save_live_snapshot(snapshot, dest)
     board = snapshot_to_board(snapshot)
     result = {
@@ -75,6 +223,8 @@ def capture_live(credentials: Path, dest: Path | None = None, skip_publish: bool
         "as_of": snapshot.get("CapturedAt"),
         "position_count": board["position_count"],
         "board": board,
+        "intraday": record_intraday(snapshot, source, db_path or DEFAULT_DB, intraday_db),
+        "finished_cache": snapshot.get("FinishedCache"),
     }
     if skip_publish:
         result["publish"] = {"ok": False, "skipped": True, "reason": "skip-publish"}
@@ -97,7 +247,10 @@ def capture(credentials: Path, db_path: Path, replace_date: bool = False, skip_p
         finally:
             con.close()
     snapshot = collect_snapshot(credentials)
+    intraday = record_intraday(snapshot, "daily", db_path)
     result = ingest(snapshot, db_path=db_path, replace_date=replace_date)
+    result["intraday"] = intraday
+    result["finished_cache"] = snapshot.get("FinishedCache")
     if skip_publish:
         result["publish"] = {"ok": False, "skipped": True, "reason": "skip-publish"}
         return result
@@ -109,6 +262,21 @@ def capture(credentials: Path, db_path: Path, replace_date: bool = False, skip_p
     return result
 
 
+def daily_capture_due(db_path: Path, now: datetime | None = None) -> tuple[bool, str]:
+    """For the logon catch-up: run only when today's 08:05 capture is missing."""
+    now = now or datetime.now(TAIPEI)
+    if (now.hour, now.minute) < (8, 5):
+        return False, "before 08:05; the scheduled capture will run"
+    if Path(db_path).exists():
+        con = connect(db_path)
+        try:
+            if con.execute("SELECT 1 FROM daily_summary WHERE capture_date=?", (now.date().isoformat(),)).fetchone():
+                return False, "today's daily record already exists"
+        finally:
+            con.close()
+    return True, "today's daily record is missing"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Capture Pionex grids into the SQLite ledger")
     parser.add_argument("--credentials", default=str(V1_CREDENTIALS))
@@ -116,16 +284,35 @@ def main() -> int:
     parser.add_argument("--replace-date", action="store_true")
     parser.add_argument("--skip-publish", action="store_true", help="Do not PATCH Gist after ingest")
     parser.add_argument("--live", action="store_true", help="Fetch current positions only; do not write daily sqlite")
+    parser.add_argument("--if-missing", action="store_true",
+                        help="Capture only if today's daily record is missing and it is past 08:05 (logon catch-up)")
     args = parser.parse_args()
+    if args.if_missing and not args.live:
+        due, reason = daily_capture_due(Path(args.db))
+        if not due:
+            print(json.dumps({"ok": True, "skipped": True, "reason": reason}, ensure_ascii=False))
+            return 0
     try:
         if args.live:
-            result = capture_live(Path(args.credentials), skip_publish=args.skip_publish)
+            result = capture_live(Path(args.credentials), skip_publish=args.skip_publish, db_path=Path(args.db))
+            ledger_retry = None
+            if not args.skip_publish:
+                # The 30-minute task also retries a ledger publish that failed earlier,
+                # as a separate PATCH that carries only the ledger file.
+                try:
+                    from .gist_publish import republish_ledger_if_dirty
+                    ledger_retry = republish_ledger_if_dirty(Path(args.db))
+                except Exception as exc:
+                    ledger_retry = {"ok": False, "error": str(exc)}
             print(json.dumps({
                 "ok": True,
                 "kind": "live",
                 "as_of": result.get("as_of"),
                 "position_count": result.get("position_count"),
+                "intraday": result.get("intraday"),
+                "finished_cache": result.get("finished_cache"),
                 "publish": result.get("publish"),
+                "ledger_retry": ledger_retry,
             }, ensure_ascii=False, indent=2))
             pub = result.get("publish") or {}
             if pub.get("skipped"):

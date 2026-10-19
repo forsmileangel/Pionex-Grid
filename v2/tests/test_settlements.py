@@ -210,3 +210,117 @@ class SettlementTests(unittest.TestCase):
         self.assertEqual(self.row()['reported_realized_profit'],'-200.5')
         self.assertEqual(self.row()['fee'],'-2.5')
         self.assertIsNone(self.row()['net_profit'])
+
+    def closed_with_order(self, data, order=None, **kwargs):
+        order = dict(order or {'base': 'BTC.PERP', 'quote': 'USDT'})
+        order['buOrderData'] = data
+        return rec(ListStatus='finished', Closed='2026-09-19 18:00:00', RawJson={'order': order}, **kwargs)
+
+    def test_wallet_net_counts_returned_money_minus_own_money(self):
+        self.capture('2026-09-18', [rec(GridProfit=100)])
+        self.capture('2026-09-19', [self.closed_with_order({
+            'investmentFrom': 'USER', 'quoteInvestment': '2000', 'extraMargin': '1000',
+            'unlockQuoteAmount': '2150.25', 'profitReinvest': '0', 'profitWithdrawn': '0',
+            'totalRealizedProfit': '-500.25', 'totalFee': '-149.50', 'totalFundingFee': '-200.00',
+            'reasonBy': 'user_cancel'}, GridProfit=105)])
+        row = self.row()
+        self.assertEqual(row['status'], 'settled')
+        self.assertEqual(row['net_method'], 'wallet')
+        self.assertEqual(row['own_cash_in'], '3000')
+        self.assertEqual(row['net_profit'], '-849.75')
+        self.assertTrue(row['net_check_ok'])
+        self.assertEqual(row['close_reason'], 'user_cancel')
+        self.assertEqual(self.day('2026-09-19')['daily_profit_i'], store.to_fixed(5))
+
+    def test_reinvest_is_inside_returned_money_and_own_money_can_be_overridden(self):
+        self.capture('2026-09-18', [rec(GridProfit=100)])
+        self.capture('2026-09-19', [self.closed_with_order({
+            'investmentFrom': 'USER', 'quoteInvestment': '1100', 'unlockQuoteAmount': '1300',
+            'profitReinvest': '100', 'profitWithdrawn': '50'}, GridProfit=105)])
+        row = self.row()
+        self.assertEqual(row['own_cash_in'], '1000')
+        self.assertEqual(row['net_profit'], '350')  # 1300 back + 50 withdrawn - 1000 own
+        self.assertEqual(row['lifetime_grid_profit'], '205')
+        self.assertEqual(row['non_grid_profit'], '145')
+        self.assertFalse(row['needs_review'])  # no realized figure, nothing to compare
+        before = self.day('2026-09-19')
+        settlements.save_manual('g1', {'own_cash_in': '1200'}, self.db)
+        row = self.row()
+        self.assertEqual(row['own_cash_in_source'], 'manual')
+        self.assertEqual(row['net_profit'], '150')
+        self.assertEqual(row['net_method'], 'wallet')
+        self.assertEqual(self.day('2026-09-19'), before)
+        with self.assertRaises(store.CaptureError):
+            settlements.save_manual('g1', {'own_cash_in': '-1'}, self.db)
+
+    def test_bonus_bot_counts_only_unlocked_money(self):
+        self.capture('2026-09-18', [rec(GridProfit=10)])
+        self.capture('2026-09-19', [self.closed_with_order({
+            'investmentFrom': 'FUTURE_GRID_BONUS', 'quoteInvestment': '200', 'unlockQuoteAmount': '0.000000000000000006',
+            'bonusBackUsdt': '159.55', 'totalRealizedProfit': '-40.16', 'totalFundingFee': '-0.29', 'totalFee': '0'},
+            GridProfit=11)])
+        row = self.row()
+        self.assertTrue(row['bonus'])
+        self.assertEqual(row['own_cash_in'], '0')
+        self.assertEqual(row['net_profit'], '0')
+        self.assertTrue(row['net_check_ok'])
+        self.assertIsNone(row['roi_pct'])
+
+    def test_inverse_coin_close_uses_frozen_close_price_and_resolves_daily(self):
+        base = dict(Product='coin_margined_contract_grid', Symbol='ETH', RawGridProfit='0.1',
+                    ConversionPrice=2000, GridProfit=200)
+        self.capture('2026-09-18', [rec(**base)])
+        closed = self.closed_with_order({
+            'investmentFrom': 'USER', 'quoteInvestment': '3.5', 'extraMargin': '0.00002',
+            'unlockQuoteAmount': '4.4', 'profitReinvest': '0', 'profitWithdrawn': '0',
+            'closedPrice': '0.0004', 'gridProfit': '0.11'},
+            order={'base': 'USDT.PERP', 'quote': 'ETH'},
+            **{**base, 'RawGridProfit': '0.11', 'GridProfit': 330, 'ConversionPrice': 3000})
+        self.capture('2026-09-19', [closed])
+        row = self.row()
+        self.assertEqual(row['currency'], 'ETH')
+        self.assertEqual(row['settlement_rate_source'], 'close_price')
+        self.assertEqual(row['settlement_usdt_rate'], '2500')
+        self.assertEqual(row['net_profit'], '0.89998')
+        self.assertEqual(row['net_profit_usdt'], '2249.95')
+        self.assertEqual(row['status'], 'settled')
+        self.assertTrue(row['daily_reconciled'])
+        day = self.day('2026-09-19')
+        self.assertEqual(day['unresolved_count'], 0)
+        self.assertEqual(day['daily_profit_i'], store.to_fixed(25))  # 0.01 new ETH x close price
+        ledger = store.ledger_publish_payload(self.db)
+        self.assertEqual(ledger['schema'], 1)
+        self.assertEqual({r['status'] for r in ledger['settlements']}, {'settled'})
+        self.assertNotIn('RawJson', json.dumps(ledger))
+
+    def test_late_resolution_is_logged_as_correction_and_published(self):
+        base = dict(Product='coin_margined_contract_grid', Symbol='ETH', RawGridProfit='0.1',
+                    ConversionPrice=2000, GridProfit=200)
+        self.capture('2026-09-18', [rec(**base)])
+        self.capture('2026-09-19', [rec(**{**base, 'ListStatus': 'finished', 'RawGridProfit': '0.11'})])
+        self.capture('2026-09-20', [])
+        self.assertEqual(self.day('2026-09-19')['unresolved_count'], 1)
+        settlements.save_manual('g1', {'settlement_usdt_rate': '2500'}, self.db)
+        ledger = store.ledger_publish_payload(self.db)
+        fixed = {(c['capture_date'], c['field']): c for c in ledger['corrections']}
+        self.assertEqual(fixed[('2026-09-19', 'unresolved_count')]['old_value'], '1')
+        self.assertEqual(fixed[('2026-09-19', 'unresolved_count')]['new_value'], '0')
+        self.assertEqual(fixed[('2026-09-19', 'daily_profit_i')]['new_value'], '25')
+        self.assertTrue(fixed[('2026-09-19', 'daily_profit_i')]['reason'].startswith('人工補登'))
+        self.assertNotIn(('2026-09-18', 'daily_profit_i'), fixed)
+        self.assertEqual({d['date']: d['unresolved_count'] for d in ledger['days']}['2026-09-19'], 0)
+
+    def test_confirming_own_money_clears_review_flag(self):
+        self.capture('2026-09-18', [rec(GridProfit=100)])
+        self.capture('2026-09-19', [self.closed_with_order({
+            'investmentFrom': 'USER', 'quoteInvestment': '1100', 'unlockQuoteAmount': '1300',
+            'profitReinvest': '100', 'totalRealizedProfit': '200', 'totalFee': '0', 'totalFundingFee': '0'},
+            GridProfit=105)])
+        self.assertTrue(self.row()['needs_review'])
+        self.assertEqual(store.status_payload(self.db)['settlement_check_flags'], 1)
+        settlements.save_manual('g1', {'own_cash_in': '1000'}, self.db)
+        row = self.row()
+        self.assertEqual(row['net_profit'], '300')
+        self.assertFalse(row['net_check_ok'])
+        self.assertFalse(row['needs_review'])
+        self.assertEqual(store.status_payload(self.db)['settlement_check_flags'], 0)

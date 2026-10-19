@@ -6,12 +6,14 @@ errors are returned as a status dict — callers must not fail capture.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import urllib.error
 import urllib.request
+from decimal import Decimal
 from pathlib import Path
 
-from .store import DEFAULT_DB, ledger_publish_payload
+from .store import DEFAULT_DB, ledger_publish_payload, taipei_now
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CREDS = ROOT / "GIST PUBLISH.txt"
@@ -21,6 +23,7 @@ LIVE_SCHEMA = 1
 LIVE_SOURCE = "pionex-grid-v2-live"
 HOLDINGS_FILENAME = "portfolio-tracker-holdings.json"
 USER_AGENT = "pionex-grid-v2-publish"
+STATE_FILENAME = "publish-state.json"
 
 
 def read_publish_credentials(path: Path | None = None) -> tuple[str, str] | None:
@@ -49,6 +52,14 @@ def _usdt_of(money) -> str | None:
     return str(money)
 
 
+def _sum_usdt(values) -> str | None:
+    total = None
+    for value in values:
+        if value not in (None, ""):
+            total = (total or Decimal(0)) + Decimal(str(value))
+    return None if total is None else str(total)
+
+
 def live_publish_payload(board: dict) -> dict:
     rows = []
     for row in board.get("rows") or []:
@@ -62,6 +73,11 @@ def live_publish_payload(board: dict) -> dict:
                 "profit_24h_usdt": _usdt_of(row.get("profit_24h")),
                 "mark_price": row.get("mark_price"),
                 "liq_price": row.get("liq_price"),
+                # Added for v15.974.
+                "equivalent_usdt": _usdt_of(row.get("equivalent")),
+                "extra_margin_usdt": _usdt_of(row.get("extra_margin")),
+                "equivalent_leverage": row.get("equivalent_leverage"),
+                "funding_total_usdt": _usdt_of(row.get("funding_total")),
             }
         )
     wallet = board.get("wallet_total") or {}
@@ -76,13 +92,80 @@ def live_publish_payload(board: dict) -> dict:
         },
         "total_profit_24h_usdt": _usdt_of(board.get("total_profit_24h")),
         "total_investment_usdt": _usdt_of(board.get("total_investment")),
+        "total_equivalent_usdt": _usdt_of(board.get("total_equivalent")),
+        "leverage_nominal": board.get("leverage_nominal"),
+        "leverage_equivalent": board.get("leverage_equivalent"),
         "total_grid_profit_usdt": _usdt_of(board.get("total_grid_profit")),
         "profit_24h_pct": board.get("profit_24h_pct"),
+        "total_funding_usdt": _sum_usdt(r["funding_total_usdt"] for r in rows),
         "rows": rows,
     }
 
 
+def _state_path(creds_path: Path | None = None) -> Path:
+    # Follows the credential file so tests with temporary credentials never touch v2-data.
+    return (DEFAULT_DB.parent if creds_path is None else Path(creds_path).parent) / STATE_FILENAME
+
+
+def _material(value):
+    """Drop TWD/FX views: they follow the bank rate, not the ledger itself."""
+    if isinstance(value, dict):
+        return {k: _material(v) for k, v in value.items()
+                if k not in ("fx", "twd", "corrections") and not k.endswith("_twd")}
+    if isinstance(value, list):
+        return [_material(v) for v in value]
+    return value
+
+
+def content_hash(payload: dict) -> str:
+    text = json.dumps(_material(payload), ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def read_publish_state(creds_path: Path | None = None) -> dict:
+    try:
+        data = json.loads(_state_path(creds_path).read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _record_state(filename: str, payload: dict, result: dict, creds_path: Path | None) -> None:
+    if result.get("skipped"):
+        return
+    state = read_publish_state(creds_path)
+    entry = dict(state.get(filename) or {})
+    entry.update(last_attempt_at=taipei_now().isoformat(), ok=bool(result.get("ok")),
+                 error=None if result.get("ok") else str(result.get("error") or "unknown"))
+    if result.get("ok"):
+        entry.update(last_success_at=entry["last_attempt_at"], hash=content_hash(payload))
+    state[filename] = entry
+    path = _state_path(creds_path)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(state, ensure_ascii=False, indent=1), encoding="utf-8")
+        tmp.replace(path)
+    except OSError:
+        pass  # bookkeeping only; never fail a publish because of it
+
+
+def ledger_dirty(db_path: Path | None = None, creds_path: Path | None = None) -> bool:
+    """True when local ledger content differs from the last successful Gist publish."""
+    payload = ledger_publish_payload(db_path or DEFAULT_DB)
+    if not payload.get("days"):
+        return False
+    last = (read_publish_state(creds_path).get(LEDGER_FILENAME) or {}).get("hash")
+    return last != content_hash(payload)
+
+
 def patch_gist_file(filename: str, payload: dict, creds_path: Path | None = None, extra: dict | None = None) -> dict:
+    result = _patch_gist_file(filename, payload, creds_path, extra)
+    _record_state(filename, payload, result, creds_path)
+    return result
+
+
+def _patch_gist_file(filename: str, payload: dict, creds_path: Path | None = None, extra: dict | None = None) -> dict:
     if filename in (HOLDINGS_FILENAME,):
         return {"ok": False, "error": "refusing to patch holdings file"}
     creds = read_publish_credentials(creds_path)
@@ -160,3 +243,12 @@ def publish_live(board: dict, creds_path: Path | None = None) -> dict:
         creds_path=creds_path,
         extra={"captured_at": payload.get("captured_at"), "position_count": payload.get("position_count")},
     )
+
+
+def republish_ledger_if_dirty(db_path: Path | None = None, creds_path: Path | None = None) -> dict:
+    """Retry a ledger publish that failed earlier. PATCHes the ledger file only."""
+    if not read_publish_credentials(creds_path):
+        return {"ok": False, "skipped": True, "reason": "missing GIST PUBLISH.txt"}
+    if not ledger_dirty(db_path, creds_path):
+        return {"ok": True, "skipped": True, "reason": "ledger already in sync"}
+    return publish_ledger(db_path, creds_path)

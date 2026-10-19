@@ -558,6 +558,143 @@ def rebuild_daily_profits(con: sqlite3.Connection) -> None:
         )
 
 
+CORRECTION_FIELDS = ("daily_profit_i", "cumulative_i", "true_profit_i", "unresolved_count")
+
+
+def summary_values(con: sqlite3.Connection) -> dict[str, dict]:
+    """Per-day figures Portfolio Tracker shows; compared before/after a recalculation."""
+    return {
+        row["capture_date"]: {field: row[field] for field in CORRECTION_FIELDS}
+        for row in con.execute("SELECT * FROM daily_summary")
+    }
+
+
+def record_corrections(con: sqlite3.Connection, before: dict[str, dict], reason: str, skip_dates=()) -> int:
+    """Log changes to already-recorded days so a corrected history is visible, not silent."""
+    after = summary_values(con)
+    stamp = datetime.now(TAIPEI).isoformat()
+    count = 0
+    for date, old in sorted(before.items()):
+        new = after.get(date)
+        if new is None or date in skip_dates:
+            continue
+        for field in CORRECTION_FIELDS:
+            if old[field] == new[field]:
+                continue
+            fmt = (lambda v: None if v is None else from_fixed(v)) if field.endswith("_i") else (lambda v: None if v is None else str(v))
+            con.execute(
+                """INSERT INTO ledger_corrections(capture_date, field, old_value, new_value, reason, corrected_at)
+                   VALUES (?,?,?,?,?,?)""",
+                (date, field, fmt(old[field]), fmt(new[field]), reason, stamp),
+            )
+            count += 1
+    return count
+
+
+def recent_corrections(con: sqlite3.Connection, limit: int = 30) -> list[dict]:
+    return [dict(row) for row in con.execute(
+        """SELECT capture_date, field, old_value, new_value, reason, corrected_at
+           FROM ledger_corrections ORDER BY id DESC LIMIT ?""", (limit,))]
+
+
+def insert_missing_day(captured_at: str, rows: list[dict], source: str, db_path: Path | None = None) -> dict:
+    """Fill a missed daily capture from a later-recorded intraday snapshot of the same day.
+
+    Only for a gap between two recorded days where every position was running on
+    both sides; the daily ledger is then rebuilt chronologically, so the two
+    resulting days add up to the old combined interval.
+    """
+    captured = taipei_now(captured_at)
+    date = captured.date().isoformat()
+    path = Path(db_path or DEFAULT_DB)
+    _backup(path)
+    con = connect(path)
+    try:
+        if con.execute("SELECT 1 FROM daily_summary WHERE capture_date=?", (date,)).fetchone():
+            raise CaptureError(f"{date} already has a daily record")
+        prev = con.execute("""SELECT * FROM capture_runs WHERE status='success' AND capture_date<?
+                              ORDER BY capture_date DESC, id DESC LIMIT 1""", (date,)).fetchone()
+        nxt = con.execute("""SELECT * FROM capture_runs WHERE status='success' AND capture_date>?
+                             ORDER BY capture_date, id LIMIT 1""", (date,)).fetchone()
+        if prev is None or nxt is None:
+            raise CaptureError("Only a day between two recorded days can be filled")
+        running = {r["bu_order_id"] for r in con.execute(
+            "SELECT bu_order_id FROM daily_grid_profit WHERE capture_date=? AND status IN ('baseline','new','continue')",
+            (prev["capture_date"],))}
+        after = {r["bu_order_id"] for r in con.execute(
+            "SELECT bu_order_id FROM daily_grid_profit WHERE capture_date=? AND status='continue'", (nxt["capture_date"],))}
+        given = {str(r.get("bu_order_id") or "") for r in rows}
+        if not rows or given != running or given != after or len(given) != len(rows):
+            raise CaptureError("Positions must be the same running set on the day before, the filled day and the day after")
+        prev_day = datetime.fromisoformat(prev["capture_date"]).date()
+        next_day = datetime.fromisoformat(nxt["capture_date"]).date()
+        gap = max(0, (captured.date() - prev_day).days - 1)
+        next_gap = max(0, (next_day - captured.date()).days - 1)
+        before = summary_values(con)
+        con.execute("BEGIN")
+        run_id = con.execute(
+            """INSERT INTO capture_runs(captured_at, capture_date, expected_count, actual_count, running_count,
+                 finished_count, status, source, error, gap_days, previous_success_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            (captured.isoformat(), date, len(rows), len(rows), len(rows), 0, "success", source, None, gap,
+             prev["captured_at"]),
+        ).lastrowid
+        investment_total = 0
+        for r in rows:
+            oid = str(r["bu_order_id"])
+            con.execute(
+                """INSERT INTO grid_snapshots(run_id, bu_order_id, list_status, symbol, created_at, product, leverage,
+                     trend, investment_i, grid_profit_i, grid_profit_coin_i, conversion_price_i, conversion_symbol,
+                     grid_profit_24h_i, profit_withdrawn_i, profit_reinvest_i, profit_reduce_i, complete, raw_json)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (run_id, oid, "running", r.get("symbol"), r.get("created_at"), r.get("product"), r.get("leverage"),
+                 r.get("trend"), r.get("investment_i"), r.get("grid_profit_i"), r.get("grid_profit_coin_i"),
+                 r.get("conversion_price_i"), r.get("conversion_symbol"), r.get("grid_profit_24h_i"),
+                 r.get("withdrawn_i"), r.get("reinvest_i"), r.get("reduce_i"), 1, json.dumps({"backfill": source})),
+            )
+            con.execute(
+                """INSERT INTO daily_grid_profit(run_id, capture_date, bu_order_id, status, grid_profit_i,
+                     investment_i, withdrawn_i, reinvest_i, reduce_i, event, gap_days)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                (run_id, date, oid, "continue", r.get("grid_profit_i"), r.get("investment_i"), r.get("withdrawn_i"),
+                 r.get("reinvest_i"), r.get("reduce_i"), "continue", gap),
+            )
+            investment_total += _nz(r.get("investment_i"))
+        con.execute(
+            """INSERT INTO daily_summary(capture_date, run_id, daily_profit_i, cumulative_i, true_profit_i, investment_i,
+                 active_count, new_count, closed_count, unresolved_count, gap_days, fx_gap_i)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (date, run_id, 0, 0, 0, investment_total, len(rows), 0, 0, 0, gap, 0),
+        )
+        con.execute("UPDATE capture_runs SET gap_days=?, previous_success_at=? WHERE id=?",
+                    (next_gap, captured.isoformat(), nxt["id"]))
+        con.execute("UPDATE daily_summary SET gap_days=? WHERE capture_date=?", (next_gap, nxt["capture_date"]))
+        con.execute("UPDATE daily_grid_profit SET gap_days=? WHERE capture_date=?", (next_gap, nxt["capture_date"]))
+        rebuild_daily_profits(con)
+        reason = f"補登漏抓日 {date}（{source}）"
+        record_corrections(con, before, reason)
+        added = summary_values(con)[date]
+        stamp = datetime.now(TAIPEI).isoformat()
+        for field in CORRECTION_FIELDS:
+            value = added[field]
+            con.execute(
+                """INSERT INTO ledger_corrections(capture_date, field, old_value, new_value, reason, corrected_at)
+                   VALUES (?,?,?,?,?,?)""",
+                (date, field, None, None if value is None else (from_fixed(value) if field.endswith("_i") else str(value)),
+                 reason, stamp),
+            )
+        con.commit()
+        result = {k: summary_values(con)[d] for k, d in (("filled", date), ("next", nxt["capture_date"]))}
+        return {"capture_date": date, "run_id": run_id,
+                **{k: {f: (from_fixed(v) if f.endswith("_i") and v is not None else v) for f, v in vals.items()}
+                   for k, vals in result.items()}}
+    except Exception:
+        con.rollback()
+        raise
+    finally:
+        con.close()
+
+
 def apply_event_decision(capture_date: str, bu_order_id: str, decision: str, db_path: Path | None = None) -> dict:
     if decision not in ("add", "reinvest"):
         raise CaptureError("decision must be add or reinvest")
@@ -578,7 +715,9 @@ def apply_event_decision(capture_date: str, bu_order_id: str, decision: str, db_
                  decision=excluded.decision, decided_at=excluded.decided_at""",
             (capture_date, bu_order_id, decision, datetime.now(TAIPEI).isoformat()),
         )
+        before = summary_values(con)
         rebuild_daily_profits(con)
+        record_corrections(con, before, "加倉／複投判定" if decision == "add" else "複投判定")
         con.commit()
         updated = con.execute(
             "SELECT event, daily_profit_i, lifetime_i FROM daily_grid_profit WHERE capture_date=? AND bu_order_id=?",
@@ -691,6 +830,17 @@ def _migrate(con: sqlite3.Connection) -> None:
              decision TEXT NOT NULL,
              decided_at TEXT NOT NULL,
              PRIMARY KEY (capture_date, bu_order_id)
+           )"""
+    )
+    con.execute(
+        """CREATE TABLE IF NOT EXISTS ledger_corrections (
+             id INTEGER PRIMARY KEY,
+             capture_date TEXT NOT NULL,
+             field TEXT NOT NULL,
+             old_value TEXT,
+             new_value TEXT,
+             reason TEXT NOT NULL,
+             corrected_at TEXT NOT NULL
            )"""
     )
     latest = con.execute("SELECT version FROM schema_meta ORDER BY version DESC LIMIT 1").fetchone()
@@ -834,6 +984,7 @@ def ingest(snapshot: dict, db_path: Path | None = None, replace_date: bool = Fal
         by_id = _positions(con)
 
         con.execute("BEGIN")
+        summary_before = summary_values(con)
         if replace_date:
             old_runs = [row["id"] for row in con.execute("SELECT id FROM capture_runs WHERE capture_date=?", (capture_date,))]
             con.execute("DELETE FROM daily_grid_profit WHERE capture_date=?", (capture_date,))
@@ -1010,6 +1161,7 @@ def ingest(snapshot: dict, db_path: Path | None = None, replace_date: bool = Fal
         from .settlements import observe, apply_to_daily
         observe(con, snapshot)
         apply_to_daily(con)
+        record_corrections(con, summary_before, "每日擷取：關倉資料回補", skip_dates=(capture_date,))
         updated = con.execute("SELECT * FROM daily_summary WHERE capture_date=?", (capture_date,)).fetchone()
         daily_total, closed_count, unresolved = updated["daily_profit_i"], updated["closed_count"], updated["unresolved_count"]
         con.commit()
@@ -1179,14 +1331,17 @@ def _pnl_metrics(snap: dict, mark: float | None, as_of: datetime | None = None) 
     grid_apr = None
     total_apr = None
     days_open = None
-    if investment > 0 and created:
+    # Annualize on the equivalent position: raising leverage moves margin to extra margin
+    # and shrinks investment, which must not inflate the return.
+    capital = _float_money(equivalent_i(snap)) or investment
+    if capital > 0 and created:
         try:
             created_dt = datetime.strptime(created[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=TAIPEI)
             end = as_of or datetime.now(TAIPEI)
             days_open = max((end - created_dt).total_seconds() / 86400, 1 / 24)
-            grid_apr = grid / investment * 365 / days_open * 100
+            grid_apr = grid / capital * 365 / days_open * 100
             if total is not None:
-                total_apr = total / investment * 365 / days_open * 100
+                total_apr = total / capital * 365 / days_open * 100
         except ValueError:
             pass
     return {
@@ -1221,6 +1376,51 @@ def _display_direction(snap: dict) -> tuple:
     return trend, leverage
 
 
+def _extra_usdt_i(snap) -> int:
+    """Extra margin in USDT. Coin-margined bots hold it in the coin."""
+    extra = _nz(_rowget(snap, "extra_margin_i"))
+    if not extra:
+        return 0
+    if _is_coin_margined(_rowget(snap, "product")):
+        px = _rowget(snap, "conversion_price_i") or _rowget(snap, "mark_price_i")
+        return _mul_fixed(extra, px) if px else 0
+    return extra
+
+
+def equivalent_i(snap) -> int:
+    """Equivalent position = investment + extra margin.
+
+    Raising leverage while keeping the margin in the bot moves money from investment to
+    extra margin; this sum (and the real exposure) stays the same.
+    """
+    return _nz(_rowget(snap, "investment_i")) + _extra_usdt_i(snap)
+
+
+def position_totals(snaps) -> dict:
+    invest = equiv = 0
+    notional = 0.0
+    for snap in snaps:
+        inv_i = _nz(_rowget(snap, "investment_i"))
+        invest += inv_i
+        equiv += equivalent_i(snap)
+        notional += inv_i * _leverage_value(dict(snap) if not isinstance(snap, dict) else snap)
+    return {
+        "investment_i": invest,
+        "equivalent_i": equiv,
+        "leverage_nominal": round(notional / invest, 2) if invest else None,
+        "leverage_equivalent": round(notional / equiv, 2) if equiv else None,
+    }
+
+
+def _equivalent_by_run(con: sqlite3.Connection) -> dict[int, int]:
+    out: dict[int, int] = {}
+    for row in con.execute(
+            """SELECT run_id, investment_i, extra_margin_i, product, conversion_price_i, mark_price_i
+               FROM grid_snapshots WHERE list_status='running'"""):
+        out[row["run_id"]] = out.get(row["run_id"], 0) + equivalent_i(row)
+    return out
+
+
 def _board_row(snap: dict, profit_24h_i: int | None, daily_i: int | None, size_i: int | None) -> dict:
     mark = _num(snap.get("mark_price_s"))
     if mark is None and snap.get("mark_price_i") is not None:
@@ -1237,8 +1437,9 @@ def _board_row(snap: dict, profit_24h_i: int | None, daily_i: int | None, size_i
     size_i = snap.get("investment_i") if snap.get("investment_i") is not None else size_i
     profit_i = profit_24h_i if profit_24h_i is not None else daily_i
     pct = None
-    if profit_i is not None and size_i:
-        pct = float(Decimal(profit_i) / Decimal(size_i) * 100)
+    pct_base_i = (equivalent_i(snap) if snap.get("investment_i") else None) or size_i
+    if profit_i is not None and pct_base_i:
+        pct = float(Decimal(profit_i) / Decimal(pct_base_i) * 100)
     pnl = _pnl_metrics(snap, mark)
     display_trend, display_leverage = _display_direction(snap)
     return {
@@ -1249,10 +1450,17 @@ def _board_row(snap: dict, profit_24h_i: int | None, daily_i: int | None, size_i
         "leverage": display_leverage,
         "size": money(size_i),
         "investment": money(snap.get("investment_i")),
+        "extra_margin": money(_extra_usdt_i(snap)),
+        "equivalent": money(equivalent_i(snap)) if snap.get("investment_i") is not None else money(None),
+        # investment x Pionex leverage / (investment + extra margin): unchanged when margin only moves to extra margin
+        "equivalent_leverage": (round(snap["investment_i"] * _leverage_value(snap) / equivalent_i(snap), 2)
+                                if snap.get("investment_i") and equivalent_i(snap) else None),
         "mark_price": None if mark is None else str(mark),
         "liq_price": None if liq is None else str(liq),
         "liq_distance_pct": _pct(distance),
         "grid_profit": money(snap.get("grid_profit_i")),
+        # Pionex running funding total (net); None when the API gave none, unlike pnl "funding".
+        "funding_total": money(snap.get("funding_fee_i")),
         "profit_24h": money(profit_24h_i),
         "daily_profit": money(daily_i),
         "day_pct": _pct(pct),
@@ -1293,10 +1501,15 @@ def status_payload(db_path: Path | None = None) -> dict:
                 (month_prefix + "%",),
             ).fetchone()
             month_fx = money(row["n"]) if row and row["n"] is not None else money(0)
+        from .settlements import payload as settlement_payload
+        closures = settlement_payload(con)["rows"]
         return {
             "ok": last is not None,
             "last_success": dict(last) if last else None,
             "unresolved": unresolved,
+            "settlement_unconfirmed": sum(r["status"] != "settled" for r in closures),
+            "settlement_check_flags": sum(bool(r.get("needs_review")) for r in closures),
+            "corrections": recent_corrections(con, 10),
             "missing_dates": missing,
             "recent_errors": [dict(row) for row in failed],
             "coin_fx_gap_month": month_fx,
@@ -1402,6 +1615,7 @@ def board_payload(db_path: Path | None = None) -> dict:
         fx = usdt_twd()
         rate = fx.get("usdt_twd")
         rows = [attach_twd_tree(row, rate) for row in rows]
+        totals = position_totals(snaps)
         return {
             "as_of": last["captured_at"],
             "capture_date": last["capture_date"],
@@ -1409,9 +1623,13 @@ def board_payload(db_path: Path | None = None) -> dict:
             "position_count": len(rows),
             "total_profit_24h": attach_twd(money(total_24h), rate),
             "total_investment": attach_twd(money(total_investment), rate),
+            "total_equivalent": attach_twd(money(totals["equivalent_i"]), rate),
+            "leverage_nominal": totals["leverage_nominal"],
+            "leverage_equivalent": totals["leverage_equivalent"],
             "total_grid_profit": attach_twd(money(total_grid_profit), rate),
             "true_grid_profit": attach_twd(money(summary_true), rate) if summary_true is not None else attach_twd(money(total_grid_profit), rate),
-            "profit_24h_pct": _pct_value(total_24h, total_investment),
+            # Percent on the equivalent position, so moving margin to extra margin does not inflate it.
+            "profit_24h_pct": _pct_value(total_24h, totals["equivalent_i"] or total_investment),
             "wallet_total": attach_twd({"usdt": last["wallet_total_usdt"]} if last["wallet_total_usdt"] else None, rate),
             "fx": _fx_view(fx),
             "rows": rows,
@@ -1425,6 +1643,7 @@ def days_payload(db_path: Path | None = None) -> dict:
     try:
         days = []
         summaries = list(con.execute("SELECT * FROM daily_summary ORDER BY capture_date DESC"))
+        equivalent = _equivalent_by_run(con)
         for summary in summaries:
             snaps = _rows(
                 con,
@@ -1450,6 +1669,7 @@ def days_payload(db_path: Path | None = None) -> dict:
             item["cumulative"] = money(summary["cumulative_i"])
             item["true_profit"] = money(summary["true_profit_i"] if summary["true_profit_i"] is not None else summary["cumulative_i"])
             item["investment"] = money(summary["investment_i"])
+            item["equivalent"] = money(equivalent.get(summary["run_id"]))
             item["closed_count"] = summary["closed_count"]
             item["rows"] = rows
             days.append(item)
@@ -1460,8 +1680,41 @@ def days_payload(db_path: Path | None = None) -> dict:
             item["cumulative"] = attach_twd(item["cumulative"], rate)
             item["true_profit"] = attach_twd(item["true_profit"], rate)
             item["investment"] = attach_twd(item["investment"], rate)
+            item["equivalent"] = attach_twd(item["equivalent"], rate)
             item["rows"] = [attach_twd_tree(row, rate) for row in item["rows"]]
         return {"days": days, "fx": _fx_view(fx)}
+    finally:
+        con.close()
+
+
+def sparkline_payload(days: int = 14, db_path: Path | None = None) -> dict:
+    """Recent per-grid daily efficiency (3x-normalized %, same rule as the board's 每U效率 column)."""
+    con = connect(db_path)
+    try:
+        dates = [row["capture_date"] for row in con.execute(
+            "SELECT capture_date FROM daily_summary ORDER BY capture_date DESC LIMIT ?", (days,))][::-1]
+        if not dates:
+            return {"dates": [], "rows": {}}
+        index = {d: i for i, d in enumerate(dates)}
+        rows: dict[str, list] = {}
+        for row in con.execute(
+            """SELECT d.bu_order_id, d.capture_date, d.status, d.daily_profit_i, d.investment_i, s.leverage
+               FROM daily_grid_profit d
+               LEFT JOIN grid_snapshots s ON s.run_id=d.run_id AND s.bu_order_id=d.bu_order_id
+               WHERE d.capture_date>=?""",
+            (dates[0],),
+        ):
+            i = index.get(row["capture_date"])
+            if i is None:
+                continue
+            values = rows.setdefault(row["bu_order_id"], [None] * len(dates))
+            # Baseline/new days are 0 by definition, not a measured day.
+            if (row["status"] in ("baseline", "new") or row["daily_profit_i"] is None
+                    or not row["investment_i"] or not row["leverage"]):
+                continue
+            pct = Decimal(row["daily_profit_i"]) / Decimal(row["investment_i"]) * 100 * 3
+            values[i] = round(float(pct) / _leverage_value({"leverage": row["leverage"]}), 6)
+        return {"dates": dates, "rows": rows}
     finally:
         con.close()
 
@@ -1509,12 +1762,18 @@ def grid_history_payload(bu_order_id: str, db_path: Path | None = None) -> dict:
             row["investment"] = money(row.get("investment_i"))
             row["grid_profit"] = money(row.get("grid_profit_i"))
             row["margin_balance"] = money(row.get("margin_balance_i"))
+            row["equivalent"] = money(equivalent_i(row))
+        snap_by_run = {row["run_id"]: row for row in snaps}
         for row in profits:
             row["daily_profit"] = money(row["daily_profit_i"])
             row["grid_profit"] = money(row["grid_profit_i"])
             row["prev_grid_profit"] = money(row.get("prev_grid_profit_i"))
             row["cumulative"] = money(row.get("cumulative_i"))
             row["investment"] = money(row.get("investment_i"))
+            # Leverage moves change investment only; show leverage and equivalent so the drop reads right.
+            snap = snap_by_run.get(row["run_id"])
+            row["leverage"] = _display_direction(snap)[1] if snap else None
+            row["equivalent"] = snap["equivalent"] if snap else money(None)
         latest = dict(snaps[-1]) if snaps else {}
         raw = {}
         if latest.get("raw_json"):
@@ -1687,8 +1946,30 @@ def _twd_from_usdt(usdt, rate) -> int | None:
         return None
 
 
+def _rounded(value_i: int | None, places: int) -> str | None:
+    """Fixed value as a short decimal string; used only for fields added after v15.973 to keep the Gist small."""
+    if value_i is None:
+        return None
+    return str((Decimal(value_i) / Decimal(SCALE)).quantize(Decimal(1).scaleb(-places), rounding=ROUND_HALF_UP))
+
+
+def _ledger_positions(con: sqlite3.Connection) -> tuple[dict, dict]:
+    """Per-grid equivalent position and per-run leverage, from each run's running snapshots."""
+    per_grid: dict = {}
+    per_run: dict = {}
+    for row in con.execute(
+            """SELECT run_id, bu_order_id, investment_i, extra_margin_i, product, conversion_price_i,
+                      mark_price_i, leverage
+               FROM grid_snapshots WHERE list_status='running'"""):
+        per_grid[(row["run_id"], row["bu_order_id"])] = equivalent_i(row)
+        per_run.setdefault(row["run_id"], []).append(row)
+    leverage = {run_id: position_totals(snaps)["leverage_equivalent"] for run_id, snaps in per_run.items()}
+    return per_grid, leverage
+
+
 def ledger_publish_payload(db_path: Path | None = None) -> dict:
     """Compact daily-profit JSON for Portfolio Tracker. Does not include raw API blobs."""
+    from .funding import funding_by_date, funding_by_day
     from .settlements import payload as settlement_payload
     con = connect(db_path)
     try:
@@ -1711,10 +1992,22 @@ def ledger_publish_payload(db_path: Path | None = None) -> dict:
                 "days": [],
             }
         first_date = min(row["capture_date"] for row in summaries)
+        equivalent = _equivalent_by_run(con)
+        grid_equivalent, run_leverage = _ledger_positions(con)
+        funding_rows, funding_totals = funding_by_day(con)
+        funding_days = funding_by_date(funding_rows)
+        # A day without funding data (intraday backfill) keeps the previous running total.
+        funding_total: dict = {}
+        carried = None
+        for summary in reversed(summaries):
+            carried = funding_totals.get(summary["capture_date"], carried)
+            funding_total[summary["capture_date"]] = carried
         days = []
         for summary in summaries:
             rate = _rate_of(summary, live_rate)
             wallet_usdt = summary["wallet_total_usdt"]
+            day_funding = funding_days.get(summary["capture_date"]) or {"funding_i": None, "span": 1}
+            funding_i = day_funding["funding_i"]
             rows = []
             for row in con.execute(
                 """SELECT d.*, p.symbol, p.created_at
@@ -1724,6 +2017,7 @@ def ledger_publish_payload(db_path: Path | None = None) -> dict:
                    ORDER BY p.symbol, p.created_at""",
                 (summary["capture_date"],),
             ):
+                grid_funding = funding_rows.get((summary["capture_date"], row["bu_order_id"])) or {}
                 rows.append(
                     {
                         "id": row["bu_order_id"],
@@ -1734,6 +2028,10 @@ def ledger_publish_payload(db_path: Path | None = None) -> dict:
                         "cumulative_usdt": from_fixed(row["cumulative_i"]),
                         "daily_profit_coin": from_fixed(row["daily_profit_coin_i"]) if "daily_profit_coin_i" in row.keys() else None,
                         "fx_gap_usdt": from_fixed(row["fx_gap_i"]) if "fx_gap_i" in row.keys() else None,
+                        # Added for v15.974: investment + extra margin (running grids only) and funding.
+                        "equivalent_usdt": _rounded(grid_equivalent.get((summary["run_id"], row["bu_order_id"])), 2),
+                        "funding_usdt": _rounded(grid_funding.get("delta_i"), 4),
+                        "funding_total_usdt": _rounded(grid_funding.get("cum_i"), 4),
                     }
                 )
             days.append(
@@ -1743,6 +2041,8 @@ def ledger_publish_payload(db_path: Path | None = None) -> dict:
                     "daily_profit_twd": _excel_twd(summary["daily_profit_i"], rate),
                     "investment_usdt": from_fixed(summary["investment_i"]),
                     "pct": _excel_pct(summary["daily_profit_i"], summary["investment_i"]),
+                    "equivalent_usdt": from_fixed(equivalent.get(summary["run_id"])),
+                    "pct_equivalent": _excel_pct(summary["daily_profit_i"], equivalent.get(summary["run_id"])),
                     "cumulative_usdt": from_fixed(summary["cumulative_i"]),
                     "cumulative_twd": _excel_twd(summary["cumulative_i"], rate),
                     "true_profit_usdt": from_fixed(summary["true_profit_i"] if summary["true_profit_i"] is not None else summary["cumulative_i"]),
@@ -1754,6 +2054,13 @@ def ledger_publish_payload(db_path: Path | None = None) -> dict:
                     "unresolved_count": summary["unresolved_count"],
                     "wallet_usdt": None if wallet_usdt in (None, "") else str(wallet_usdt),
                     "wallet_twd": _twd_from_usdt(wallet_usdt, rate),
+                    # Added for v15.974. Funding is shown beside daily profit, never added to it.
+                    "funding_usdt": _rounded(funding_i, 4),
+                    "funding_span_days": day_funding["span"],
+                    "net_usdt": _rounded(None if funding_i is None or summary["daily_profit_i"] is None
+                                         else summary["daily_profit_i"] + funding_i, 4),
+                    "funding_total_usdt": _rounded(funding_total.get(summary["capture_date"]), 4),
+                    "leverage_equivalent": run_leverage.get(summary["run_id"]),
                     "rows": rows,
                 }
             )
@@ -1788,11 +2095,15 @@ def ledger_publish_payload(db_path: Path | None = None) -> dict:
                 "cumulative_usdt": from_fixed(latest_row["cumulative_i"]),
                 "cumulative_twd": _excel_twd(latest_row["cumulative_i"], latest_rate),
                 "investment_usdt": from_fixed(latest_row["investment_i"]),
+                "equivalent_usdt": from_fixed(equivalent.get(latest_row["run_id"])),
                 "active_count": latest_row["active_count"],
                 "gap_days": latest_row["gap_days"],
+                "funding_total_usdt": _rounded(funding_total.get(latest_row["capture_date"]), 4),
+                "leverage_equivalent": run_leverage.get(latest_row["run_id"]),
             },
             "days": days,
             "settlements": settlement_payload(con)["rows"],
+            "corrections": recent_corrections(con),
         }
     finally:
         con.close()

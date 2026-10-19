@@ -24,8 +24,17 @@ function sortedQuery(params) {
   return new URLSearchParams(Object.entries(params).sort(([a], [b]) => a.localeCompare(b))).toString();
 }
 
+// Pionex rejects a signed request whose timestamp is more than 10 s away from its server clock.
+// Every response carries the server time, so requests follow the server clock, not this PC's.
+let clockOffsetMs = 0;
+
+function noteServerTime(json, sentAt, receivedAt) {
+  const server = Number(json && json.timestamp);
+  if (Number.isFinite(server) && server > 0) clockOffsetMs = server - (sentAt + receivedAt) / 2;
+}
+
 function privateGet(path, params, credentials) {
-  const query = sortedQuery({ ...params, timestamp: Date.now().toString() });
+  const query = sortedQuery({ ...params, timestamp: Math.round(Date.now() + clockOffsetMs).toString() });
   const pathUrl = `${path}?${query}`;
   const signature = crypto.createHmac("sha256", credentials.apiSecret).update(`GET${pathUrl}`).digest("hex");
   return fetch(`${API_BASE}${pathUrl}`, {
@@ -39,25 +48,61 @@ function publicGet(path, params) {
   return fetch(`${API_BASE}${path}?${query}`, { method: "GET", headers: { Accept: "application/json" } });
 }
 
-async function parseResponse(response, label) {
+async function parseResponse(response, label, sentAt) {
   const body = await response.text();
   let json;
   try { json = JSON.parse(body); } catch { throw new Error(`${label} returned non-JSON HTTP ${response.status}.`); }
+  noteServerTime(json, sentAt, Date.now());
   if (!response.ok || json.result === false) {
-    throw new Error(`${label} failed: HTTP ${response.status}; code=${json.code || "unknown"}; message=${json.message || "unknown"}`);
+    const error = new Error(`${label} failed: HTTP ${response.status}; code=${json.code || "unknown"}; message=${json.message || "unknown"}`);
+    error.code = json.code;
+    throw error;
   }
   return json;
+}
+
+// Every call is a read-only GET, so a dropped connection (fetch rejects with a TypeError, e.g.
+// "fetch failed" or "terminated") is retried a few times. HTTP and API errors are not retried.
+async function withNetworkRetry(label, send) {
+  const attempts = 3;
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await send();
+    } catch (error) {
+      if (!(error instanceof TypeError)) throw error;
+      if (attempt >= attempts) {
+        const cause = error.cause && (error.cause.code || error.cause.message);
+        throw new Error(`${label}: ${error.message}${cause ? ` (${cause})` : ""} after ${attempts} attempts`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 2000 * attempt));
+    }
+  }
 }
 
 async function requestPrivate(path, params, credentials) {
   const allowed = new Set(["/api/v1/bot/orders", "/api/v1/bot/orders/futuresGrid/order", "/api/v1/wallet/balancesFull"]);
   if (!allowed.has(path)) throw new Error(`Blocked non-read-only endpoint: ${path}`);
-  return parseResponse(await privateGet(path, params, credentials), `Pionex ${path}`);
+  const label = `Pionex ${path}`;
+  const once = () => withNetworkRetry(label, async () => {
+    const sentAt = Date.now();
+    return parseResponse(await privateGet(path, params, credentials), label, sentAt);
+  });
+  try {
+    return await once();
+  } catch (error) {
+    // The rejection already carried the server time, so one retry goes out on the corrected clock.
+    if (error.code !== "INVALID_TIMESTAMP") throw error;
+    return once();
+  }
 }
 
 async function requestPublic(path, params) {
   if (path !== "/api/v1/market/tickers") throw new Error(`Blocked public endpoint: ${path}`);
-  return parseResponse(await publicGet(path, params), `Pionex ${path}`);
+  const label = `Pionex ${path}`;
+  return withNetworkRetry(label, async () => {
+    const sentAt = Date.now();
+    return parseResponse(await publicGet(path, params), label, sentAt);
+  });
 }
 
 function numberOrNull(value) {
@@ -271,7 +316,30 @@ function scaleUsdt(value, conversionPrice) {
 async function detailToRecord(item, credentials, listStatus, perpTickers) {
   const orderId = String(item.buOrderId);
   const response = await requestPrivate("/api/v1/bot/orders/futuresGrid/order", { buOrderId: orderId, lang: "en" }, credentials);
-  const order = response.data || {};
+  return buildRecord(item, response.data || {}, listStatus, perpTickers);
+}
+
+// The running list already carries each bot's full buOrderData (same 127 fields as the detail).
+// The detail only turns these never-filled withdrawal/sell fields from null into "0".
+// The daily capture still reads every detail and checks the list against it (capture.py).
+const LIST_NULL_AS_ZERO = ["profitWithdrawn", "profitWithdrawnU", "profitWithdrawnP", "profitWithdrawnC",
+  "unlockUsdtAmount", "unlockQuoteAmount", "sharedProfit", "quoteAmountSell", "quoteAmountBeforeSell", "quoteSellPrice"];
+
+function hasListDetail(item) {
+  const data = item && item.buOrderData;
+  return Boolean(data && typeof data === "object" && data.gridProfit !== null && data.gridProfit !== undefined);
+}
+
+function orderFromListItem(item) {
+  const data = { ...item.buOrderData };
+  for (const key of LIST_NULL_AS_ZERO) {
+    if (data[key] === null || data[key] === undefined) data[key] = "0";
+  }
+  return { ...item, buOrderData: data };
+}
+
+async function buildRecord(item, order, listStatus, perpTickers) {
+  const orderId = String(item.buOrderId);
   const data = order.buOrderData || {};
   const base = order.base || item.base || "";
   const quote = order.quote || item.quote || "";
@@ -414,6 +482,45 @@ async function detailToRecord(item, credentials, listStatus, perpTickers) {
   };
 }
 
+// A closed bot's detail stops changing once it is settled, so the live refresh can reuse the
+// local copy instead of asking Pionex for every closed bot again. A copy is reused only when it
+// was fetched at least a day after the close and the finished list still shows the same bot;
+// anything else is fetched as before. The daily capture passes no cache and re-checks them all.
+const FINISHED_SETTLE_MS = 24 * 60 * 60 * 1000;
+const VOLATILE_LIST_KEYS = new Set(["lastFundingFeeTs"]);
+
+function stableJson(value) {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value).filter((key) => !VOLATILE_LIST_KEYS.has(key)).sort()
+      .map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value === undefined ? null : value);
+}
+
+function readFinishedCache(filePath) {
+  if (!filePath) return {};
+  try {
+    const data = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    return data && data.records && typeof data.records === "object" ? data.records : {};
+  } catch {
+    return {};
+  }
+}
+
+function cachedFinishedRecord(cache, item) {
+  const entry = cache[String(item.buOrderId)];
+  const record = entry && entry.record;
+  if (!record || record.ListStatus !== "finished" || String(record.ApiOrderId) !== String(item.buOrderId)) return null;
+  const closedMs = numberOrNull(item.closeTime);
+  const fetchedMs = Date.parse(entry.fetched_at || "");
+  if (closedMs === null || closedMs <= 0 || !Number.isFinite(fetchedMs)) return null;
+  if (fetchedMs - closedMs < FINISHED_SETTLE_MS) return null;
+  const listed = record.RawJson && record.RawJson.list;
+  if (!listed || stableJson(sanitizeRaw(item)) !== stableJson(listed)) return null;
+  return { ...record, DetailSource: "cache", DetailFetchedAt: entry.fetched_at };
+}
+
 async function getWalletOverview(credentials) {
   const response = await requestPrivate("/api/v1/wallet/balancesFull", {}, credentials);
   const data = response.data || {};
@@ -437,21 +544,55 @@ async function collect() {
   const credentialPath = option("--credentials", process.env.PIONEX_CREDENTIAL_PATH || DEFAULT_CREDENTIAL_PATH);
   const includeFinished = hasFlag("--include-finished");
   const credentials = readCredentials(credentialPath);
-  const perpTickers = await getPerpTickers();
-  const running = await listFuturesGrids(credentials, "running");
+  const runningFromList = hasFlag("--running-from-list");
+  const walletPromise = runningFromList
+    ? getWalletOverview(credentials).catch((error) => ({ error: error.message }))
+    : null;
+  let perpTickers;
+  let running;
+  let finishedItems = [];
+  if (runningFromList) {
+    // Fast live mode starts the independent reads together; the daily capture keeps the original order.
+    [perpTickers, running, finishedItems] = await Promise.all([
+      getPerpTickers(),
+      listFuturesGrids(credentials, "running"),
+      includeFinished ? listFuturesGrids(credentials, "finished") : Promise.resolve([]),
+    ]);
+  } else {
+    perpTickers = await getPerpTickers();
+    running = await listFuturesGrids(credentials, "running");
+  }
   if (!includeFinished && running.length === 0) throw new Error("No running futures-grid records were returned.");
   const listed = running.map((item) => ({ item, listStatus: "running" }));
   if (includeFinished) {
-    const finished = await listFuturesGrids(credentials, "finished");
+    const finished = runningFromList ? finishedItems : await listFuturesGrids(credentials, "finished");
     const runningIds = new Set(running.map((item) => String(item.buOrderId)));
     for (const item of finished) {
       if (!runningIds.has(String(item.buOrderId))) listed.push({ item, listStatus: "finished" });
     }
   }
+  const finishedCache = readFinishedCache(option("--finished-cache", ""));
   const records = [];
-  for (let index = 0; index < listed.length; index += 1) {
-    records.push(await detailToRecord(listed[index].item, credentials, listed[index].listStatus, perpTickers));
-    if (index + 1 < listed.length) await sleep(120);
+  let finishedFetched = 0;
+  let finishedReused = 0;
+  let fetchedAny = false;
+  let runningFromListCount = 0;
+  for (const { item, listStatus } of listed) {
+    if (listStatus === "running" && runningFromList && hasListDetail(item)) {
+      records.push({ ...(await buildRecord(item, orderFromListItem(item), listStatus, perpTickers)), DetailSource: "list" });
+      runningFromListCount += 1;
+      continue;
+    }
+    const cached = listStatus === "finished" ? cachedFinishedRecord(finishedCache, item) : null;
+    if (cached) {
+      records.push(cached);
+      finishedReused += 1;
+      continue;
+    }
+    if (fetchedAny) await sleep(120);
+    records.push(await detailToRecord(item, credentials, listStatus, perpTickers));
+    fetchedAny = true;
+    if (listStatus === "finished") finishedFetched += 1;
   }
   const keys = new Set(records.map((record) => record.Key));
   if (keys.size !== records.length) throw new Error("Duplicate normalized grid key detected; no snapshot produced.");
@@ -461,7 +602,8 @@ async function collect() {
   records.sort((a, b) => b.Created.localeCompare(a.Created));
   const runningRecords = records.filter((record) => record.ListStatus === "running");
   let wallet = null;
-  try { wallet = await getWalletOverview(credentials); } catch (error) { wallet = { error: error.message }; }
+  if (walletPromise) wallet = await walletPromise;
+  else { try { wallet = await getWalletOverview(credentials); } catch (error) { wallet = { error: error.message }; } }
   return {
     ok: true,
     CapturedAt: nowTaipeiIso(),
@@ -470,6 +612,11 @@ async function collect() {
     ExpectedCardCount: runningRecords.length,
     ContractCount: runningRecords.length,
     FinishedCount: records.length - runningRecords.length,
+    FinishedFetched: finishedFetched,
+    FinishedReused: finishedReused,
+    RunningSource: runningFromList ? "list" : "detail",
+    RunningFromList: runningFromListCount,
+    ClockOffsetMs: Math.round(clockOffsetMs),
     SavingsCount: 0,
     Wallet: wallet,
     Records: records,
