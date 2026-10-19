@@ -37,12 +37,14 @@ class PipelineTests(unittest.TestCase):
             patch("v2.pipeline.capture", side_effect=AssertionError("API capture must not run")),
             patch("v2.pipeline.subprocess.run"),
             patch("v2.pipeline.export_report"),
+            patch("v2.pipeline.ledger_rows"),
         ]
         started = [item.start() for item in self.patches]
         self.addCleanup(lambda: [item.stop() for item in self.patches])
         self.capture = started[3]
         self.run_excel = started[4]
         self.export_report = started[5]
+        self.ledger_check = started[6]
         self.run_excel.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
 
     def args(self, *extra):
@@ -90,6 +92,23 @@ class PipelineTests(unittest.TestCase):
         kwargs = self.run_excel.call_args.kwargs
         self.assertTrue(kwargs["creationflags"] & 0x08000000)
         self.assertEqual(kwargs["errors"], "replace")
+
+    def test_hung_excel_is_stopped_and_does_not_fail_the_run(self):
+        self.run_excel.side_effect = subprocess.TimeoutExpired(["powershell.exe"], 600)
+        errors = io.StringIO()
+        with redirect_stderr(errors):
+            code = main(self.args("--skip-capture"))
+        self.assertEqual(code, 0)
+        self.assertEqual(self.run_excel.call_args.kwargs["timeout"], 600)
+        self.assertIn("legacy_excel fail 超過 600 秒沒有結束", self.log.read_text(encoding="utf-8"))
+        self.assertNotIn("legacy_excel", json.loads(self.preview_state.read_text(encoding="utf-8")))
+
+    def test_stale_ledger_reason_is_logged_without_starting_excel(self):
+        self.ledger_check.side_effect = ValueError("ledger is stale")
+        with redirect_stderr(io.StringIO()):
+            self.assertEqual(main(self.args("--skip-capture")), 0)
+        self.run_excel.assert_not_called()
+        self.assertIn("legacy_excel fail ledger is stale", self.log.read_text(encoding="utf-8"))
 
     def test_current_state_does_not_export_again(self):
         self.preview_state.parent.mkdir(parents=True)

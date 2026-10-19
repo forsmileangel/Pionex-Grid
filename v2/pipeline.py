@@ -17,6 +17,7 @@ from pathlib import Path
 
 from .capture import TAIPEI, V1_CREDENTIALS, _collector_run_kwargs, capture, daily_capture_due
 from .daily_report import DEFAULT_OUTPUT, export_report
+from .legacy_excel import ledger_rows
 from .store import DEFAULT_DB
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -28,6 +29,10 @@ LEGACY_PS1 = Path(r"D:\My-project\pionex grid record\pionex-grid-daily.ps1")
 PRODUCTION_REPO = Path(r"D:\My-project\pionex grid record-v2")
 PRODUCTION_LEGACY_ROOT = Path(r"D:\My-project\pionex grid record")
 PRODUCTION_HISTORY = PRODUCTION_LEGACY_ROOT / "data" / "pionex-grid-history.xlsx"
+# A normal export takes about 10 seconds. The scheduled task has no time limit and
+# ignores a new start while one is running, so a hung Excel would block the next
+# day's 08:05 capture. The old 08:12 task stopped after an hour.
+LEGACY_TIMEOUT_SECONDS = 600
 
 
 def _stamp() -> str:
@@ -181,15 +186,24 @@ def _step_legacy(db_path: Path, state_file: Path, state: dict, latest: str | Non
         _log("legacy_excel", "skip 已是最新，略過")
         return "skipped"
     try:
+        # The script aborts on the first stderr line of the adapter, so its error is
+        # only "Traceback". Run the adapter's read-only checks here for the reason.
+        ledger_rows(db_path, datetime.now(TAIPEI).date())
         # Same no-window flags as the collector: the scheduled task runs hidden,
         # and a plain child powershell.exe would otherwise flash a console.
         completed = subprocess.run(
             _legacy_command(db_path, root, workbook),
+            timeout=LEGACY_TIMEOUT_SECONDS,
             **{**_collector_run_kwargs(), "errors": "replace"},
         )
         if completed.returncode != 0:
             detail = (completed.stderr or completed.stdout or "excel failed").strip().splitlines()
             raise RuntimeError(detail[0][:300] if detail else f"exit {completed.returncode}")
+    except subprocess.TimeoutExpired:
+        message = f"超過 {LEGACY_TIMEOUT_SECONDS} 秒沒有結束，已中止"
+        _log("legacy_excel", f"fail {message}")
+        print(f"舊版 Excel 匯出失敗：{message}", file=sys.stderr)
+        return "failed"
     except Exception as exc:
         _log("legacy_excel", f"fail {exc}")
         print(f"舊版 Excel 匯出失敗：{exc}", file=sys.stderr)
