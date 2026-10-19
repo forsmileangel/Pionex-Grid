@@ -75,6 +75,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\install-v2-daily-capture.p
 
 That registers `Pionex Grid v2 Daily Capture` at 08:05 (`python -m v2.pipeline`), plus `Pionex Grid v2 Daily Capture Catch-up` at logon (`python -m v2.pipeline --if-missing`). If Windows restarted overnight and the PC sat at the login screen at 08:05, the catch-up captures today's record after login. It skips the capture when today already exists, so it never replaces the 08:05 snapshot, and it still exports an Excel file when the ledger date is newer than the last export.
 
+Trial (from 2026-10-20): `Pionex Grid v2 Shadow 0815` runs `python -m v2.shadow` at 08:15 and saves the snapshot to `v2-data/shadow/` only, never into the ledger, Gist or Excel. At 08:05 some positions have not posted the 08:00 funding settlement yet. `python -m v2.shadow --report` shows, per day, how many had posted at the ledger capture and at 08:15, to decide whether the daily capture should move.
+
 A day that was still missed can be filled from the 30-minute intraday record of that day (first record at or after 08:05): `python -m v2.backfill --date YYYY-MM-DD` previews, `--apply` writes the ledger, logs the change in `corrections[]` and republishes the Gist ledger. After ingest it PATCHes `pionex-grid-ledger.json` on the same private Gist used by Portfolio Tracker. Copy `GIST PUBLISH.example.txt` to `GIST PUBLISH.txt` (line 1 = Gist ID, line 2 = Gist token). Missing that file skips publish; sqlite capture still succeeds. Use `--skip-publish` to ingest only.
 
 Current positions (does **not** write daily sqlite or Excel):
