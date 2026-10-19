@@ -15,7 +15,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from .capture import TAIPEI, V1_CREDENTIALS, capture, daily_capture_due
+from .capture import TAIPEI, V1_CREDENTIALS, _collector_run_kwargs, capture, daily_capture_due
 from .daily_report import DEFAULT_OUTPUT, export_report
 from .store import DEFAULT_DB
 
@@ -181,12 +181,11 @@ def _step_legacy(db_path: Path, state_file: Path, state: dict, latest: str | Non
         _log("legacy_excel", "skip 已是最新，略過")
         return "skipped"
     try:
+        # Same no-window flags as the collector: the scheduled task runs hidden,
+        # and a plain child powershell.exe would otherwise flash a console.
         completed = subprocess.run(
             _legacy_command(db_path, root, workbook),
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
+            **{**_collector_run_kwargs(), "errors": "replace"},
         )
         if completed.returncode != 0:
             detail = (completed.stderr or completed.stdout or "excel failed").strip().splitlines()

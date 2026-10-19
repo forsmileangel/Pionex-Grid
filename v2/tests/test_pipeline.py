@@ -1,5 +1,6 @@
 import io
 import json
+import os
 import sqlite3
 import subprocess
 import tempfile
@@ -82,6 +83,13 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(saved["legacy_excel"], "2026-10-19")
         self.assertEqual(saved["daily_report"], "2026-10-19")
         self.assertFalse(self.state.exists())
+
+    @unittest.skipUnless(os.name == "nt", "window flags exist only on Windows")
+    def test_legacy_excel_runs_without_a_console_window(self):
+        main(self.args())
+        kwargs = self.run_excel.call_args.kwargs
+        self.assertTrue(kwargs["creationflags"] & 0x08000000)
+        self.assertEqual(kwargs["errors"], "replace")
 
     def test_current_state_does_not_export_again(self):
         self.preview_state.parent.mkdir(parents=True)
