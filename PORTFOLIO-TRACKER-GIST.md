@@ -69,10 +69,45 @@ Array.isArray(obj.days)
 - `days[].true_profit_usdt`／`true_profit_twd`：截至該快照的歷史配對收益，含基準帶入及記錄期間已關倉、提領、複投。記錄前已提領的收益可能未涵蓋。
 - `days[].unresolved_count`：該區間配對資料待補數；數值合計是已知部分，PT 月平均暫不計入待補日，補齊後重算。
 - 頂層新增 `settlements[]`，`schema` 仍為 `1`。每筆以訂單 `id` 唯一識別，含 `symbol`、`currency`、`closed_at`（可空）、`observed_at`、`capture_date`、`status`（pending/partial/settled）、`source`、`grid_profit`、`net_profit`、`reported_total_profit`、`funding_fee`、`fee`、`lifetime_grid_profit`、`non_grid_profit`、`daily_reconciled`。
-- 結算金額預設是 `currency` 原幣；`*_usdt` 只有 U 本位或已人工確認結算換算價時提供。API `TotalProfit` 僅為回報值，不假定已含所有費用；`net_profit` 必須明確核對後補登。
+- 結算金額預設是 `currency` 原幣；`*_usdt` 只有 U 本位或已有結算換算價（關倉價或人工）時提供。API `TotalProfit` 僅為回報值，不假定已含所有費用；`net_profit` 改用下方錢包實拿口徑自動計算。
 - `grid_profit` 是派網最後顯示值；提領／複投倉須確認完整 `lifetime_grid_profit` 才能計算 `non_grid_profit = net_profit - lifetime_grid_profit`。資金費、手續費只供對帳，不從淨損益再次扣除。
 - 缺值用 `null`，不可改成 0；延遲取得結算時回補首次關倉的快照區間。手動補登紀錄存 SQLite，後續 API 不覆蓋人工值。
 - PT 只讀關倉紀錄，不建立 dirty/pending、不修改 holdings 或錢包。缺少 `settlements` 的舊帳本仍可顯示。
+
+### 關倉淨損益自動確認（錢包實拿口徑）
+
+- `net_profit` 預設自動計算：`實際回到錢包（unlockQuoteAmount）＋期間已提領（profitWithdrawn）− 自己投入`。自己投入＝`quoteInvestment + extraMargin − profitReinvest`（複投的錢已在拿回金額內，不重複計）；體驗金倉（`investmentFrom` 含 BONUS）自己投入為 0，只計解鎖金額。
+- 算得出就 `status: settled`、`source: api`；人工覆蓋後 `source: manual+api`。`status` 仍只有 pending／partial／settled 三種值。
+- 只增不刪的新欄位：`net_method`（wallet／manual）、`received`、`own_cash_in`、`own_cash_in_source`、`investment`、`withdrawn_total`、`reinvest_total`、`bonus`、`net_check`（已實現損益＋手續費＋資金費−體驗金分潤）、`net_check_diff`、`net_check_ok`、`needs_review`（兩法差距過大且尚未人工確認投入或淨損益）、`roi_pct`、`close_reason`、`hold_days`、`settlement_rate_source`、`received_usdt`。
+- 提領／複投倉沒有人工值時，`lifetime_grid_profit` 自動取 `gridProfit + profitReinvest + profitReduce`。
+- 幣本位關倉的換算價自動取 API `closedPrice`（關倉後固定不變；反向合約 `USDT.PERP/幣` 取倒數）。缺少時仍需人工換算價，不用浮動即時價。取得換算價後，關倉區間的 `days[]` 會從待補變成有數字，這是唯一會改動既有 `days[]` 數值的情況，並記入 `corrections[]`。
+
+### 等效倉位（只新增欄位）
+
+- 調高槓桿但把保證金留在原倉時，派網的「投入」（`quoteInvestment`）會變小、`extraMargin` 變大，每格數量和強平價不變。
+- 帳本 `days[]` 新增 `equivalent_usdt`（投入＋追加保證金，當天運行中倉位加總）與 `pct_equivalent`（每日利潤 ÷ 等效倉位）；`latest.equivalent_usdt` 同義。舊的 `investment_usdt`、`pct` 不變（仍是派網投入口徑）。
+- 第三檔 `pionex-grid-live.json` 新增 `total_equivalent_usdt`、`leverage_nominal`（投入加權名目槓桿）、`leverage_equivalent`（名義倉位 ÷ 等效倉位）。`profit_24h_pct` 的分母改為等效倉位，調槓桿不再讓它跳高。
+
+### v15.974 資金費與等效倉位（只新增欄位）
+
+PT v15.974 起網格頁會讀這些欄位；缺少時（舊帳本）退回原畫面，不報錯。`schema` 仍為 `1`，舊欄位與意義不變：`daily_profit_usdt` 仍只有配對，資金費**不**加進每日利潤。
+
+- `days[]`：
+  - `funding_usdt`：當日資金費淨額（派網 `totalFundingFee` 和上一次每日快照相減，付出為負）。沒有可比的前一筆時為 `null`，不補 0。
+  - `funding_span_days`：資金費涵蓋的天數；中間缺一天資料時為 2。
+  - `net_usdt`：`daily_profit_usdt + funding_usdt`；資金費為 `null` 時也是 `null`。
+  - `funding_total_usdt`：所有出現過的倉（含已關倉）的累計資金費合計；沒有資料的日子沿用前一天。
+  - `leverage_equivalent`：當天運行中倉的 投入×派網槓桿 ÷ 等效倉位。
+- `days[].rows[]`：`equivalent_usdt`（投入＋追加保證金，關倉列為 `null`）、`funding_usdt`、`funding_total_usdt`。
+- `latest`：`funding_total_usdt`、`leverage_equivalent`。
+- 第三檔 `rows[]`：`equivalent_usdt`、`extra_margin_usdt`、`equivalent_leverage`、`funding_total_usdt`（該倉累計淨額）；頂層 `total_funding_usdt`（運行中各倉合計）。
+- 新欄位四捨五入（金額 2 位、資金費 4 位）以控制 Gist 大小；舊欄位精度不變。幣本位資金費是當天新增的幣 × 抓取價，不含幣價重估。
+
+### 歷史修正回報 `corrections[]`
+
+- 頂層新增 `corrections[]`（最近 30 筆，PT 目前不讀）：`capture_date`、`field`（daily_profit_i／cumulative_i／true_profit_i／unresolved_count）、`old_value`、`new_value`、`reason`、`corrected_at`。已記錄的日子因關倉補抓、人工補登、加倉／複投判定而重算時寫入；當日擷取本身不算修正。
+- PT 每次拉取都整份取代帳本，所以修正後的數字與月平均會自動更新，不需要 PT 端另外處理。
+- 發布結果存在本機 `v2-data/publish-state.json`（內容雜湊不含 TWD／FX 欄位）。帳本與上次成功發布不同時，每 30 分鐘的 `capture --live` 排程會另外送一次「只含帳本檔」的 PATCH 補發；儀表板「執行狀態」也可手動重新發布。
 
 幣本位（ETH）的 `rows[].daily_profit_usdt` 是「當天新增的幣 × 抓取現貨價」，不是畫面 USDT 庫存相減。PT 不必改 HTML，pull 後單日數字會自己變。
 

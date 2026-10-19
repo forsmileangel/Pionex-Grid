@@ -109,13 +109,16 @@
   <table>
     <thead><tr><th>路徑</th><th>做什麼</th></tr></thead>
     <tbody>
-      <tr><td><code>pionex-grid-api.mjs</code></td><td>唯讀收集器。白名單：Bot 清單／詳情、錢包、公開 ticker。</td></tr>
+      <tr><td><code>pionex-grid-api.mjs</code></td><td>唯讀收集器。白名單：Bot 清單／詳情、錢包、公開 ticker。網路一時斷線時同一個 GET 最多重試 3 次。派網只接受和它時間相差 10 秒內的簽名請求，收集器用每個回應附的伺服器時間校正時鐘，被拒（INVALID_TIMESTAMP）時用校正後的時間立刻重送一次；偏差記在快照 <code>ClockOffsetMs</code>，顯示在執行狀態頁。</td></tr>
       <tr><td><code>v2/capture.py</code></td><td>跑 Node，ingest 進 SQLite。同日已有紀錄則覆蓋。</td></tr>
       <tr><td><code>v2/store.py</code></td><td>schema、差額、儀表板 payload、Excel 匯出。</td></tr>
       <tr><td><code>v2/liq.py</code></td><td>強平價顯示：U 本位為主，幣本位才倒數。</td></tr>
       <tr><td><code>v2/fx.py</code></td><td>USDT→TWD = 臺銀美金現金買入 × USDT/USD。</td></tr>
+      <tr><td><code>v2/intraday.py</code></td><td>每 30 分鐘的盤中資料點（<code>v2-data/intraday.sqlite</code>）與效率走勢的時段計算、常用檢視。</td></tr>
+      <tr><td><code>v2-data/finished-details.json</code></td><td>已關倉網格的明細。即時更新沿用，每日 08:05 全部重抓核對。</td></tr>
       <tr><td><code>v2/server.py</code></td><td>只綁 127.0.0.1:8787，不讀金鑰。</td></tr>
-      <tr><td><code>v2/static/index.html</code></td><td>儀表板。開著不會自動刷新。</td></tr>
+      <tr><td><code>v2/static/index.html</code></td><td>儀表板。目前倉位頁每 5 分鐘、切回分頁時重讀本機暫存（不連派網）。</td></tr>
+      <tr><td><code>v2/static/chart.js</code></td><td>儀表板圖表（純 SVG、不靠 CDN）。</td></tr>
       <tr><td><code>v2-data/</code></td><td>sqlite、匯率快取、備份。gitignore。</td></tr>
       <tr><td><code>start-dashboard-server.ps1</code></td><td>登入自動上線；埠被占用就略過。</td></tr>
     </tbody>
@@ -155,13 +158,21 @@
   </ol>
   <p>同一日再 capture 會刪掉該日 summary／明細／snapshot 再寫。所以 8/25 按十次還是只有 8/25 一列。8/26 第一次成功才會出現第二天，且通常<strong>不是 0</strong>（除非過夜網格利潤完全沒動）。</p>
   <p>漏抓的日子不會自動補。v1 的 08:00 <strong>不會</strong>寫進 v2 sqlite。長天期 Excel 要靠每天至少一次 v2 capture。</p>
+  <h3>盤中資料（效率走勢用）</h3>
+  <p>每 30 分鐘排程（:00、:30）、手動「更新目前倉位」和 08:05 擷取，都會把當下每個運行中倉位記一筆到另一個檔 <code>v2-data/intraday.sqlite</code>，不動帳本。每一筆和上一筆比網格利潤，複投、加倉、提領、幣本位重估沿用上面的日記帳規則；倉位第一次出現時接每日帳本最後一筆。派網 API 沒有歷史成交，漏掉的時段補不回來，所以 08:05 會備份這個檔（保留 7 份）。</p>
+  <h3>已關倉明細（加快即時更新）</h3>
+  <p>派網沒有一次抓全部網格的端點，只能逐筆查明細。已關倉網格結算後數字不會再變（9/21 起的快照比對過，只有 <code>lastFundingFeeTs</code> 時間戳變過），所以每次抓到的明細記在 <code>v2-data/finished-details.json</code>。「更新目前倉位」和 30 分鐘排程只在三個條件都成立時沿用本機那份：本機有這筆、那份是在關倉 24 小時後抓的、派網已關倉清單的內容沒變（忽略 <code>lastFundingFeeTs</code>）。其他情況照舊向派網查。每日 08:05 擷取、關倉紀錄頁「補抓」不用本機那份，全部重抓，08:05 那次順便核對有幾筆和本機不同，結果顯示在執行狀態頁。這份檔壞掉或不見，只會讓下一次更新慢回原本的速度，帳本不受影響。</p>
+  <h3>運行中清單（快速模式）</h3>
+  <p>派網的運行中清單每一筆已附完整明細（127 個欄位，和逐筆查的相同），所以「更新目前倉位」和 30 分鐘排程直接用清單，不再逐筆查；清單裡 10 個提領／賣出欄位是 null，一律當作 "0"。行情、清單、錢包同時讀取，同步 Portfolio 改在背景完成，畫面不用等。每日 08:05 照舊逐筆查明細並核對清單有沒有漏資料，有漏就自動停用快速模式。備援「寫入倉位歷史」寫入前會先完整重抓一次。</p>
+  <p>效率走勢把累計曲線切成台北時間整點起算的時段（30 分到月），邊界用前後兩筆線性內插；跨過 75 分鐘以上的空檔標成估算，1 天以上的顆粒度在盤中資料開始前改用每日帳本（08:05 截點）。效率 ＝ 時段利潤 ÷ 倉位 × 3 ÷ 槓桿，換算成每天 %，和「每U效率」同一口徑。</p>
 
   <h2 id="ui">5. 畫面與報表</h2>
   <h3>儀表板 <code>http://127.0.0.1:8787</code></h3>
   <ul>
     <li><strong>目前倉位</strong>：最後一次成功 capture 的 running 倉。頂部有錢包、24h 總利潤、24h 總倉位%、投資加總。列上「單日利潤」在這頁是 API 的 <code>gridProfit24h</code>，不是日記帳差額。</li>
     <li><strong>每日詳情</strong>：資料庫裡每一天，點開看當天每一倉。這裡的單日利潤才是 snapshot 差額。</li>
-    <li><strong>單一網格</strong>：該倉歷史差額 + 趨勢／資金費／總損益／年化 + API 原始欄位。</li>
+    <li><strong>效率走勢</strong>：每個倉位每 30 分鐘到每月的利潤與效率圖、一天 24 小時熱度、排行；可篩選標的、存常用檢視（<code>v2-data/efficiency-views.json</code>）。</li>
+    <li><strong>單一網格</strong>：該倉歷史差額 + 趨勢／資金費／總損益／年化 + API 原始欄位，另有每日走勢圖與盤中效率圖。</li>
     <li>表頭可排序（建倉日到單天%）。開著頁面不會輪詢。</li>
   </ul>
   <h3>Excel（長天期，依日期）</h3>
@@ -185,8 +196,9 @@
       <tr><td>頂部 24h 總倉位%</td><td>Σ gridProfit24h ÷ Σ Investment</td><td>顯示在「過去 24 小時總利潤」的 TWD 下面。</td></tr>
       <tr><td>趨勢盈虧</td><td>Investment × 槓桿 × (Mark−開倉)/開倉 × 方向</td><td>做空方向為 −1。對齊派網單倉總損益頁。</td></tr>
       <tr><td>目前總損益</td><td>趨勢 + 網格利潤</td><td><strong>不加</strong>資金費。資金費用 <code>totalFundingFee</code> 另列。</td></tr>
-      <tr><td>網格年化</td><td>網格利潤 / Investment / 持有天數 × 365</td><td>API 沒有現成年化。</td></tr>
-      <tr><td>總年化</td><td>總損益 / Investment / 持有天數 × 365</td><td>總損益仍不含資金費。</td></tr>
+      <tr><td>網格年化</td><td>網格利潤 / 等效倉位（Investment + 追加保證金）/ 持有天數 × 365</td><td>API 沒有現成年化。用等效倉位，調槓桿不會讓它跳動。</td></tr>
+      <tr><td>總年化</td><td>總損益 / 等效倉位 / 持有天數 × 365</td><td>總損益仍不含資金費。</td></tr>
+      <tr><td>效率走勢合計</td><td>總利潤 / Σ(Investment × 槓桿 ÷ 3 × 時數)</td><td>3 倍換算後的資金加權，調槓桿但保證金留在原倉時合計不變。</td></tr>
       <tr><td>U 本位強平距離</td><td>(Mark−強平)/Mark（多）或 (強平−Mark)/Mark（空）</td><td>結果必須在 0–100%。負的就夾成 0，不要倒數。</td></tr>
       <tr><td>幣本位強平價</td><td>合約價太小（例如 0.000769）時取倒數</td><td>ETH 強平應對齊 UI 約 1300，不是 inverse。自動偵測：距離為負或與 Mark 差兩個數量級。</td></tr>
       <tr><td>台幣</td><td>USDT × 臺銀 USD<strong>現金買入</strong> × USDT/USD</td><td>用來對齊派網「約 172 萬」口徑，不是中間價 USD/TWD，也不是 MAX 的 USDT/TWD。</td></tr>

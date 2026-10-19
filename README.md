@@ -68,7 +68,9 @@ Daily SQLite capture (08:05, before the Excel exports):
 powershell -NoProfile -ExecutionPolicy Bypass -File .\install-v2-daily-capture.ps1
 ```
 
-That registers `Pionex Grid v2 Daily Capture` at 08:05. After ingest it PATCHes `pionex-grid-ledger.json` on the same private Gist used by Portfolio Tracker. Copy `GIST PUBLISH.example.txt` to `GIST PUBLISH.txt` (line 1 = Gist ID, line 2 = Gist token). Missing that file skips publish; sqlite capture still succeeds. Use `--skip-publish` to ingest only.
+That registers `Pionex Grid v2 Daily Capture` at 08:05, plus `Pionex Grid v2 Daily Capture Catch-up` at logon (`python -m v2.capture --if-missing`): if Windows restarted overnight and the PC sat at the login screen at 08:05, the catch-up captures today's record after login; it skips when today already exists, so it never replaces the 08:05 snapshot.
+
+A day that was still missed can be filled from the 30-minute intraday record of that day (first record at or after 08:05): `python -m v2.backfill --date YYYY-MM-DD` previews, `--apply` writes the ledger, logs the change in `corrections[]` and republishes the Gist ledger. After ingest it PATCHes `pionex-grid-ledger.json` on the same private Gist used by Portfolio Tracker. Copy `GIST PUBLISH.example.txt` to `GIST PUBLISH.txt` (line 1 = Gist ID, line 2 = Gist token). Missing that file skips publish; sqlite capture still succeeds. Use `--skip-publish` to ingest only.
 
 Current positions (does **not** write daily sqlite or Excel):
 
@@ -77,7 +79,13 @@ python -m v2.capture --live
 powershell -NoProfile -ExecutionPolicy Bypass -File .\install-v2-live-publish.ps1
 ```
 
-That registers `Pionex Grid v2 Live Publish` every 30 minutes: fetch running grids into `v2-data/live-snapshot.json` and PATCH Gist third file `pionex-grid-live.json`. Manual 「更新目前倉位」 on the dashboard does the same publish. The dashboard at `http://127.0.0.1:8787` reads the live file on open.
+That registers `Pionex Grid v2 Live Publish` every 30 minutes on :00 and :30: fetch running grids into `v2-data/live-snapshot.json`, append an intraday point to `v2-data/intraday.sqlite`, and PATCH Gist third file `pionex-grid-live.json`. Manual 「更新目前倉位」 on the dashboard does the same. The dashboard at `http://127.0.0.1:8787` reads the live file on open. Re-run the installer once to move an older task onto :00/:30.
+
+效率走勢（每小時效率）：
+- `v2-data/intraday.sqlite`（local only）keeps every 30-minute capture and the 08:05 capture. The Pionex API has no fill history, so missed slots can never be re-fetched; the 08:05 run backs the file up to `v2-data/backups/intraday-YYYYMMDD.sqlite` (7 kept).
+- Interval profit reuses the daily-ledger rules (reinvest / add / withdraw, coin-margined revaluation). Buckets start on Taipei clock boundaries (00:00); gaps over 75 minutes are spread evenly and marked as estimates. 1 day / week / month views fill earlier history from the daily ledger (08:05 cut-off, marked).
+- `GET /api/v1/efficiency?from=&to=&g=30m|1h|4h|1d|1w|1M&ids=`, `GET /api/v1/efficiency/meta`, `GET /api/v1/efficiency/sparklines?days=14`, `GET|POST /api/v1/efficiency/views` (saved views in `v2-data/efficiency-views.json`).
+- Charts are drawn by `v2/static/chart.js` (plain SVG, no CDN). `python -m v2.server --intraday-db <file>` previews another intraday file.
 
 ## Portfolio Tracker
 
@@ -85,7 +93,12 @@ That registers `Pionex Grid v2 Live Publish` every 30 minutes: fetch running gri
 API 未確認的最終淨損益保持待補；配對增量回補原快照區間，關倉淨損益不混入配對利潤或再次扣錢包。
 人工補登保留修改歷史，清空欄位代表取消該欄人工覆蓋、回到 API 值或待補。
 `GET /api/v1/settlements` 讀清單；`POST /api/v1/settlements/refresh` 補抓；
-`POST /api/v1/settlements/{order_id}` 保存完整人工覆蓋表單（closed_at、grid_profit、lifetime_grid_profit、net_profit、funding_fee、fee、settlement_usdt_rate、note）。
+`POST /api/v1/settlements/{order_id}` 保存完整人工覆蓋表單（closed_at、grid_profit、lifetime_grid_profit、net_profit、own_cash_in、funding_fee、fee、settlement_usdt_rate、note）；`GET /api/v1/settlements/{order_id}/audit` 讀修改紀錄。
+
+關倉淨損益自動確認：淨損益＝實際回到錢包的錢（API unlockQuoteAmount）＋期間已提領 − 自己投入（投入額＋追加保證金−複投；體驗金為 0）。
+另用「已實現損益＋手續費＋資金費」交叉核對，差距過大時標示需核對，只要補「自己投入」一格即可重算。
+幣本位關倉自動以 API 關倉價換算，不必手填。已記錄日子被重算時寫入修正紀錄（`ledger_corrections`，並隨帳本發布 `corrections[]`）；
+帳本若與上次成功發布不同，30 分鐘 live 排程會補發，「執行狀態」頁也能 `POST /api/v1/publish/ledger` 手動重新發布。
 資料庫 schema 11 自動相容升級；Gist schema 維持 1。補抓不覆寫當日錢包快照。
 
 每日配對核對（v15.968）：

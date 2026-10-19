@@ -14,6 +14,12 @@
       --up:#1f7a4d; --down:#b42318; --warn:#8b5e22;
       --r-sm:6px; --r:10px; --r-pill:999px;
       --shadow:0 1px 2px #1720260a, 0 8px 20px #17202610;
+      /* 圖表系列色（依建倉順序固定分配），合計線用 --accent */
+      --s1:#3b78c3; --s2:#d9772f; --s3:#4b9a58; --s4:#c2464f; --s5:#8662b5;
+      --s6:#b08a1e; --s7:#cf6aa1; --s8:#5f7387; --s9:#97633f; --s10:#2a9d8f;
+      --s11:#7b9a2a; --s12:#e3a21f; --s13:#4352b0; --s14:#e7716b; --s15:#4fa1c7;
+      --s16:#9c4f92; --s17:#16a6b6; --s18:#a5a51c; --s19:#7d7d7d; --s20:#5e3c99;
+      --heat-pos:46,105,112; --heat-neg:180,35,24;
     }
     * { box-sizing:border-box; }
     body { margin:0; color:var(--ink); background:var(--bg); -webkit-font-smoothing:antialiased;
@@ -140,6 +146,8 @@
 
     .live-bar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:0 0 14px; }
     .live-bar .note { flex:1 1 320px; margin:0; }
+    .history-back { position:sticky; top:0; z-index:5; background:var(--bg);
+            padding:4px 0 10px; margin:0 0 8px; }
     .mask { position:fixed; inset:0; background:#17202666; z-index:40; display:flex;
             align-items:center; justify-content:center; padding:16px; }
     .mask[hidden] { display:none !important; }
@@ -170,7 +178,7 @@
     .cal-cell { min-height:76px; display:flex; flex-direction:column; gap:3px; text-align:left;
            background:var(--surface); border:1px solid var(--line); border-radius:var(--r-sm);
            padding:7px 8px; }
-    button.cal-cell { cursor:pointer; width:100%; font:inherit; color:inherit; }
+    button.cal-cell { cursor:pointer; width:100%; font:inherit; color:inherit; background:var(--cell-bg, var(--surface)); }
     button.cal-cell:hover { border-color:var(--accent); background:var(--accent-soft); }
     .cal-cell.is-selected { border-color:var(--accent); background:var(--accent-soft);
            box-shadow:inset 0 0 0 1px var(--accent); }
@@ -183,6 +191,17 @@
     .cal-amt b { font-weight:600; color:var(--ink-2); }
     .cal-amt b.up { color:var(--up); }
     .cal-amt b.down { color:var(--down); }
+    .fund-cal .cal-cell { min-height:118px; gap:2px; }
+    .fund-cal .cal-amt { font-size:10.5px; }
+    .fund-cal .cal-amt b { white-space:nowrap; }
+    .fund-cal .cal-amt b.net { font-size:12px; font-weight:700; }
+    table.plain.lever-cmp th small { display:block; font-weight:400; font-size:11px; }
+    table.plain.lever-cmp th:nth-child(2), table.plain.lever-cmp td:nth-child(2) { text-align:right; }
+    table.plain.lever-cmp th:first-child { width:15%; }
+    table.plain.lever-cmp tr.total td { background:var(--soft); border-top:1px solid var(--line-strong); }
+    table.plain.lever-defs th, table.plain.lever-defs td { text-align:left; vertical-align:top; line-height:1.55; }
+    table.plain.lever-defs th:first-child { width:15%; }
+    table.plain.lever-defs th:nth-child(2), table.plain.lever-defs th:nth-child(3) { width:26%; }
     .legend { display:flex; flex-wrap:wrap; gap:6px 18px; margin:14px 0 0; padding-top:12px;
            border-top:1px solid var(--line); font-size:12px; line-height:1.6; color:var(--muted); }
     .legend b { color:var(--ink-2); font-weight:650; }
@@ -202,6 +221,158 @@
            background:var(--up); vertical-align:1px; }
     .dot.is-warn { background:var(--warn); }
 
+    main a { color:var(--accent); text-underline-offset:2px; }
+    main a:hover { color:#25585e; }
+    .flash-wrap { max-width:1280px; margin:0 auto; padding:14px 16px 0; }
+    .flash-wrap:empty { display:none; }
+    .notice { display:flex; gap:12px; align-items:flex-start; justify-content:space-between;
+           background:var(--accent-soft); color:var(--ink-2); border:1px solid #c6dcdf;
+           border-radius:var(--r-sm); padding:9px 12px; font-size:13px; line-height:1.55; }
+    .notice.is-error { background:#fbeceb; border-color:#efc5c1; color:var(--down); }
+    .notice button { flex:none; background:none; border:0; color:inherit; cursor:pointer;
+           font:inherit; font-size:16px; line-height:1; padding:0 2px; }
+    .badge { display:inline-block; font-size:11px; line-height:17px; padding:0 7px; font-weight:600;
+           border-radius:var(--r-pill); background:#e4ebed; color:var(--ink-2); white-space:nowrap; }
+    .badge.ok { background:#e3f1e9; color:var(--up); }
+    .badge.warn { background:#f6e8ca; color:var(--warn); }
+    .field { display:block; font-size:13px; margin:0 0 12px; }
+    .field input, .field textarea { display:block; width:100%; margin-top:5px; padding:8px 10px;
+           font:inherit; font-size:13.5px; color:var(--ink); background:var(--surface);
+           border:1px solid var(--line-strong); border-radius:var(--r-sm); }
+    .field .help { display:block; margin-top:3px; font-size:11.5px; color:var(--muted); }
+    .form-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:0 20px; }
+    .formula { background:var(--soft); border:1px solid var(--line); border-radius:var(--r-sm);
+           padding:10px 12px; margin:10px 0 14px; font-size:13px; line-height:1.7;
+           font-variant-numeric:tabular-nums; }
+    .formula b { font-weight:650; }
+    table.plain td small, table.plain td .sub2 { display:block; font-size:11.5px; color:var(--muted); line-height:1.5; }
+    table.plain.wide th, table.plain.wide td { vertical-align:top; }
+    .cal-sum { font-size:12.5px; color:var(--muted); font-variant-numeric:tabular-nums; text-align:center; }
+    .cal-sum b { font-weight:650; }
+    .audit-list { margin:6px 0 0; padding:0; list-style:none; font-size:12.5px; }
+    .audit-list li { padding:6px 0; border-bottom:1px solid var(--line); }
+    tr.clickable:focus-visible > td { background:var(--accent-soft); }
+
+    /* 圖表（chart.js） */
+    .chart { position:relative; min-height:60px; }
+    .chart-wrap { position:relative; }
+    .chart-svg { display:block; max-width:100%; font:11px/1 system-ui,-apple-system,"Segoe UI","Noto Sans TC",sans-serif;
+           font-variant-numeric:tabular-nums; user-select:none; }
+    .chart-svg .grid { stroke:var(--line); stroke-width:1; }
+    .chart-svg .grid.zero { stroke:#b9c8cd; }
+    .chart-svg .tick { stroke:var(--line-strong); }
+    .chart-svg .ylab, .chart-svg .xlab { fill:var(--muted); }
+    .chart-svg .hlab { fill:var(--ink-2); font-size:12px; font-weight:600; }
+    .chart-svg .hsub { fill:var(--muted); font-size:10.5px; }
+    .chart-svg .series .ln { fill:none; stroke:var(--c); stroke-width:1.7; stroke-linejoin:round; stroke-linecap:round; }
+    .chart-svg .series.strong .ln { stroke-width:2.8; }
+    .chart-svg .series.dashed .ln { stroke-dasharray:6 3; }
+    .chart-svg .series .ln.est { stroke-dasharray:3 3; opacity:.75; }
+    .chart-svg .series.faded { opacity:.13; }
+    .chart-svg .series.overlay .ln { stroke-width:2; }
+    .chart-svg .dot { fill:var(--c); }
+    .chart-svg .dot.hollow { fill:#fff; stroke:var(--c); stroke-width:1.4; }
+    .chart-svg .bar.est { opacity:.42; }
+    .chart-svg .bar.faded { opacity:.15; }
+    .chart-svg .sel-band { fill:var(--accent-soft); }
+    .chart-svg .cross { stroke:#94aeb5; stroke-dasharray:3 3; }
+    .chart-svg .brush { fill:#2e697022; stroke:var(--accent); stroke-dasharray:3 2; }
+    .chart-svg .hit { fill:transparent; touch-action:pan-y; }
+    .chart-svg .hit.brushable { cursor:crosshair; }
+    .chart-svg .hit.clickable { cursor:pointer; }
+    .chart-svg .marker { cursor:help; stroke:#fff; stroke-width:1; }
+    .chart-svg .mk { stroke:var(--ink); fill:var(--ink); stroke-width:1.4; }
+    .chart-svg .row-hit { fill:transparent; }
+    .chart-svg .row-hit:hover, .chart-svg .row-hit:focus { fill:#2e697010; outline:none; }
+    .chart-empty { color:var(--muted); font-size:13px; padding:28px 0; text-align:center; }
+    .chart-tip { position:absolute; z-index:20; pointer-events:none; min-width:180px; max-width:340px;
+           background:var(--head); color:#fff; border-radius:var(--r-sm); padding:9px 11px;
+           font-size:12px; line-height:1.5; box-shadow:0 10px 26px #17202640; }
+    .chart-tip[hidden] { display:none; }
+    .ct-title { font-weight:650; margin-bottom:4px; color:#e3eef1; }
+    .ct-row { display:flex; align-items:center; gap:7px; white-space:nowrap; }
+    .ct-l { flex:1; overflow:hidden; text-overflow:ellipsis; color:#c9d9dd; }
+    .ct-v { font-weight:650; font-variant-numeric:tabular-nums; }
+    .ct-v.up { color:#8fd3ae; } .ct-v.down { color:#f2a59d; }
+    .ct-foot { margin-top:5px; color:var(--head-dim); font-size:11px; }
+    .sw { display:inline-block; flex:none; width:9px; height:9px; border-radius:2px; vertical-align:0; margin-right:2px; }
+    .spark { display:block; margin-left:auto; }
+    .spark-zero { stroke:var(--line-strong); stroke-dasharray:2 2; }
+    .spark-none { color:var(--muted); }
+    .chart-legend { display:flex; flex-wrap:wrap; gap:4px 6px; margin:10px 0 0; }
+    .chart-legend button { display:inline-flex; align-items:center; gap:5px; font:inherit; font-size:12px; line-height:1.3;
+           padding:4px 9px; border:1px solid var(--line); border-radius:var(--r-pill); background:var(--surface);
+           color:var(--ink-2); cursor:pointer; }
+    .chart-legend button:hover { border-color:var(--accent); }
+    .chart-legend button.solo { border-color:var(--accent); background:var(--accent-soft); }
+    .chart-legend button.closed { color:var(--muted); }
+    .chart-legend button b { font-weight:600; font-variant-numeric:tabular-nums; }
+    .heat { display:grid; grid-template-columns:minmax(130px,210px) repeat(var(--cols),minmax(12px,1fr));
+           gap:2px; align-items:center; font-size:12px; }
+    .heat .hh { font-size:10.5px; color:var(--muted); }
+    .heat .hl { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; padding-right:8px; color:var(--ink-2); }
+    .heat .hl.strong { font-weight:650; color:var(--ink); }
+    .heat .hl.link { cursor:pointer; }
+    .heat .hl.link:hover { color:var(--accent); }
+    .heat .hc { height:20px; border-radius:3px; }
+    .heat .hc.none { background:var(--soft); }
+    .heat-key { display:flex; align-items:center; gap:6px; margin-top:10px; font-size:11.5px; color:var(--muted); }
+    .heat-key i { display:inline-block; width:56px; height:8px; border-radius:4px; }
+    .heat-key i.neg { background:linear-gradient(90deg, rgba(var(--heat-neg),.95), rgba(var(--heat-neg),.1)); }
+    .heat-key i.pos { background:linear-gradient(90deg, rgba(var(--heat-pos),.1), rgba(var(--heat-pos),.95)); }
+
+    /* 效率走勢 */
+    .eff-controls { display:grid; gap:10px; }
+    .eff-row { display:flex; flex-wrap:wrap; gap:8px 14px; align-items:center; }
+    .eff-row > .lbl { flex:none; width:44px; font-size:12px; font-weight:600; color:var(--muted); }
+    .seg { display:inline-flex; flex-wrap:wrap; max-width:100%; min-width:0; border:1px solid var(--line-strong); border-radius:var(--r-sm); overflow:hidden; }
+    .seg button { font:inherit; font-size:12.5px; line-height:1.2; padding:6px 11px; border:0; border-right:1px solid var(--line);
+           background:var(--surface); color:var(--ink-2); cursor:pointer; }
+    .seg button:last-child { border-right:0; }
+    .seg button:hover:not(:disabled) { background:var(--accent-soft); }
+    .seg button.on { background:var(--accent); color:#fff; }
+    .seg button:disabled { color:#b3c1c5; cursor:not-allowed; }
+    .chips { display:flex; flex-wrap:wrap; gap:6px; }
+    .chip { font:inherit; font-size:12.5px; line-height:1.2; padding:5px 11px; border-radius:var(--r-pill); cursor:pointer;
+           border:1px solid var(--line-strong); background:var(--surface); color:var(--ink-2); }
+    .chip:hover { border-color:var(--accent); }
+    .chip.on { background:var(--accent); border-color:var(--accent); color:#fff; }
+    .chip.part { background:var(--accent-soft); border-color:var(--accent); color:var(--accent); }
+    .chip.ghost { border-style:dashed; color:var(--accent); }
+    .chip .n { margin-left:5px; font-size:11px; opacity:.85; font-variant-numeric:tabular-nums; }
+    .pick { display:grid; grid-template-columns:repeat(auto-fill,minmax(250px,1fr)); gap:4px 14px; margin-top:4px;
+           padding:10px 12px; border:1px solid var(--line); border-radius:var(--r-sm); background:var(--soft); }
+    .pick-item { display:flex; align-items:center; gap:6px; font-size:12.5px; cursor:pointer; }
+    .eff-custom { display:inline-flex; flex-wrap:wrap; gap:6px; align-items:center; font-size:12.5px; }
+    .eff-custom input { font:inherit; font-size:12.5px; padding:5px 7px; border:1px solid var(--line-strong);
+           border-radius:var(--r-sm); color:var(--ink); background:var(--surface); }
+    .eff-views { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-left:auto; }
+    .eff-views select { font-size:12.5px; padding:5px 8px; }
+    .eff-busy { font-size:12px; color:var(--muted); }
+    .card-head { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:baseline; gap:6px 12px; margin:0 0 10px; }
+    .card-head h3 { margin:0; }
+    .card-head .note { margin:0; }
+    .minis { display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:12px; }
+    .mini { border:1px solid var(--line); border-radius:var(--r-sm); padding:8px 10px 4px; }
+    .mini h4 { display:flex; justify-content:space-between; gap:8px; margin:0 0 4px; font-size:12.5px; font-weight:650; }
+    .mini h4 span:last-child { font-weight:600; font-variant-numeric:tabular-nums; }
+    table.plain.eff-rank th:nth-child(2), table.plain.eff-rank td:nth-child(2) { text-align:right; }
+    table.plain.eff-rank td:first-child { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    table.plain.eff-rank th.sortable { cursor:pointer; user-select:none; }
+    table.plain.eff-rank th.sortable:hover { color:var(--accent); }
+    table.board.has-spark { min-width:1200px; }
+    table.board th.c-spark, table.board td.c-spark { padding-left:8px; padding-right:12px; }
+    table.board.has-spark col.c-date { width:8.8%; }
+    table.board.has-spark col.c-size { width:11.2%; }
+    table.board.has-spark col.c-sym  { width:12.3%; }
+    table.board.has-spark col.c-mark { width:9.8%; }
+    table.board.has-spark col.c-liq  { width:10.5%; }
+    table.board.has-spark col.c-dist { width:8.9%; }
+    table.board.has-spark col.c-grid { width:10.9%; }
+    table.board.has-spark col.c-day  { width:10.6%; }
+    table.board.has-spark col.c-pct  { width:9.0%; }
+    table.board.has-spark col.c-spark { width:8.0%; }
+
     @media (max-width:1000px) {
       .stats { grid-template-columns:repeat(6,minmax(0,1fr)); }
       .stat.wide { grid-column:span 6; }
@@ -213,6 +384,11 @@
       .stat, .stat.wide { grid-column:span 3; }
       .stat strong { font-size:21px; }
       .cal-cell { min-height:64px; }
+      .fund-cal .cal-cell { min-height:64px; }
+      .fund-cal .cal-amt.opt { display:none; }
+      .fund-cal .cal-amt > span:first-child { display:none; }
+      .fund-cal .cal-amt { justify-content:flex-end; }
+      .fund-cal .cal-amt b, .fund-cal .cal-amt b.net { font-size:10px; }
       .statlist { grid-template-columns:1fr; gap:2px 0; }
       .statlist dd { margin-bottom:10px; }
     }
@@ -221,12 +397,15 @@
 <body>
 <header>
   <h1>Pionex Grid 倉位</h1>
-  <p class="sub">SQLite 本機紀錄 · 不是 08:00 那份 Excel</p>
+  <p class="sub">SQLite 本機帳本 · 每日 08:05 擷取並同步 Portfolio · 08:12 Excel 讀同一份帳本</p>
   <nav>
     <button data-page="live" class="active">目前倉位</button>
     <button data-page="records">倉位紀錄</button>
     <button data-page="daily">每日詳情</button>
     <button data-page="calendar">月曆</button>
+    <button data-page="efficiency">效率走勢</button>
+    <button data-page="funding">資金費（試做）</button>
+    <button data-page="levercmp">槓桿對照（試做）</button>
     <button data-page="history">單一網格</button>
     <button data-page="settlements">關倉紀錄</button>
     <button data-page="status">執行狀態</button>
@@ -234,13 +413,28 @@
     <a class="btn" href="/architecture.html">架構說明</a>
   </nav>
 </header>
+<div id="flash" class="flash-wrap" role="status" aria-live="polite"></div>
 <main id="app"><p class="muted">載入中…</p></main>
+<script src="/chart.js"></script>
 <script>
 const app = document.getElementById("app");
 let page = "live";
 let liveData = null;
 let liveBusy = false;
 let historyId = new URLSearchParams(location.search).get("grid") || "";
+let historyFrom = "";
+const PAGES = ["live", "records", "daily", "calendar", "efficiency", "funding", "levercmp", "history", "settlements", "status"];
+const PAGE_LABELS = {
+  live: "目前倉位",
+  records: "倉位紀錄",
+  daily: "每日詳情",
+  calendar: "月曆",
+  efficiency: "效率走勢",
+  funding: "資金費",
+  levercmp: "槓桿對照",
+  settlements: "關倉紀錄",
+  status: "執行狀態",
+};
 let boardData = null;
 let dailyData = null;
 let boardSort = { key: "", dir: "desc" };
@@ -249,6 +443,7 @@ let dailyOpen = null;
 let calendarData = null;
 let calMonth = null;
 let calSelected = "";
+let calLine = "total";
 
 function fmtTaipei(iso) {
   if (!iso) return "";
@@ -327,13 +522,48 @@ document.addEventListener("focusin", (e) => {
 });
 window.addEventListener("scroll", () => { if (tipHost) hideTip(); }, true);
 
+const flashBox = document.getElementById("flash");
+
+function showFlash(text, kind = "info") {
+  flashBox.innerHTML = `<div class="notice${kind === "error" ? " is-error" : ""}"><span>${esc(text)}</span>`
+    + `<button type="button" aria-label="關閉提示">×</button></div>`;
+  flashBox.querySelector("button").onclick = clearFlash;
+}
+
+function clearFlash() { flashBox.innerHTML = ""; }
+
+// 頁面放在網址 #hash：重新整理留在原頁，瀏覽器上一頁可回到來源頁。
+function parseHash() {
+  const raw = decodeURIComponent(location.hash.replace(/^#/, ""));
+  const [name, ...rest] = raw.split("/");
+  return { page: PAGES.includes(name) ? name : "", id: rest.join("/") };
+}
+
+function pageHash(name) {
+  return name === "history" && historyId ? "#history/" + encodeURIComponent(historyId) : "#" + name;
+}
+
+function go(name, opts = {}) {
+  const target = pageHash(name);
+  if (location.hash === target) { applyRoute(); return; }
+  if (opts.replace) location.replace(target);
+  else location.hash = target;
+}
+
+function applyRoute() {
+  const route = parseHash();
+  const next = route.page || "live";
+  if (next === "history" && route.id) historyId = route.id;
+  if (next !== "history") historyFrom = "";
+  if (next !== page) clearFlash();
+  page = next;
+  document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("active", b.dataset.page === page));
+  render();
+}
+
+window.addEventListener("hashchange", applyRoute);
 document.querySelectorAll("nav button").forEach((btn) => {
-  btn.onclick = () => {
-    document.querySelectorAll("nav button").forEach((b) => b.classList.remove("active"));
-    btn.classList.add("active");
-    page = btn.dataset.page;
-    render();
-  };
+  btn.onclick = () => go(btn.dataset.page);
 });
 
 async function get(url) {
@@ -348,6 +578,21 @@ function signed(v, digits=2) {
   if (!Number.isFinite(x)) return "—";
   const t = n(Math.abs(x), digits);
   return (x > 0 ? "+" : x < 0 ? "-" : "") + t;
+}
+
+function ageText(iso) {
+  const t = new Date(iso).getTime();
+  if (!Number.isFinite(t)) return null;
+  const mins = Math.max(0, Math.round((Date.now() - t) / 60000));
+  const text = mins < 1 ? "剛剛" : mins < 60 ? `${mins} 分鐘前` : mins < 1440 ? `${Math.floor(mins / 60)} 小時 ${mins % 60} 分前` : `${Math.floor(mins / 1440)} 天前`;
+  return { text, stale: mins > 35 };
+}
+
+function publishText(pub) {
+  if (!pub) return "";
+  if (pub.ok) return "已同步到 Portfolio。";
+  if (pub.skipped) return "未設定 Gist，Portfolio 沒有同步。";
+  return "Portfolio 同步失敗（" + (pub.error || "未知錯誤") + "），排程會自動重試，也可在執行狀態頁重新發布。";
 }
 
 function moneyNum(m) {
@@ -405,9 +650,39 @@ function sortClass(key, sort) {
   return "sortable " + (sort.dir === "asc" ? "sort-asc" : "sort-desc");
 }
 
+// 近 14 天每U效率小走勢（每日帳本），目前倉位與倉位紀錄共用，10 分鐘內不重抓。
+let sparkData = null;
+let sparkAt = 0;
+async function ensureSparks() {
+  if (sparkData && Date.now() - sparkAt < 10 * 60 * 1000) return;
+  try {
+    sparkData = await get("/api/v1/efficiency/sparklines?days=14");
+    sparkAt = Date.now();
+  } catch (_) {
+    sparkData = null;
+  }
+}
+
+function sparkCell(id) {
+  const vals = (sparkData && sparkData.rows && sparkData.rows[id]) || [];
+  const got = vals.filter((v) => v != null && Number.isFinite(v));
+  const avg = got.length ? got.reduce((a, b) => a + b, 0) / got.length : null;
+  const note = avg == null ? "近 14 天沒有完整的每日紀錄"
+    : `近 ${got.length} 天平均每U效率 ${signed(avg, 3)}%／日（3 倍換算）`;
+  return `<td class="n c-spark" data-tip="${esc(note)}">${Charts.spark(vals, { width: 72, height: 20 })}`
+    + `<span class="sub">${avg == null ? "" : "均 " + signed(avg, 3) + "%"}</span></td>`;
+}
+
+function sizeSub(r) {
+  const lev = r.equivalent_leverage != null ? `${n(r.equivalent_leverage, 2)}x` : "";
+  if (moneyNum(r.extra_margin)) return `等效 ${n(moneyNum(r.equivalent), 0)} · ${lev}`;
+  return lev ? `等效槓桿 ${lev}` : "";
+}
+
 function positionTable(rows, profitKey, sort) {
   if (!rows.length) return "<p class='muted'>沒有倉位列</p>";
   const ordered = sortedRows(rows, sort, profitKey);
+  const spark = profitKey === "24h" && !!sparkData;
   const dayTip = profitKey === "daily"
     ? "跟上一次記錄比，這筆倉的網格利潤多了或少了多少。第一天是 0。幣本位（ETH）是當天新增的幣×抓取價，不是把畫面 USDT 直接相減。"
     : "派網回傳的過去 24 小時網格利潤，不是日記帳。";
@@ -415,12 +690,13 @@ function positionTable(rows, profitKey, sort) {
     `<th class="${extra} ${sortClass(key, sort)}" data-sort="${key}">`
     + `<span class="hd-top">${note ? tip(label, note) : label}<i class="arrow"></i></span>`
     + `<span class="hd-unit">${unit || ""}</span></th>`;
-  return `<table class="board"><colgroup>
+  return `<table class="board${spark ? " has-spark" : ""}"><colgroup>
     <col class="c-date"><col class="c-size"><col class="c-sym"><col class="c-mark">
-    <col class="c-liq"><col class="c-dist"><col class="c-grid"><col class="c-day"><col class="c-pct">
+    <col class="c-liq"><col class="c-dist"><col class="c-grid"><col class="c-day"><col class="c-pct">${spark ? '<col class="c-spark">' : ""}
   </colgroup><thead><tr>
-    ${h("opened_at", "t c-date", "建倉日期", "台北時間")}${h("size", "n c-size", "倉位大小", "USDT", "實際投入的本金，不是持倉數量乘現價。")}${h("symbol", "t c-sym", "標的", "槓桿 / 方向")}${h("mark", "n c-mark", "現價", "Mark")}
-    ${h("liq", "n c-liq", "強平價", "預估")}${h("dist", "n c-dist", "強平距離", "剩餘 %", "離強平還剩多少％，0 到 100。多數是 U 本位；幣本位會另外換算。")}${h("grid", "n c-grid", "網格利潤", "USDT", "這筆倉目前帳上的累計網格利潤。複投後會從 0 再算。")}${h("day", "n c-day", "單日利潤", "USDT", dayTip)}${h("pct", "n c-pct", "每U效率", "3 倍 · %", "單日利潤 ÷ 倉位大小 × 3 ÷ 原槓桿倍率 × 100%。統一按比例換算為 3 倍槓桿，比較不同倉位的配對收益效率。")}
+    ${h("opened_at", "t c-date", "建倉日期", "台北時間")}${h("size", "n c-size", "倉位大小", "等效 · 等效槓桿", "大字是派網顯示的投入（倉位）。小字：等效倉位＝投入＋追加保證金；等效槓桿＝投入 × 派網槓桿 ÷ 等效倉位，也就是把你留在倉裡的保證金算進去後的槓桿。調高槓桿但保證金留在原倉時，這兩個數字都不變。")}${h("symbol", "t c-sym", "標的", "派網槓桿 / 方向")}${h("mark", "n c-mark", "現價", "Mark")}
+    ${h("liq", "n c-liq", "強平價", "預估")}${h("dist", "n c-dist", "強平距離", "剩餘 %", "離強平還剩多少％，0 到 100。多數是 U 本位；幣本位會另外換算。")}${h("grid", "n c-grid", "網格利潤", "USDT", "這筆倉目前帳上的累計網格利潤。複投後會從 0 再算。")}${h("day", "n c-day", "單日利潤", "USDT", dayTip)}${h("pct", "n c-pct", "每U效率", "3 倍 · %", "單日利潤 ÷ 倉位大小 × 3 ÷ 原槓桿倍率 × 100%。統一按比例換算為 3 倍槓桿，比較不同倉位的配對收益效率。")}${spark
+    ? `<th class="n c-spark"><span class="hd-top">${tip("近 14 天", "每日帳本的每U效率（3 倍換算）走勢，虛線是 0。滑過看平均。")}</span><span class="hd-unit">每U效率</span></th>` : ""}
   </tr></thead><tbody>${ordered.map((r) => {
     const day = profitKey === "daily" ? r.daily_profit : r.profit_24h;
     const dayV = day && day.usdt;
@@ -432,14 +708,14 @@ function positionTable(rows, profitKey, sort) {
     const chip = profitKey === "daily" ? eventChip(r.event || r.status) : "";
     return `<tr class="clickable" data-id="${esc(r.bu_order_id || "")}">
       <td class="t c-date">${cell(openDate || "—", openTime)}</td>
-      <td class="n c-size">${cell(usdt(size), twd(size))}</td>
+      <td class="n c-size">${cell(usdt(size), sizeSub(r))}</td>
       <td class="t c-sym">${cell(esc(r.symbol || "—"), esc(r.leverage || "") + chip)}</td>
       <td class="n c-mark">${cell(n(r.mark_price, 4), "")}</td>
       <td class="n c-liq">${cell(n(r.liq_price, 4), "")}</td>
       <td class="n c-dist ${cls(r.liq_distance_pct)}">${cell(r.liq_distance_pct == null ? "—" : n(r.liq_distance_pct, 2) + "%", "")}</td>
       <td class="n c-grid">${cell(usdt(r.grid_profit), twd(r.grid_profit))}</td>
       <td class="n c-day ${cls(dayV)}">${cell(signed(dayV), twd(day))}</td>
-      <td class="n c-pct ${cls(pct)}">${cell(pct == null ? "—" : signed(pct, 3) + "%", "／U")}</td>
+      <td class="n c-pct ${cls(pct)}">${cell(pct == null ? "—" : signed(pct, 3) + "%", "／U")}</td>${spark ? sparkCell(r.bu_order_id) : ""}
     </tr>`;
   }).join("")}</tbody></table>`;
 }
@@ -467,11 +743,11 @@ function summaryCards(board, timeLabel, timeValue, gridTip, trueTip) {
   const pct24 = board.profit_24h_pct;
   return `<div class="stats">
       <div class="stat wide"><span class="label">錢包總市值</span><strong>${board.wallet_total && board.wallet_total.usdt != null ? both(board.wallet_total) : "—"}</strong></div>
-      <div class="stat wide">${tip("過去 24 小時總利潤", "派網回傳的近 24 小時網格利潤加總。下面的％＝這筆 ÷ 目前倉位加總。")}<strong class="${cls(total)}">${bothSigned(board.total_profit_24h)}${pct24 == null || pct24 === "" ? "" : `<span class="pct ${cls(pct24)}">${signed(pct24)}%</span>`}</strong></div>
-      <div class="stat wide"><span class="label">目前倉位加總</span><strong>${both(board.total_investment)}</strong></div>
+      <div class="stat wide">${tip("過去 24 小時總利潤", "派網回傳的近 24 小時網格利潤加總。下面的％＝這筆 ÷ 等效倉位，調槓桿不會讓它跳動。")}<strong class="${cls(total)}">${bothSigned(board.total_profit_24h)}${pct24 == null || pct24 === "" ? "" : `<span class="pct ${cls(pct24)}">${signed(pct24)}%</span>`}</strong></div>
+      <div class="stat wide">${tip("等效倉位", "投入＋追加保證金。調高槓桿但把保證金留在原倉時，保證金只是從「投入」移到「追加保證金」，這個數字不變；加倉、減倉才會變。")}<strong>${both(board.total_equivalent || board.total_investment)}${board.leverage_equivalent ? `<span class="twd">等效槓桿 ${n(board.leverage_equivalent, 2)} 倍</span>` : ""}</strong></div>
+      <div class="stat">${tip("倉位加總（派網顯示）", "各倉「投入」加總，就是派網畫面上的倉位。調高槓桿會讓它變小，和等效倉位的差距就是移到追加保證金的部分。")}<strong>${both(board.total_investment)}<span class="twd">${board.position_count || 0} 倉${board.leverage_nominal ? ` · 名目槓桿 ${n(board.leverage_nominal, 2)} 倍` : ""}</span></strong></div>
       <div class="stat">${tip("運行中配對利潤", gridTip)}<strong>${both(board.total_grid_profit)}</strong></div>
       <div class="stat">${tip(board.kind === "live" ? "歷史累計配對利潤" : "歷史累計配對利潤（含已關倉）", trueTip)}<strong>${board.kind === "live" ? '<span style="font-size:14px">請見每日倉位紀錄</span>' : both(board.true_grid_profit)}</strong></div>
-      <div class="stat"><span class="label">倉位數</span><strong>${board.position_count || 0}</strong></div>
       <div class="stat meta"><span class="label">${timeLabel}</span><strong>${timeValue}</strong></div>
     </div>`;
 }
@@ -491,6 +767,7 @@ function paintBoard() {
 }
 
 async function renderBoard() {
+  await ensureSparks();
   boardData = await get("/api/v1/board");
   paintBoard();
 }
@@ -515,17 +792,20 @@ function paintLive() {
   const fxRate = board.fx && (board.fx.usdt_twd != null ? board.fx.usdt_twd : board.fx.usd_twd);
   const hasLive = !!(board.available && board.as_of);
   const today = taipeiToday();
+  const age = hasLive ? ageText(board.as_of) : null;
   app.innerHTML = `
     <div class="live-bar">
       <button class="btn" id="liveRefresh" ${liveBusy ? "disabled" : ""}>${liveBusy ? "更新中…" : "更新目前倉位"}</button>
       <button class="btn ghost" id="liveCommit" ${hasLive && !liveBusy ? "" : "disabled"}>把現在倉位寫入倉位歷史</button>
-      <span class="note">${hasLive ? "暫存時間：" + fmtTaipei(board.as_of) + "（只留在這一頁，不會改 08:00／每日快照）" : "尚未抓過。按「更新目前倉位」只刷新這一頁暫存，不影響每日 8 點紀錄。"}</span>
+      <span class="note">${hasLive
+        ? `暫存時間：${fmtTaipei(board.as_of)}${age ? `（<span class="${age.stale ? "warn" : ""}">${age.text}</span>）` : ""}。只留在這一頁，不會改每日快照；排程每 30 分鐘更新一次。`
+        : "尚未抓過。按「更新目前倉位」只刷新這一頁暫存，不影響每日 08:05 紀錄。"}</span>
     </div>`
     + summaryCards(board, "即時更新時間", hasLive ? fmtTaipei(board.as_of) : "尚未抓過",
         "現在還開著的倉，把派網畫面上的網格利潤加起來。",
         "目前運行中倉位的配對利潤加總，已包含已提領收益。含已關倉成果及複投調整的歷史累計請見每日倉位紀錄。")
     + `<div class="card">
-      <p class="muted">這一頁是暫存屏，跟每日 8 點快照分開。按「更新目前倉位」只抓此刻並留在這裡。台幣 USDT→TWD ${fxRate != null ? n(fxRate, 3) : "—"}。</p>
+      <p class="muted">這一頁是暫存屏，跟每日 08:05 快照分開。按「更新目前倉位」只抓此刻並留在這裡。台幣 USDT→TWD ${fxRate != null ? n(fxRate, 3) : "—"}。</p>
       ${hasLive ? positionTable(board.rows || [], "24h", boardSort) : "<p class='muted'>按「更新目前倉位」後才會出現表格。</p>"}
     </div>`;
   if (hasLive) {
@@ -541,10 +821,15 @@ function paintLive() {
     } catch (err) {
       liveBusy = false;
       paintLive();
-      app.insertAdjacentHTML("afterbegin", `<p class="warn">${esc(err.message)}</p>`);
+      const network = /fetch failed|terminated|ECONN|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|UND_ERR/i.test(err.message);
+      const clock = /INVALID_TIMESTAMP/.test(err.message);
+      showFlash("更新目前倉位失敗：" + err.message
+        + (network ? "。這是連不上派網（網路一時斷線），稍後再按一次即可；排程每 30 分鐘仍會自動更新。" : "")
+        + (clock ? "。電腦時鐘和派網差超過 10 秒，請到 Windows 設定 → 時間與語言 → 日期和時間按「立即同步」後再按一次。" : ""), "error");
       return;
     }
     liveBusy = false;
+    clearFlash();
     paintLive();
   };
   document.getElementById("liveCommit").onclick = () => {
@@ -556,7 +841,7 @@ function paintLive() {
     mask.className = "mask";
     mask.innerHTML = `<div class="dialog">
         <h3>把現在倉位寫入倉位歷史？</h3>
-        <p>只有這一顆備援鈕才會動每日紀錄。會把<strong>現在這一屏</strong>寫成台北時間 <strong>${today}</strong> 的倉位歷史。今天若已有 8 點快照，會被換成這一份。08:00 Excel 排程本身不會被改。</p>
+        <p>只有這一顆備援鈕才會動每日紀錄。會先向派網<strong>完整重抓一次</strong>（約 15 秒），再寫成台北時間 <strong>${today}</strong> 的倉位歷史。今天若已有 08:05 快照，會被換成這一份，並重新發布到 Portfolio。Excel 排程本身不會被改。</p>
         <p class="muted">再按「確定寫入」才會存。取消則什麼都不改。</p>
         <div class="actions">
           <button class="btn ghost" type="button" id="commitCancel">取消</button>
@@ -567,20 +852,36 @@ function paintLive() {
     document.getElementById("commitCancel").onclick = () => mask.remove();
     document.getElementById("commitOk").onclick = async () => {
       mask.remove();
+      showFlash("正在向派網完整重抓並寫入，約 15 秒…");
       try {
         const result = await postJson("/api/v1/live/commit-daily", { confirm_date: today });
-        alert("已寫入 " + (result.capture_date || today) + " 的倉位歷史。");
+        showFlash("已寫入 " + (result.capture_date || today) + " 的倉位歷史。" + publishText(result.publish));
       } catch (err) {
-        alert(err.message);
+        showFlash("寫入失敗：" + err.message, "error");
       }
     };
   };
 }
 
 async function renderLive() {
+  await ensureSparks();
   liveData = await get("/api/v1/live");
   paintLive();
 }
+
+// The 30-minute task rewrites the server's cached snapshot. Re-read that cache (no Pionex call)
+// when the tab comes back into view and every 5 minutes, so an open page never sits on an old capture.
+async function pollLive() {
+  if (page !== "live" || liveBusy || document.hidden || document.getElementById("commitMask")) return;
+  let next;
+  try { next = await get("/api/v1/live"); } catch { return; }
+  if (page !== "live" || liveBusy || !next || !next.as_of) return;
+  if (liveData && liveData.as_of === next.as_of) return;
+  liveData = next;
+  paintLive();
+}
+document.addEventListener("visibilitychange", () => { if (!document.hidden) pollLive(); });
+setInterval(pollLive, 5 * 60 * 1000);
 
 function paintDaily() {
   const days = (dailyData && dailyData.days) || [];
@@ -662,6 +963,20 @@ function paintCalendar() {
   const startPad = first.getDay();
   const dim = new Date(y, m, 0).getDate();
   const dows = ["日","一","二","三","四","五","六"];
+  const monthKey = `${y}-${String(m).padStart(2, "0")}-`;
+  // 格子深淺依當月單日利潤的最大絕對值；有關倉待補的日子不上色。
+  let heatMax = 0;
+  days.forEach((d) => {
+    if (!String(d.capture_date || "").startsWith(monthKey) || Number(d.unresolved_count) > 0) return;
+    const v = moneyNum(d.daily_profit);
+    if (v != null) heatMax = Math.max(heatMax, Math.abs(v));
+  });
+  const cellHeat = (rec) => {
+    const v = moneyNum(rec.daily_profit);
+    if (!heatMax || v == null || v === 0 || Number(rec.unresolved_count) > 0) return "";
+    const a = (0.05 + 0.3 * Math.min(1, Math.abs(v) / heatMax)).toFixed(3);
+    return ` style="--cell-bg:rgba(var(${v > 0 ? "--heat-pos" : "--heat-neg"}),${a})"`;
+  };
   let cells = dows.map((d) => `<div class="cal-dow">${d}</div>`).join("");
   for (let i = 0; i < startPad; i++) cells += `<div class="cal-cell is-pad"></div>`;
   for (let d = 1; d <= dim; d++) {
@@ -671,13 +986,26 @@ function paintCalendar() {
     if (rec) {
       const dayV = rec.daily_profit && rec.daily_profit.usdt;
       const cumV = rec.cumulative && rec.cumulative.usdt;
-      cells += `<button type="button" class="cal-cell${sel}" data-date="${dateStr}"><span class="cal-num">${d}</span>`
+      cells += `<button type="button" class="cal-cell${sel}" data-date="${dateStr}"${cellHeat(rec)}><span class="cal-num">${d}</span>`
         + `<span class="cal-amt"><span>單日</span><b class="${cls(dayV)}">${dayV == null || dayV === "" ? "—" : signed(dayV) + "U"}</b></span>`
         + `<span class="cal-amt"><span>運行中</span><b>${cumV == null || cumV === "" ? "—" : n(cumV, 2) + "U"}</b></span></button>`;
     } else {
       cells += `<div class="cal-cell is-empty${sel}"><span class="cal-num">${d}</span></div>`;
     }
   }
+  // 與 Portfolio 月平均同一規則：有關倉配對待補的日子先不計入。
+  const prefix = `${y}-${String(m).padStart(2, "0")}-`;
+  let monthTotal = 0, monthDays = 0, monthSkipped = 0;
+  days.forEach((d) => {
+    if (!String(d.capture_date || "").startsWith(prefix)) return;
+    const v = moneyNum(d.daily_profit);
+    if (Number(d.unresolved_count) > 0 || v == null) { monthSkipped += 1; return; }
+    monthTotal += v;
+    monthDays += 1;
+  });
+  const monthSum = monthDays
+    ? `本月合計 <b class="${cls(monthTotal)}">${signed(monthTotal)}</b> U · 日均 <b class="${cls(monthTotal)}">${signed(monthTotal / monthDays)}</b> U（${monthDays} 天${monthSkipped ? `，${monthSkipped} 天待補未計` : ""}）`
+    : "本月尚無完整紀錄";
   const selected = byDate[calSelected] || {};
   const rows = selected.rows || [];
   const rowHtml = rows.length ? rows.map((r) => {
@@ -697,6 +1025,13 @@ function paintCalendar() {
         <strong>${y} 年 ${m} 月</strong>
         <button type="button" id="calNext" aria-label="下個月">›</button>
       </div>
+      <p class="cal-sum">${monthSum}</p>
+      <div class="card-head" style="margin-top:14px"><h3>${calLine === "running"
+          ? tip("每日利潤與運行中配對利潤", "線只算當天還開著的倉（派網畫面上的網格利潤加總）。關倉、複投時會往下掉，不代表虧錢。點長條可切換到那一天。")
+          : tip("每日利潤與歷史累計配對利潤", "已扣除關倉、複投、提領造成的跳動，只反映實際賺到的配對收益。點長條可切換到那一天。")}</h3>
+        ${effSeg("calline", [["total", "含已關倉"], ["running", "只算運行中"]], calLine)}</div>
+      <p class="note" style="margin:-4px 0 6px">長條＝單日利潤（左軸 USDT）；線＝${calLine === "running" ? "運行中配對利潤，不含已關倉" : "歷史累計配對利潤，含已關倉"}（右軸 USDT）</p>
+      <div class="chart" id="calBars"></div>
       <div class="cal">${cells}</div>
       <div class="legend">
         <span><b>單日</b> 當日網格利潤，基準日為 0；幣本位是當天新增的幣×抓取現貨價，不含幣價重估</span>
@@ -733,8 +1068,47 @@ function paintCalendar() {
   app.querySelectorAll("button.cal-cell[data-date]").forEach((btn) => {
     btn.onclick = () => { calSelected = btn.dataset.date; paintCalendar(); };
   });
+  app.querySelectorAll("button[data-calline]").forEach((btn) => {
+    btn.onclick = () => { calLine = btn.dataset.calline; paintCalendar(); };
+  });
+  drawCalendarBars(byDate, y, m, dim);
   bindEventDecisions();
   bindHistoryClicks();
+}
+
+function drawCalendarBars(byDate, y, m, dim) {
+  const el = document.getElementById("calBars");
+  if (!el) return;
+  const dates = Array.from({ length: dim }, (_, i) => `${y}-${String(m).padStart(2, "0")}-${String(i + 1).padStart(2, "0")}`);
+  const recs = dates.map((d) => byDate[d]);
+  const daily = recs.map((r) => (r ? moneyNum(r.daily_profit) : null));
+  const total = recs.map((r) => (r ? moneyNum(r.true_profit) : null));
+  const running = recs.map((r) => (r ? moneyNum(r.cumulative) : null));
+  const line = calLine === "running" ? running : total;
+  const accent = Charts.token("--accent", "#2e6970");
+  const sel = dates.indexOf(calSelected);
+  Charts.plot(el, {
+    n: dim, labels: dates.map((_, i) => String(i + 1)), height: 170, label: "當月每日利潤",
+    stacks: [
+      { id: "up", color: accent, values: daily.map((v) => (v != null && v > 0 ? v : null)) },
+      { id: "down", color: Charts.token("--down", "#b42318"), values: daily.map((v) => (v != null && v < 0 ? v : null)) },
+    ],
+    barFlags: recs.map((r) => (r && Number(r.unresolved_count) > 0 ? 2 : 0)),
+    overlay: { values: line, color: Charts.token("--ink-2", "#3d4d54"), format: (v) => String(Math.round(v)) },
+    yFormat: (v) => String(+v.toFixed(2)),
+    selected: sel >= 0 ? sel : null,
+    tooltip: (i) => {
+      const r = recs[i];
+      if (!r) return "";
+      return Charts.tipRows(`${dates[i]}${Number(r.unresolved_count) > 0 ? "（待補）" : ""}`, [
+        { color: accent, label: "單日利潤", value: signed(daily[i]) + " U", cls: cls(daily[i]) },
+        { color: calLine === "total" ? Charts.token("--ink-2", "#3d4d54") : null, label: "歷史累計（含已關倉）", value: total[i] == null ? "—" : n(total[i], 2) + " U" },
+        { color: calLine === "running" ? Charts.token("--ink-2", "#3d4d54") : null, label: "運行中配對", value: running[i] == null ? "—" : n(running[i], 2) + " U" },
+        { label: "倉位數", value: String(r.active_count ?? "—") },
+      ], "點長條切換到那一天");
+    },
+    onClick: (i) => { if (recs[i]) { calSelected = dates[i]; paintCalendar(); } },
+  });
 }
 
 async function renderCalendar() {
@@ -746,19 +1120,104 @@ async function renderStatus() {
   const s = await get("/api/v1/status");
   const missing = (s.missing_dates || []);
   const gap = s.coin_fx_gap_month && s.coin_fx_gap_month.usdt != null ? signed(s.coin_fx_gap_month.usdt) + " USDT" : "—";
+  const pub = s.publish || {};
+  const ledgerPub = pub.ledger || {};
+  const livePub = pub.live || {};
+  const inSync = pub.ledger_in_sync;
+  const syncWarn = pub.configured && inSync === false;
+  const pubLine = (st) => !st || !st.last_attempt_at ? "尚無紀錄"
+    : st.ok ? `成功 · ${fmtTaipei(st.last_success_at)}`
+    : `失敗 · ${fmtTaipei(st.last_attempt_at)}：${esc(st.error || "")}${st.last_success_at ? `<span class="hintline">上次成功 ${fmtTaipei(st.last_success_at)}</span>` : ""}`;
+  const fieldLabel = { daily_profit_i: "每日利潤", cumulative_i: "運行中配對", true_profit_i: "歷史累計", unresolved_count: "待補數" };
+  const corrections = s.corrections || [];
+  const flags = s.settlement_check_flags || 0;
+  const intra = s.intraday || {};
+  const intraMissing = intra.missing_24h || [];
+  const intraAge = intra.last_at ? (Date.now() - Date.parse(intra.last_at)) / 60000 : null;
+  const intraWarn = !intra.available || intraMissing.length > 0 || (intraAge != null && intraAge > 65);
+  const fc = s.finished_cache || {};
+  const fcCheck = fc.last_full_check || {};
+  const fcReuse = fc.last_reuse || {};
+  const fcWarn = !!fcCheck.changed;
+  const lc = fc.last_list_check || {};
+  const ck = s.clock || {};
+  const clockSec = ck.offset_ms == null ? null : Number(ck.offset_ms) / 1000;
+  const clockWarn = clockSec != null && Math.abs(clockSec) >= 3;
   app.innerHTML = `<div class="card narrow">
     <h3>執行狀態</h3>
     <dl class="statlist">
-      <dt>上次成功</dt>
+      <dt>上次成功擷取</dt>
       <dd>${s.last_success ? fmtTaipei(s.last_success.captured_at) : "尚無"}</dd>
-      <dt>未決關倉</dt>
+      <dt>${tip("關倉配對待補", "關倉時還沒拿到最後配對值的倉位。待補期間該日單日與歷史合計為暫計，Portfolio 月平均也先不計入那天。")}</dt>
       <dd><span class="dot${s.unresolved ? " is-warn" : ""}"></span><span class="${s.unresolved ? "warn" : ""}">${s.unresolved}</span></dd>
+      <dt>${tip("關倉淨損益", "依實際回到錢包的錢 − 自己投入的錢自動確認；兩種算法差距過大時標示需核對。")}</dt>
+      <dd><span class="dot${s.settlement_unconfirmed || flags ? " is-warn" : ""}"></span>${s.settlement_unconfirmed ? `<span class="warn">${s.settlement_unconfirmed} 筆待確認</span>` : "全部已確認"}${flags ? ` · <span class="warn">${flags} 筆兩法差距需核對</span>` : ""}
+        <span class="hintline"><a href="#settlements">前往關倉紀錄</a></span></dd>
+      <dt>${tip("盤中資料", "每 30 分鐘排程（:00、:30）把當下倉位記一筆到 intraday.sqlite，效率走勢頁的每小時資料都從這裡來。派網 API 沒有歷史成交，漏掉的時段無法補抓，只能在圖上用前後兩筆估算。")}</dt>
+      <dd><span class="dot${intraWarn ? " is-warn" : ""}"></span>${intra.available
+        ? `最後一筆 ${fmtTaipei(intra.last_at).slice(5, 16)} · 今天 ${intra.today_count} 筆`
+          + `<span class="hintline">${intraMissing.length ? `<span class="warn">近 24 小時漏抓 ${intraMissing.length} 個時段：${esc(intraMissing.slice(-8).join("、"))}${intraMissing.length > 8 ? "…" : ""}</span>` : "近 24 小時沒有漏抓"}</span>`
+        : `<span class="warn">尚未開始累積</span><span class="hintline">等下一次 30 分鐘排程，或在目前倉位按「更新目前倉位」。</span>`}</dd>
+      <dt>${tip("已關倉明細", "已關倉的網格結算後數字不會再變，所以記在本機 v2-data/finished-details.json。「更新目前倉位」和 30 分鐘排程直接沿用，不再逐筆向派網查；剛關倉 24 小時內、或派網清單有變動的仍會重抓。每日 08:05 照舊全部重抓一次，順便核對本機紀錄。")}</dt>
+      <dd><span class="dot${fcWarn ? " is-warn" : ""}"></span>${fc.available
+        ? `本機記住 ${fc.count} 筆`
+          + (fcReuse.at ? ` · 最近更新沿用 ${fcReuse.reused} 筆、重抓 ${fcReuse.fetched} 筆` : "")
+          + `<span class="hintline">${fcCheck.at
+            ? `每日全部核對 ${fmtTaipei(fcCheck.at).slice(5, 16)}：${fcCheck.changed ? `<span class="warn">${fcCheck.changed} 筆和本機紀錄不同，已改用派網最新資料</span>` : fcCheck.checked ? `${fcCheck.checked} 筆和本機紀錄一致` : `重抓 ${fcCheck.fetched} 筆並記下`}`
+            : "等下一次每日 08:05 擷取做第一次全部核對。"}</span>`
+        : `尚未建立<span class="hintline">下一次更新目前倉位時會自動建立。</span>`}</dd>
+      <dt>${tip("運行中清單", "派網的運行中清單本身就附上每個網格的完整明細，所以「更新目前倉位」和 30 分鐘排程直接用清單，不再逐筆查。每日 08:05 照舊逐筆查明細，並核對清單有沒有漏資料；有漏就自動改回逐筆查。")}</dt>
+      <dd><span class="dot${lc.missing ? " is-warn" : ""}"></span>${!lc.at
+        ? `等下一次每日 08:05 擷取做第一次核對。`
+        : lc.missing
+          ? `<span class="warn">清單缺 ${lc.missing} 個欄位，已自動改回逐筆查明細</span><span class="hintline">${esc((lc.fields || []).join("、"))}</span>`
+          : `每日核對 ${lc.checked} 筆：清單資料完整<span class="hintline">${fmtTaipei(lc.at).slice(5, 16)}</span>`}</dd>
+      <dt>${tip("電腦時鐘", "派網只接受和它的時間相差 10 秒以內的請求。抓資料時程式會跟著派網的時間走，所以電腦時鐘偏了也能照常抓；這裡只是提醒該校時了。")}</dt>
+      <dd><span class="dot${clockWarn ? " is-warn" : ""}"></span>${clockSec == null
+        ? "等下一次更新目前倉位後顯示"
+        : clockWarn
+          ? `<span class="warn">電腦時鐘比派網${clockSec > 0 ? "慢" : "快"} ${Math.abs(clockSec).toFixed(1)} 秒</span>，抓資料時已自動校正<span class="hintline">建議到 Windows 設定 → 時間與語言 → 日期和時間 → 立即同步。${fmtTaipei(ck.at).slice(5, 16)}</span>`
+          : `和派網差 ${Math.abs(clockSec).toFixed(1)} 秒，正常<span class="hintline">${fmtTaipei(ck.at).slice(5, 16)}</span>`}</dd>
       <dt>漏抓日期</dt>
       <dd><span class="dot${missing.length ? " is-warn" : ""}"></span>${missing.join("、") || "無"}</dd>
       <dt>本月幣本位重估差</dt>
       <dd>${gap}<span class="hintline">${s.coin_fx_gap_month_label || "—"}　月底再看要不要把幣價損益拆開。</span></dd>
     </dl>
+  </div>
+  <div class="card narrow">
+    <h3>Portfolio 同步</h3>
+    ${pub.configured ? "" : `<p class="warn">找不到 GIST PUBLISH.txt，帳本不會發布到 Portfolio。</p>`}
+    <dl class="statlist">
+      <dt>${tip("每日帳本", "Gist 第二檔 pionex-grid-ledger.json。Portfolio 月曆、每日利潤、關倉紀錄都讀這一檔。每次都是整份覆蓋，所以歷史修正也會一起傳過去。")}</dt>
+      <dd><span class="dot${syncWarn || ledgerPub.ok === false ? " is-warn" : ""}"></span>${inSync == null ? "—" : inSync ? "內容已同步" : `<span class="warn">本機有更新尚未同步</span>`}
+        <span class="hintline">${pubLine(ledgerPub)}</span></dd>
+      <dt>${tip("目前倉位", "Gist 第三檔 pionex-grid-live.json，每 30 分鐘排程或按「更新目前倉位」發布。")}</dt>
+      <dd><span class="dot${livePub.ok === false ? " is-warn" : ""}"></span>${pubLine(livePub)}</dd>
+    </dl>
+    <p class="live-bar" style="margin-top:14px"><button class="btn${syncWarn ? "" : " ghost"}" id="republish" ${pub.configured ? "" : "disabled"}>重新發布帳本</button>
+      <span class="note">只更新帳本那一檔；失敗時每 30 分鐘排程也會自動重試。</span></p>
+  </div>
+  <div class="card">
+    <h3>${tip("最近的歷史修正", "已記錄的日子因關倉補抓、人工補登、加倉／複投判定而重算時，列出前後差異。修正後的整份帳本會重新發布，Portfolio 拉取後自動更新。")}</h3>
+    ${corrections.length ? `<table class="plain"><thead><tr><th>日期</th><th>項目</th><th>原本</th><th>修正後</th><th>原因</th><th>時間</th></tr></thead><tbody>
+      ${corrections.map((c) => `<tr><td>${esc(c.capture_date)}</td><td>${esc(fieldLabel[c.field] || c.field)}</td>
+        <td>${c.field.endsWith("_i") ? (c.old_value == null ? "—" : signed(c.old_value)) : esc(c.old_value ?? "—")}</td>
+        <td>${c.field.endsWith("_i") ? (c.new_value == null ? "—" : signed(c.new_value)) : esc(c.new_value ?? "—")}</td>
+        <td style="text-align:left">${esc(c.reason)}</td><td>${esc(fmtTaipei(c.corrected_at).slice(5, 16))}</td></tr>`).join("")}
+    </tbody></table>` : `<p class="muted">目前沒有歷史修正。</p>`}
   </div>`;
+  const btn = document.getElementById("republish");
+  if (btn) btn.onclick = async () => {
+    btn.disabled = true;
+    btn.textContent = "發布中…";
+    try {
+      const result = await postJson("/api/v1/publish/ledger", {});
+      showFlash(result.ok ? "帳本已重新發布到 Portfolio。" : publishText(result), result.ok ? "info" : "error");
+    } catch (err) {
+      showFlash("重新發布失敗：" + err.message, "error");
+    }
+    if (page === "status") renderStatus();
+  };
 }
 
 function fmt(value) {
@@ -780,15 +1239,26 @@ async function renderHistory() {
   if (!list.length) { app.innerHTML = "<p class='muted'>沒有網格</p>"; return; }
   if (!historyId || !list.some((g) => g.bu_order_id === historyId)) historyId = list[0].bu_order_id;
   const data = await get("/api/v1/grids/" + encodeURIComponent(historyId) + "/history");
-  const options = list.map((g) => `<option value="${esc(g.bu_order_id)}" ${g.bu_order_id===historyId?"selected":""}>${esc(g.symbol)} · ${esc(g.created_at)} · ${esc(g.lifecycle)}</option>`).join("");
+  const lifeLabel = { active: "運行中", closed: "已關倉", closed_unresolved: "關倉待補" };
+  const options = list.map((g) => `<option value="${esc(g.bu_order_id)}" ${g.bu_order_id===historyId?"selected":""}>${esc(g.symbol)} · ${esc(g.created_at)} · ${esc(lifeLabel[g.lifecycle] || g.lifecycle)}</option>`).join("");
   const b = data.board || {};
   const pos = data.position || {};
+  const backLabel = PAGE_LABELS[historyFrom] || "";
+  const current = list.find((g) => g.bu_order_id === historyId) || {};
+  let closure = null;
+  if (current.lifecycle && current.lifecycle !== "active") {
+    try { closure = ((await get("/api/v1/settlements")).rows || []).find((r) => r.id === historyId) || null; } catch (_) { closure = null; }
+  }
   app.innerHTML = `
+    ${backLabel ? `<div class="live-bar history-back"><button type="button" class="btn ghost" id="historyBack">返回${esc(backLabel)}</button></div>` : ""}
+    ${closure ? closureCard(closure) : ""}
     <div class="card">
       <p><label>選擇網格 <select id="gridPick">${options}</select></label></p>
       <div class="stats">
         <div class="stat"><span class="label">標的</span><strong>${esc(pos.symbol || "—")}</strong></div>
-        <div class="stat"><span class="label">倉位大小</span><strong>${both(b.investment || b.size)}</strong></div>
+        <div class="stat">${tip("倉位大小（派網投入）", "派網畫面上的倉位。調高槓桿、把保證金留在原倉時會變小。")}<strong>${both(b.investment || b.size)}</strong></div>
+        <div class="stat">${tip("等效倉位", "投入＋追加保證金，就是你放進這一倉的全部保證金（不含浮動盈虧）。")}<strong>${both(b.equivalent || b.investment || b.size)}${moneyNum(b.extra_margin) ? `<span class="twd">其中追加保證金 ${usdt(b.extra_margin)} U</span>` : ""}</strong></div>
+        <div class="stat">${tip("等效槓桿", "投入 × 派網槓桿 ÷（投入＋追加保證金）。派網設定的槓桿會因為調整而變，等效槓桿只有在加倉、補或拿走保證金時才會變。")}<strong>${b.equivalent_leverage == null ? "—" : n(b.equivalent_leverage, 2) + " 倍"}<span class="twd">派網設定 ${esc(pos.leverage || b.leverage || "—")}</span></strong></div>
         <div class="stat"><span class="label">網格利潤</span><strong>${both(b.grid_profit)}</strong></div>
         <div class="stat"><span class="label">過去 24 小時</span><strong class="${cls(b.profit_24h && b.profit_24h.usdt)}">${bothSigned(b.profit_24h)}</strong></div>
         <div class="stat"><span class="label">現價 / Mark</span><strong>${n(b.mark_price, 4)}</strong></div>
@@ -797,17 +1267,25 @@ async function renderHistory() {
         <div class="stat">${tip("目前總損益", "趨勢盈虧 + 網格利潤。資金費另外顯示，沒有加進去。")}<strong class="${cls(b.total_pnl && b.total_pnl.usdt)}">${bothSigned(b.total_pnl)}</strong></div>
         <div class="stat">${tip("趨勢盈虧", "價格相對開倉價的浮動盈虧：投入 × 槓桿 × 漲跌幅。")}<strong class="${cls(b.trend_profit && b.trend_profit.usdt)}">${bothSigned(b.trend_profit)}</strong></div>
         <div class="stat"><span class="label">資金費</span><strong class="${cls(b.funding && b.funding.usdt)}">${bothSigned(b.funding)}</strong></div>
-        <div class="stat">${tip("網格年化", "用網格利潤、投入、持有天數推算，API 沒有現成欄位。")}<strong class="${cls(b.grid_annualized_pct)}">${b.grid_annualized_pct == null ? "—" : signed(b.grid_annualized_pct) + "%"}</strong></div>
-        <div class="stat">${tip("總年化報酬", "用總損益（趨勢+網格）、投入、持有天數推算。")}<strong class="${cls(b.annualized_pct)}">${b.annualized_pct == null ? "—" : signed(b.annualized_pct) + "%"}</strong></div>
+        <div class="stat">${tip("網格年化", "用網格利潤、等效倉位（投入＋追加保證金）、持有天數推算，API 沒有現成欄位。調槓桿不會讓它跳動。")}<strong class="${cls(b.grid_annualized_pct)}">${b.grid_annualized_pct == null ? "—" : signed(b.grid_annualized_pct) + "%"}</strong></div>
+        <div class="stat">${tip("總年化報酬", "用總損益（趨勢+網格）、等效倉位、持有天數推算。")}<strong class="${cls(b.annualized_pct)}">${b.annualized_pct == null ? "—" : signed(b.annualized_pct) + "%"}</strong></div>
       </div>
-      <p class="muted">目前總損益 = 趨勢盈虧 + 網格利潤（不含資金費）。網格年化／總年化用投資額與持有天數推算，API 沒有現成年化欄位。</p>
+      <p class="muted">目前總損益 = 趨勢盈虧 + 網格利潤（不含資金費）。網格年化／總年化用等效倉位（投入＋追加保證金）與持有天數推算，API 沒有現成年化欄位。</p>
     </div>
+    <div class="card"><div class="card-head"><h3>走勢</h3>
+      <span class="note">長條＝每日利潤（左軸 USDT）；線＝這筆倉的歷史累計配對利潤（右軸）</span></div>
+      <div class="chart" id="gridTrend"></div></div>
+    <div class="card"><div class="card-head"><h3>${tip("盤中效率", "每 30 分鐘擷取一次這筆倉的網格利潤，換算成每個時段賺多少。資料從每小時記錄上線後開始累積。")}</h3>
+      <span id="gridIntraCtl"></span></div>
+      <div class="chart" id="gridIntra"></div></div>
     <div class="card">
-      <h3>每日差額</h3>
-      <table class="plain"><thead><tr><th>日期</th><th>狀態</th><th>投資額</th><th>前次利潤</th><th>當次利潤</th><th>當日差額</th><th>累計</th></tr></thead>
+      <h3>${tip("每日差額", "調高槓桿、保證金留在原倉時，投資額會變小，但等效倉位不變，當日差額也不受影響。")}</h3>
+      <table class="plain"><thead><tr><th>日期</th><th>狀態</th><th>槓桿</th><th>投資額</th><th>等效倉位</th><th>前次利潤</th><th>當次利潤</th><th>當日差額</th><th>累計</th></tr></thead>
       <tbody>${(data.profits||[]).map((p)=>`<tr>
-        <td>${esc(p.capture_date)}</td><td>${esc(p.status)}</td>
+        <td>${esc(p.capture_date)}</td><td>${eventLabel(p.event || p.status)}</td>
+        <td>${esc(p.leverage || "—")}</td>
         <td>${usdt(p.investment)}</td>
+        <td>${usdt(p.equivalent)}</td>
         <td>${usdt(p.prev_grid_profit)}</td>
         <td>${usdt(p.grid_profit)}</td>
         <td class="${cls(p.daily_profit && p.daily_profit.usdt)}">${signed(p.daily_profit && p.daily_profit.usdt)}</td>
@@ -833,16 +1311,113 @@ async function renderHistory() {
         ${kvTable(data.list_fields)}
       </details>
     </div>`;
-  document.getElementById("gridPick").onchange = (e) => { historyId = e.target.value; render(); };
+  document.getElementById("gridPick").onchange = (e) => { historyId = e.target.value; go("history", { replace: true }); };
+  drawGridTrend(data.profits || []);
+  drawGridIntraday(historyId);
+  const backBtn = document.getElementById("historyBack");
+  if (backBtn) backBtn.onclick = () => history.back();
+}
+
+function drawGridTrend(profits) {
+  const el = document.getElementById("gridTrend");
+  if (!el) return;
+  const rows = profits.filter((p) => p.capture_date);
+  const daily = rows.map((p) => (p.status === "closed_unresolved" ? null : moneyNum(p.daily_profit)));
+  const life = rows.map((p) => (p.lifetime_i == null ? null : p.lifetime_i / 1e8));
+  const accent = Charts.token("--accent", "#2e6970");
+  Charts.plot(el, {
+    n: rows.length, labels: rows.map((p) => p.capture_date.slice(5).replace("-", "/")), height: 200, label: "每日利潤與累計",
+    empty: "還沒有每日紀錄",
+    stacks: [
+      { id: "up", color: accent, values: daily.map((v) => (v != null && v > 0 ? v : null)) },
+      { id: "down", color: Charts.token("--down", "#b42318"), values: daily.map((v) => (v != null && v < 0 ? v : null)) },
+    ],
+    overlay: { values: life, color: Charts.token("--ink-2", "#3d4d54"), format: (v) => String(Math.round(v)) },
+    yFormat: (v) => String(+v.toFixed(2)),
+    markers: rows.map((p, i) => ({ p, i })).filter(({ p }) => eventChip(p.event)).map(({ p, i }) =>
+      ({ i, tip: `${p.capture_date}：${eventLabel(p.event)}` })),
+    tooltip: (i) => Charts.tipRows(rows[i].capture_date, [
+      { color: accent, label: "單日利潤", value: daily[i] == null ? "待補" : signed(daily[i]) + " U", cls: cls(daily[i]) },
+      { color: Charts.token("--ink-2", "#3d4d54"), label: "歷史累計配對", value: life[i] == null ? "—" : n(life[i], 2) + " U" },
+      { label: "事件", value: eventLabel(rows[i].event || rows[i].status) },
+    ]),
+  });
+}
+
+let gridIntra = { range: "7d", g: "1h", metric: "usdt" };
+let gridIntraSeq = 0;
+
+async function drawGridIntraday(id) {
+  const el = document.getElementById("gridIntra");
+  const ctl = document.getElementById("gridIntraCtl");
+  if (!el || !ctl) return;
+  const seq = ++gridIntraSeq;
+  const st = gridIntra;
+  ctl.innerHTML = effSeg("gi-range", [["24h", "24 小時"], ["7d", "7 天"], ["30d", "30 天"]], st.range) + " "
+    + effSeg("gi-grain", [["1h", "1 小時"], ["1d", "1 天"]], st.g) + " "
+    + effSeg("gi-metric", [["usdt", "USDT"], ["eff", "日化 %"]], st.metric);
+  ctl.querySelectorAll("button").forEach((btn) => {
+    btn.onclick = () => {
+      if (btn.dataset.giRange) st.range = btn.dataset.giRange;
+      if (btn.dataset.giGrain) st.g = btn.dataset.giGrain;
+      if (btn.dataset.giMetric) st.metric = btn.dataset.giMetric;
+      drawGridIntraday(id);
+    };
+  });
+  const now = Date.now();
+  const days = { "24h": 1, "7d": 7, "30d": 30 }[st.range];
+  const qs = new URLSearchParams({ from: isoTaipei(now - days * 24 * HOUR_MS), to: isoTaipei(now), g: st.g, ids: id, extras: "0" });
+  let d;
+  try {
+    d = await get("/api/v1/efficiency?" + qs.toString());
+  } catch (err) {
+    if (seq === gridIntraSeq) el.innerHTML = `<p class="warn">${esc(err.message)}</p>`;
+    return;
+  }
+  if (seq !== gridIntraSeq || !document.body.contains(el)) return;
+  const s = d.series[id];
+  const metric = st.metric;
+  const values = s ? d.buckets.map((_, k) => (metric === "usdt" ? s.profit[k] : s.eff[k])) : [];
+  const accent = Charts.token("--accent", "#2e6970");
+  const label = metric === "usdt" ? "時段利潤" : "日化每U效率";
+  const common = {
+    n: d.buckets.length, times: d.buckets, g: d.granularity, height: 200, label,
+    empty: st.g === "1h" ? "這段期間還沒有每 30 分鐘的資料（從每小時記錄上線後開始累積）" : "這段期間沒有資料",
+    yFormat: effAxis(metric),
+    markers: (d.events || []).filter((e) => e.id === id).map((e) => {
+      let k = -1;
+      d.buckets.forEach((t, i) => { if (t <= e.t) k = i; });
+      return { i: k, tip: `${eventLabel(e.event)}（${Charts.fmtTime(e.t, "1h")}）` };
+    }).filter((m) => m.i >= 0),
+    tooltip: (k) => values[k] == null ? "" : Charts.tipRows(Charts.fmtRange(d.buckets[k], d.bucket_hours[k], d.granularity),
+      [{ color: accent, label, value: effFmt(values[k], metric) + effFlagText(s.flag[k]), cls: cls(values[k]) }]),
+  };
+  if (!s) { Charts.plot(el, { ...common, n: 0 }); return; }
+  if (metric === "usdt") {
+    Charts.plot(el, { ...common, barFlags: s.flag, stacks: [
+      { id: "up", color: accent, values: values.map((v) => (v != null && v > 0 ? v : null)) },
+      { id: "down", color: Charts.token("--down", "#b42318"), values: values.map((v) => (v != null && v < 0 ? v : null)) },
+    ] });
+  } else {
+    Charts.plot(el, { ...common, lines: [{ id, color: accent, values, flags: s.flag, strong: true }] });
+  }
 }
 
 function bindHistoryClicks() {
   app.querySelectorAll("tr[data-id]").forEach((tr) => {
     if (!tr.dataset.id) return;
-    tr.onclick = (ev) => {
-      if (ev.target.closest("[data-decide]")) return;
+    tr.tabIndex = 0;
+    const open = () => {
+      historyFrom = page;
       historyId = tr.dataset.id;
-      document.querySelector('[data-page="history"]').click();
+      go("history");
+    };
+    tr.onclick = (ev) => {
+      if (ev.target.closest("[data-decide], button, a")) return;
+      open();
+    };
+    tr.onkeydown = (ev) => {
+      if (ev.key === "Enter" && ev.target === tr) { ev.preventDefault(); open(); }
     };
   });
 }
@@ -854,7 +1429,7 @@ function bindEventDecisions() {
       ev.stopPropagation();
       btn.disabled = true;
       try {
-        await postJson("/api/v1/event-decision", {
+        const result = await postJson("/api/v1/event-decision", {
           capture_date: btn.dataset.date,
           bu_order_id: btn.dataset.id,
           decision: btn.dataset.decide,
@@ -862,8 +1437,9 @@ function bindEventDecisions() {
         calendarData = await get("/api/v1/days");
         dailyData = calendarData;
         paintCalendar();
+        showFlash("已記錄判定並重算歷史。" + publishText(result.publish));
       } catch (err) {
-        alert(err.message);
+        showFlash("判定失敗：" + err.message, "error");
         btn.disabled = false;
       }
     };
@@ -872,83 +1448,1262 @@ function bindEventDecisions() {
 
 let settlementData = null;
 let settlementEditId = "";
-let settlementNotice = "";
-const settlementStatus = { settled: "結算已確認", partial: "部分資料待補", pending: "待結算資料" };
+const CLOSE_REASON = { profit_stop: "止盈", loss_stop: "止損", user_cancel: "手動關倉", liquidation: "強平", liquidate: "強平", expired: "到期" };
+const AUDIT_LABELS = { closed_at: "關倉時間", grid_profit: "最終配對", lifetime_grid_profit: "完整配對", net_profit: "淨損益",
+  own_cash_in: "自己投入", funding_fee: "資金費", fee: "手續費", settlement_usdt_rate: "換算價", note: "備註" };
+const reasonLabel = (r) => r ? (CLOSE_REASON[r] || r) : "—";
+const curDigits = (cur) => (cur || "USDT") === "USDT" ? 2 : 6;
+const amtS = (v, cur) => v == null || v === "" ? "—" : signed(v, curDigits(cur));
+const amtP = (v, cur) => v == null || v === "" ? "—" : n(v, curDigits(cur));
+
+function toUsdt(v, r) {
+  if (v == null || v === "") return null;
+  if ((r.currency || "USDT") === "USDT") return Number(v);
+  return r.settlement_usdt_rate ? Number(v) * Number(r.settlement_usdt_rate) : null;
+}
+
+function settlementState(r) {
+  if (r.status !== "settled") return `<span class="badge warn">淨損益待確認</span>`;
+  if (r.net_method === "manual") return `<span class="badge">人工補登</span>`;
+  if (r.needs_review) return `<span class="badge warn">需核對 · 兩法差 ${amtP(Math.abs(Number(r.net_check_diff)), r.currency)}</span>`;
+  if (r.own_cash_in_source === "manual") return `<span class="badge ok">投入已人工確認</span>`;
+  if (r.net_check_ok) return `<span class="badge ok">自動確認 · 兩法一致</span>`;
+  return `<span class="badge ok">自動確認</span>`;
+}
+
+function closureCard(r) {
+  const cur = r.currency || "USDT";
+  return `<div class="card"><h3>關倉結算　${settlementState(r)}</h3>
+    <div class="stats">
+      <div class="stat"><span class="label">最終淨損益</span><strong class="${cls(r.net_profit)}">${amtS(r.net_profit, cur)}<span class="unit">${esc(cur)}</span>${r.roi_pct != null ? `<span class="pct ${cls(r.roi_pct)}">${signed(r.roi_pct)}%</span>` : ""}</strong></div>
+      <div class="stat"><span class="label">自己投入</span><strong>${amtP(r.own_cash_in, cur)}<span class="unit">${esc(cur)}</span></strong></div>
+      <div class="stat"><span class="label">實際拿回</span><strong>${amtP(r.received, cur)}<span class="unit">${esc(cur)}</span></strong></div>
+      <div class="stat meta"><span class="label">關倉原因／持有</span><strong>${esc(reasonLabel(r.close_reason))} · ${r.hold_days ?? "—"} 天</strong></div>
+    </div>
+    <p class="muted"><a href="#settlements">到關倉紀錄查看計算明細或修正</a></p>
+  </div>`;
+}
+
+function settlementTotals(rows) {
+  const t = { net: 0, grid: 0, nonGrid: 0, win: 0, loss: 0, settled: 0, coins: {} };
+  rows.forEach((r) => {
+    const cur = r.currency || "USDT";
+    if (r.status === "settled" && r.net_profit != null) {
+      const v = Number(r.net_profit);
+      t.settled += 1;
+      if (v > 0) t.win += 1; else if (v < 0) t.loss += 1;
+      const u = toUsdt(r.net_profit, r);
+      if (u != null) t.net += u;
+      if (cur !== "USDT") t.coins[cur] = (t.coins[cur] || 0) + v;
+    }
+    const g = toUsdt(r.lifetime_grid_profit, r);
+    if (g != null) t.grid += g;
+    const ng = toUsdt(r.non_grid_profit, r);
+    if (ng != null) t.nonGrid += ng;
+  });
+  return t;
+}
 
 function paintSettlements() {
   const rows = (settlementData && settlementData.rows) || [];
-  const selected = rows.find(r => r.id === settlementEditId);
-  app.innerHTML = `<div class="card">
-    <div class="live-bar"><h3 style="margin:0">關倉紀錄</h3><button class="btn" id="settlementRefresh">補抓關倉資料</button></div>
-    <p class="note">${rows.length} 筆關倉，${settlementData.pending_count || 0} 筆結算資料待補。配對利潤保留在歷史；最終淨損益另列，不會再從錢包扣除。每日利潤仍以快照區間計算。</p>
-    ${settlementNotice ? `<p class="note">${esc(settlementNotice)}</p>` : ''}
-    <table class="plain" style="min-width:960px"><thead><tr><th>標的／時間</th><th>狀態／來源</th><th>最終配對</th><th>最終淨損益</th><th>非配對淨損益</th><th>資金費</th><th>操作</th></tr></thead>
-    <tbody>${rows.map(r => `<tr>
-      <td>${esc(r.symbol)}<br><small>${esc(r.closed_at ? fmtTaipei(r.closed_at) : '關倉時間待補')}</small><br><small class="muted">首次記錄 ${esc(fmtTaipei(r.observed_at))}</small></td>
-      <td>${esc(settlementStatus[r.status] || r.status)}<br><small>${r.source === 'api' ? 'API' : 'API＋人工補登'} · ${r.audit_count || 0} 次修改</small><br><small>${r.daily_reconciled ? '配對日報已對帳' : '配對日報尚待對帳'}</small></td>
-      <td>${signed(r.grid_profit)}<br><small>${esc(r.currency)}</small></td>
-      <td class="${cls(r.net_profit)}">${signed(r.net_profit)}<br><small>${esc(r.currency)}</small></td>
-      <td class="${cls(r.non_grid_profit)}">${signed(r.non_grid_profit)}<br><small>${esc(r.currency)}</small></td>
-      <td>${signed(r.funding_fee)}<br><small>${esc(r.currency)}</small></td>
-      <td><button class="btn ghost" data-settlement-edit="${esc(r.id)}">補登／修正</button></td>
-    </tr>`).join('') || '<tr><td colspan="7">尚無關倉紀錄</td></tr>'}</tbody></table>
-    <p class="note">「最終配對」為派網最後顯示的 GridProfit。含已提領／複投的完整配對收益須另行核對；未確認完整口徑時不計算非配對淨損益。幣本位以原幣顯示。</p>
-  </div>${selected ? settlementForm(selected) : ''}`;
-  app.querySelectorAll('[data-settlement-edit]').forEach(btn => btn.onclick = () => {
+  const selected = rows.find((r) => r.id === settlementEditId);
+  const t = settlementTotals(rows);
+  const coinLine = Object.entries(t.coins).map(([c, v]) => `${signed(v, 6)} ${esc(c)}`).join("、");
+  const pending = settlementData.pending_count || 0;
+  const flagged = rows.filter((r) => r.needs_review).length;
+  app.innerHTML = `<div class="live-bar"><button class="btn" id="settlementRefresh">補抓關倉資料</button>
+      <span class="note">${rows.length} 筆關倉${pending ? `，<span class="warn">${pending} 筆淨損益待確認</span>` : "，全部已確認"}${flagged ? `，<span class="warn">${flagged} 筆兩法差距需核對</span>` : ""}。淨損益＝實際回到錢包的錢 − 自己投入的錢；與每日配對利潤分開，不會再從錢包扣一次。</span></div>
+    <div class="stats">
+      <div class="stat">${tip("已確認淨損益合計", "所有已確認關倉的最終淨損益，幣本位依關倉換算價折成 USDT。")}<strong class="${cls(t.net)}">${signed(t.net)}<span class="unit">USDT</span>${coinLine ? `<span class="twd">其中幣本位 ${coinLine}</span>` : ""}</strong></div>
+      <div class="stat"><span class="label">獲利／虧損筆數</span><strong><span class="up">${t.win}</span> / <span class="down">${t.loss}</span><span class="unit">共 ${t.settled} 筆</span></strong></div>
+      <div class="stat">${tip("完整配對利潤合計", "每筆關倉一生的配對收益，含已提領與複投。")}<strong>${n(t.grid)}<span class="unit">USDT</span></strong></div>
+      <div class="stat">${tip("非配對淨損益合計", "淨損益扣掉配對收益：趨勢盈虧、手續費、資金費等。")}<strong class="${cls(t.nonGrid)}">${signed(t.nonGrid)}<span class="unit">USDT</span></strong></div>
+    </div>
+    ${rows.length ? `<div class="card"><div class="card-head"><h3>每筆關倉損益</h3>
+      <span class="note">藍綠＝完整配對利潤；綠／紅＝非配對（趨勢、手續費、資金費）；黑點＝最終淨損益。幣本位依換算價折成 USDT。</span></div>
+      <div class="chart" id="settleBars"></div></div>` : ""}
+    <div class="card">
+      <table class="plain wide" style="min-width:1120px"><thead><tr>
+        <th>標的／關倉時間</th><th>原因／持有</th><th>自己投入</th><th>實際拿回</th><th>最終淨損益</th>
+        <th>${tip("配對／非配對", "上：完整配對利潤（含提領、複投）；下：淨損益扣掉配對後的部分。")}</th><th>資金費／手續費</th><th>狀態</th><th></th>
+      </tr></thead>
+      <tbody>${rows.map((r) => {
+        const cur = r.currency || "USDT";
+        const usdtNet = cur !== "USDT" && r.net_profit_usdt != null ? `≈ ${signed(r.net_profit_usdt)} USDT` : "";
+        return `<tr>
+        <td>${esc(r.symbol)}${r.bonus ? ' <span class="badge">體驗金</span>' : ""}<small>${esc(r.closed_at ? fmtTaipei(r.closed_at).slice(0, 16) : "關倉時間待補")}</small></td>
+        <td>${esc(reasonLabel(r.close_reason))}<small>${r.hold_days != null ? `持有 ${r.hold_days} 天` : ""}</small></td>
+        <td>${amtP(r.own_cash_in, cur)}<small>${esc(cur)}${r.own_cash_in_source === "manual" ? " · 人工" : r.bonus ? " · 體驗金不計" : ""}</small></td>
+        <td>${amtP(r.received, cur)}<small>${Number(r.withdrawn_total) ? `另已提領 ${amtP(r.withdrawn_total, cur)}` : esc(cur)}</small></td>
+        <td class="${cls(r.net_profit)}"><b>${amtS(r.net_profit, cur)}</b><small>${r.roi_pct != null ? signed(r.roi_pct) + "%" : ""}${usdtNet ? " " + usdtNet : ""}</small></td>
+        <td>${amtS(r.lifetime_grid_profit, cur)}<small class="${cls(r.non_grid_profit)}">非配對 ${amtS(r.non_grid_profit, cur)}</small></td>
+        <td>${amtS(r.funding_fee, cur)}<small>手續費 ${amtS(r.fee, cur)}</small></td>
+        <td>${settlementState(r)}<small>${r.daily_reconciled ? "配對日報已對帳" : "配對日報待對帳"}${r.audit_count ? ` · 修改 ${r.audit_count} 次` : ""}</small></td>
+        <td><button class="btn ghost tiny" data-settlement-edit="${esc(r.id)}">明細／修正</button></td>
+      </tr>`;
+      }).join("") || '<tr><td colspan="9" class="muted">尚無關倉紀錄</td></tr>'}</tbody></table>
+      <p class="note">自己投入＝派網投入額＋追加保證金−複投（複投的錢已在拿回金額內）。體驗金倉不算自己的錢，只計實際解鎖金額。交叉核對用派網已實現損益＋手續費＋資金費，差距過大時請在明細確認自己投入的金額。</p>
+    </div>${selected ? settlementForm(selected) : ""}`;
+  app.querySelectorAll("[data-settlement-edit]").forEach((btn) => btn.onclick = () => {
     settlementEditId = btn.dataset.settlementEdit;
     paintSettlements();
-    document.getElementById('settlementForm').scrollIntoView({block:'start', behavior:'smooth'});
+    document.getElementById("settlementForm").scrollIntoView({ block: "start", behavior: "smooth" });
   });
-  document.getElementById('settlementRefresh').onclick = async (event) => {
+  document.getElementById("settlementRefresh").onclick = async (event) => {
     const btn = event.currentTarget;
-    btn.disabled = true; btn.textContent = '抓取中…';
+    btn.disabled = true; btn.textContent = "抓取中…";
     try {
-      settlementData = await postJson('/api/v1/settlements/refresh', {});
-      settlementNotice = settlementData.publish && settlementData.publish.ok ? '關倉資料已更新並發布至 Portfolio。' : '本機已更新；Portfolio 發布尚未成功，稍後可再補抓重試。';
-      if (page === 'settlements') paintSettlements();
-    } catch (error) { alert(error.message); btn.disabled = false; btn.textContent = '補抓關倉資料'; }
+      settlementData = await postJson("/api/v1/settlements/refresh", {});
+      showFlash("關倉資料已更新。" + publishText(settlementData.publish));
+      if (page === "settlements") paintSettlements();
+    } catch (error) {
+      showFlash("補抓失敗：" + error.message, "error");
+      btn.disabled = false; btn.textContent = "補抓關倉資料";
+    }
   };
-  if (selected) {
-    document.getElementById('settlementCancel').onclick = () => { settlementEditId = ''; paintSettlements(); };
-    document.getElementById('settlementForm').onsubmit = async (event) => {
-      event.preventDefault();
-      const form = event.currentTarget;
-      const body = Object.fromEntries(new FormData(form));
-      const btn = form.querySelector('[type=submit]'); btn.disabled = true;
-      try {
-        settlementData = await postJson('/api/v1/settlements/' + encodeURIComponent(selected.id), body);
-        settlementNotice = settlementData.publish && settlementData.publish.ok ? '補登已保存、重新計算並發布至 Portfolio。' : '補登已保存並重新計算；Portfolio 發布尚未成功，請稍後補抓重試。';
-        settlementEditId = '';
-        if (page === 'settlements') paintSettlements();
-      } catch (error) { alert(error.message); btn.disabled = false; }
-    };
-  }
+  if (selected) bindSettlementForm(selected);
+  drawSettlementBars(rows);
+}
+
+function drawSettlementBars(rows) {
+  const el = document.getElementById("settleBars");
+  if (!el) return;
+  const accent = Charts.token("--accent", "#2e6970");
+  const up = Charts.token("--up", "#1f7a4d"), down = Charts.token("--down", "#b42318");
+  const fmtU = (v) => (v == null || !Number.isFinite(v) ? "—" : signed(v) + " U");
+  Charts.hbars(el, {
+    label: "每筆關倉損益", format: (v) => String(Math.round(v)),
+    rows: rows.map((r) => {
+      const grid = toUsdt(r.lifetime_grid_profit, r);
+      const other = toUsdt(r.non_grid_profit, r);
+      const net = r.status === "settled" ? toUsdt(r.net_profit, r) : null;
+      const when = r.closed_at ? fmtTaipei(r.closed_at).slice(0, 10) : "關倉時間待補";
+      return {
+        label: (r.symbol || "—") + (r.bonus ? " · 體驗金" : ""),
+        sub: `${when} · ${reasonLabel(r.close_reason)}`,
+        parts: [{ value: grid, color: accent }, { value: other, color: other != null && other < 0 ? down : up }],
+        marker: net,
+        tip: `${r.symbol || "—"}（${when}）配對 ${fmtU(grid)}、非配對 ${fmtU(other)}、淨損益 ${r.status === "settled" ? fmtU(net) : "待確認"}`,
+      };
+    }),
+  });
+}
+
+function bindSettlementForm(selected) {
+  document.getElementById("settlementCancel").onclick = () => { settlementEditId = ""; paintSettlements(); };
+  document.getElementById("settlementForm").onsubmit = async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const body = Object.fromEntries(new FormData(form));
+    const btn = form.querySelector("[type=submit]"); btn.disabled = true;
+    try {
+      settlementData = await postJson("/api/v1/settlements/" + encodeURIComponent(selected.id), body);
+      showFlash("已保存並重新計算。" + publishText(settlementData.publish));
+      settlementEditId = "";
+      if (page === "settlements") paintSettlements();
+    } catch (error) {
+      showFlash("保存失敗：" + error.message, "error");
+      btn.disabled = false;
+    }
+  };
+  const box = document.getElementById("auditBox");
+  if (box) box.ontoggle = async () => {
+    if (!box.open || box.dataset.loaded) return;
+    box.dataset.loaded = "1";
+    const list = box.querySelector("ul");
+    try {
+      const data = await get("/api/v1/settlements/" + encodeURIComponent(selected.id) + "/audit");
+      list.innerHTML = (data.rows || []).map((a) => {
+        const keys = [...new Set([...Object.keys(a.before || {}), ...Object.keys(a.after || {})])]
+          .filter((k) => (a.before || {})[k] !== (a.after || {})[k]);
+        const parts = keys.map((k) => `${esc(AUDIT_LABELS[k] || k)}：${esc((a.before || {})[k] ?? "自動")} → ${esc((a.after || {})[k] ?? "自動")}`);
+        return `<li><b>${esc(fmtTaipei(a.changed_at).slice(0, 16))}</b>　${parts.join("；") || "無變更"}</li>`;
+      }).join("") || '<li class="muted">沒有紀錄</li>';
+    } catch (err) {
+      list.innerHTML = `<li class="warn">${esc(err.message)}</li>`;
+    }
+  };
 }
 
 function settlementForm(row) {
   const manual = row.manual || {};
-  const input = (key,label,hint='') => `<label style="display:block">${label}<input name="${key}" inputmode="decimal" value="${esc(manual[key] ?? '')}" placeholder="${esc(hint)}" style="display:block;width:100%;padding:8px;border:1px solid var(--line-strong);border-radius:5px;margin:5px 0 12px"></label>`;
-  return `<form class="card" id="settlementForm"><h3>${esc(row.symbol)} · 人工補登（${esc(row.currency)}）</h3>
-    <p class="note">依派網結算明細填寫。最終淨損益須已包含所有手續費與資金費，系統不會再扣一次；空白表示使用 API 值，API 也缺值時保持待補。修改會留下紀錄。</p>
-    <p class="note">API 回報總利潤：${signed(row.reported_total_profit)} ${esc(row.currency)}（費用口徑未確認，不視為最終淨損益）。</p>
-    <p class="note">API 已實現損益：${signed(row.reported_realized_profit)} ${esc(row.currency)}；總手續費：${signed(row.fee)} ${esc(row.currency)}。以上保留派網原值，費用是否已含須核對結算明細。</p>
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:0 20px">
-      <label>實際關倉時間（台北）<input name="closed_at" type="datetime-local" step="1" value="${esc(manual.closed_at ? fmtTaipei(manual.closed_at).slice(0,19).replace(' ','T') : '')}" style="display:block;padding:8px;width:100%;margin:5px 0 12px"></label>
-      ${input('grid_profit','最終配對利潤（派網最後顯示值）', 'API：' + n(row.grid_profit,8))}
-      ${input('net_profit','最終淨損益（含全部費用）')}
-      ${input('lifetime_grid_profit','完整累計配對利潤（含已提領／複投，可選）')}
-      ${input('funding_fee','資金費（收入正數、支出負數；僅供對帳）')}
-      ${input('fee','手續費（僅供對帳，不重複扣除）')}
-      ${row.currency !== 'USDT' ? input('settlement_usdt_rate','結算時每單位原幣的 USDT 換算價') : ''}
+  const cur = row.currency || "USDT";
+  const coin = cur !== "USDT";
+  const apiOwn = row.bonus ? "0（體驗金）"
+    : row.investment != null ? amtP(Number(row.investment) - Number(row.reinvest_total || 0), cur) : "—";
+  const input = (key, label, placeholder = "", help = "") => `<label class="field">${label}<input name="${key}" inputmode="decimal" value="${esc(manual[key] ?? "")}" placeholder="${esc(placeholder)}">${help ? `<span class="help">${help}</span>` : ""}</label>`;
+  const rateSource = { close_price: "依派網關倉價自動換算", manual: "人工填寫" }[row.settlement_rate_source] || "待補";
+  return `<form class="card" id="settlementForm"><h3>${esc(row.symbol)} · 結算明細（${esc(cur)}）　${settlementState(row)}</h3>
+    <div class="formula">
+      實際拿回 <b>${amtP(row.received, cur)}</b> ＋ 期間已提領 <b>${amtP(row.withdrawn_total, cur)}</b> − 自己投入 <b>${amtP(row.own_cash_in, cur)}</b>
+      ＝ 淨損益 <b class="${cls(row.net_profit)}">${amtS(row.net_profit, cur)}</b> ${esc(cur)}${row.net_method === "manual" ? "（目前採用人工填寫的淨損益）" : ""}
+      <br><span class="muted">交叉核對：派網已實現損益＋手續費＋資金費${row.bonus ? "−體驗金分潤（虧損由體驗金承擔）" : ""}＝${amtS(row.net_check, cur)}；${row.net_check_diff == null ? "資料不足，無法比對" : row.net_check_ok ? "兩法一致" : row.needs_review ? `<span class="warn">相差 ${amtS(row.net_check_diff, cur)}，請確認自己投入的金額</span>` : `相差 ${amtS(row.net_check_diff, cur)}，已採用人工確認的投入金額`}</span>
+      ${Number(row.reinvest_total) ? `<br><span class="muted">期間複投 ${amtP(row.reinvest_total, cur)} 已包含在拿回的金額裡，所以從投入扣除，不重複計算。</span>` : ""}
+      ${coin ? `<br><span class="muted">換算價 ${row.settlement_usdt_rate ? n(row.settlement_usdt_rate, 2) + " USDT／" + esc(cur) : "—"}（${rateSource}）${row.net_profit_usdt != null ? `，淨損益約 ${signed(row.net_profit_usdt)} USDT` : ""}</span>` : ""}
     </div>
-    <label>結算依據／備註<textarea name="note" maxlength="1000" rows="2" style="display:block;width:100%;margin:5px 0 12px">${esc(manual.note || '')}</textarea></label>
-    <button type="submit" class="btn">保存補登並重新計算</button> <button type="button" class="btn ghost" id="settlementCancel">取消</button>
+    <p class="note">一般不需要填。只有兩法差距大、或與派網結算明細不同時才修正；空白代表使用自動值，每次修改都會留下紀錄並重新發布到 Portfolio。</p>
+    <div class="form-grid">
+      ${input("own_cash_in", "自己投入（含加倉、追加保證金，不含複投）", "自動：" + apiOwn, "只填這格就會重算淨損益")}
+      ${input("net_profit", "最終淨損益（直接覆蓋）", row.net_method === "wallet" ? "自動：" + amtS(row.net_profit, cur) : "")}
+      <label class="field">實際關倉時間（台北）<input name="closed_at" type="datetime-local" step="1" value="${esc(manual.closed_at ? fmtTaipei(manual.closed_at).slice(0, 19).replace(" ", "T") : "")}"></label>
+      ${input("grid_profit", "最終配對利潤（派網最後顯示值）", "目前：" + n(row.grid_profit, 8))}
+      ${input("lifetime_grid_profit", "完整累計配對利潤（含已提領／複投）", "目前：" + amtP(row.lifetime_grid_profit, cur))}
+      ${input("funding_fee", "資金費（收入正數、支出負數；僅供對帳）", "目前：" + amtS(row.funding_fee, cur))}
+      ${input("fee", "手續費（僅供對帳，不重複扣除）", "目前：" + amtS(row.fee, cur))}
+      ${coin ? input("settlement_usdt_rate", `換算價（每 1 ${esc(cur)} 等於多少 USDT）`, row.settlement_usdt_rate ? "目前：" + n(row.settlement_usdt_rate, 2) : "") : ""}
+    </div>
+    <label class="field">結算依據／備註<textarea name="note" maxlength="1000" rows="2">${esc(manual.note || "")}</textarea></label>
+    <button type="submit" class="btn">保存並重新計算</button> <button type="button" class="btn ghost" id="settlementCancel">關閉</button>
+    ${row.audit_count ? `<details id="auditBox"><summary>修改紀錄（${row.audit_count}）</summary><ul class="audit-list"><li class="muted">載入中…</li></ul></details>` : ""}
   </form>`;
 }
 
 async function renderSettlements() {
-  settlementData = await get('/api/v1/settlements');
+  settlementData = await get("/api/v1/settlements");
   paintSettlements();
+}
+
+// 共用確認／輸入視窗：回傳 null（取消）、true，或 { value, check }。
+function askDialog({ title, body = "", input = null, okText = "確定", danger = false }) {
+  return new Promise((resolve) => {
+    const mask = document.createElement("div");
+    mask.className = "mask";
+    mask.innerHTML = `<div class="dialog" role="dialog" aria-modal="true"><h3>${esc(title)}</h3>${body ? `<p>${body}</p>` : ""}
+      ${input ? `<label class="field">${esc(input.label)}<input id="askInput" maxlength="${input.max || 40}" value="${esc(input.value || "")}"></label>
+        ${input.check ? `<label class="eff-custom"><input type="checkbox" id="askCheck" ${input.check.value ? "checked" : ""}> ${esc(input.check.label)}</label>` : ""}` : ""}
+      <div class="actions"><button class="btn ghost" type="button" data-act="no">取消</button>
+        <button class="btn${danger ? " danger" : ""}" type="button" data-act="ok">${esc(okText)}</button></div></div>`;
+    document.body.appendChild(mask);
+    const field = mask.querySelector("#askInput");
+    const done = (ok) => {
+      const check = mask.querySelector("#askCheck");
+      const out = !ok ? null : input ? { value: field.value.trim(), check: !!(check && check.checked) } : true;
+      mask.remove();
+      resolve(out);
+    };
+    mask.querySelector('[data-act="no"]').onclick = () => done(false);
+    mask.querySelector('[data-act="ok"]').onclick = () => done(true);
+    mask.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") done(false);
+      else if (e.key === "Enter" && field) done(true);
+    });
+    (field || mask.querySelector('[data-act="ok"]')).focus();
+  });
+}
+
+// ---------------------------------------------------------------- 效率走勢
+const HOUR_MS = 3600 * 1000;
+const EFF_DEFAULT = { positions: "all", range: "7d", from: "", to: "", granularity: "1h", metric: "usdt", chart: "line", shared_y: true };
+const EFF_RANGES = [["today", "今天"], ["24h", "24 小時"], ["7d", "7 天"], ["30d", "30 天"], ["90d", "90 天"], ["all", "全部"], ["custom", "自訂"]];
+const EFF_GRAINS = [["30m", "30 分", 0.5], ["1h", "1 小時", 1], ["4h", "4 小時", 4], ["1d", "1 天", 24], ["1w", "週", 168], ["1M", "月", 744]];
+const EFF_METRICS = [["usdt", "區間利潤 USDT"], ["eff", "日化每U效率 %"], ["apr", "年化 %"]];
+const EFF_CHARTS = [["line", "折線"], ["stack", "堆疊長條"], ["split", "分圖"]];
+const EFF_FINE = new Set(["30m", "1h", "4h"]);
+const EFF_FLAG = { 1: "未滿", 2: "估", 3: "日帳" };
+let effMeta = null;
+let effState = null;
+let effData = null;
+let effError = "";
+let effNote = "";
+let effBusy = false;
+let effSeq = 0;
+let effFocus = "";
+let effSolo = "";
+let effPickOpen = false;
+let effView = "";
+let effZoomBack = null;
+let effRankSort = { key: "eff", dir: "desc" };
+
+const pad2 = (v) => String(v).padStart(2, "0");
+function isoTaipei(ms) {
+  const d = new Date(ms + 8 * HOUR_MS);
+  return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}T${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}:${pad2(d.getUTCSeconds())}+08:00`;
+}
+const inputTaipei = (ms) => isoTaipei(ms).slice(0, 16);
+const parseTaipeiInput = (v) => (v ? Date.parse(v + ":00+08:00") : NaN);
+function taipeiMidnight(ms) {
+  const p = Charts.parts(ms);
+  return Date.UTC(p.y, p.mo - 1, p.d) - 8 * HOUR_MS;
+}
+
+const effGrainLabel = (g) => (EFF_GRAINS.find((x) => x[0] === g) || [g, g])[1];
+function effPos(id) {
+  return (effMeta && effMeta.byId && effMeta.byId[id]) || { id, label: String(id).slice(0, 8), color: 0, lifecycle: "active" };
+}
+const effColor = (id) => Charts.color(effPos(id).color);
+const effSymbol = (p) => String(p.symbol || "?").replace("/USDT", "") + (p.product === "coin_margined_contract_grid" ? " 幣本位" : "");
+
+function effSince() {
+  const m = effMeta || {};
+  const c = [m.ledger_since, m.intraday_since].map((v) => Date.parse(v || "")).filter(Number.isFinite);
+  return c.length ? Math.min(...c) : Date.now() - 7 * 24 * HOUR_MS;
+}
+
+function effSpan(st = effState) {
+  const now = Date.now();
+  if (st.range === "custom") {
+    const a = parseTaipeiInput(st.from), b = parseTaipeiInput(st.to);
+    if (Number.isFinite(a) && Number.isFinite(b) && b > a) return [a, b];
+    return [now - 7 * 24 * HOUR_MS, now];
+  }
+  if (st.range === "today") return [taipeiMidnight(now), now];
+  if (st.range === "24h") return [now - 24 * HOUR_MS, now];
+  if (st.range === "all") return [effSince(), now];
+  const days = { "30d": 30, "90d": 90 }[st.range] || 7;
+  return [now - days * 24 * HOUR_MS, now];
+}
+
+function effCount(span, g) {
+  const hours = (EFF_GRAINS.find((x) => x[0] === g) || EFF_GRAINS[1])[2];
+  return Math.ceil((span[1] - span[0]) / (hours * HOUR_MS)) + 1;
+}
+const effAllowed = (span, g) => effCount(span, g) <= ((effMeta && effMeta.max_buckets) || 2000);
+
+// 顆粒度超過上限時自動調粗，回傳說明文字。
+function effFit() {
+  const span = effSpan();
+  if (effAllowed(span, effState.granularity)) return "";
+  const order = EFF_GRAINS.map((x) => x[0]);
+  const old = effState.granularity;
+  for (let i = order.indexOf(old) + 1; i < order.length; i++) {
+    if (effAllowed(span, order[i])) {
+      effState.granularity = order[i];
+      return `區間太長，顆粒度已從 ${effGrainLabel(old)} 改成 ${effGrainLabel(order[i])}。`;
+    }
+  }
+  return "";
+}
+
+function effAlive(p, span) {
+  const start = Date.parse(p.ledger_since || p.intraday_since || "");
+  if (!Number.isFinite(start)) return false;
+  const last = Math.max(...[p.last_seen, p.ledger_until].map((v) => Date.parse(v || "")).filter(Number.isFinite), -Infinity);
+  const end = p.lifecycle === "active" || !Number.isFinite(last) ? Date.now() : last;
+  return start <= span[1] && end >= span[0] - 36 * HOUR_MS;
+}
+
+const effSelected = () => (effState.positions === "all" ? null : new Set(effState.positions));
+
+function effNorm(s) {
+  const out = {};
+  Object.keys(EFF_DEFAULT).forEach((k) => { out[k] = s[k] === undefined ? EFF_DEFAULT[k] : s[k]; });
+  if (Array.isArray(out.positions)) out.positions = out.positions.slice().sort();
+  if (out.range !== "custom") { out.from = ""; out.to = ""; }
+  return out;
+}
+const effSettings = () => effNorm(effState);
+function effSavedViews() { return (effMeta && effMeta.views) || { views: [], default: null }; }
+function effDirty() {
+  const v = effSavedViews().views.find((x) => x.name === effView);
+  return JSON.stringify(effSettings()) !== JSON.stringify(effNorm(v ? v.settings : {}));
+}
+
+function effApplyView(v, load = true) {
+  const s = { ...EFF_DEFAULT, ...(v ? v.settings : {}) };
+  if (Array.isArray(s.positions)) s.positions = s.positions.filter((id) => effMeta.byId[id]);
+  else s.positions = "all";
+  if (!EFF_GRAINS.some((x) => x[0] === s.granularity)) s.granularity = EFF_DEFAULT.granularity;
+  if (!EFF_RANGES.some((x) => x[0] === s.range)) s.range = EFF_DEFAULT.range;
+  if (!EFF_METRICS.some((x) => x[0] === s.metric)) s.metric = EFF_DEFAULT.metric;
+  if (!EFF_CHARTS.some((x) => x[0] === s.chart) || (s.chart === "stack" && s.metric !== "usdt")) s.chart = "line";
+  effState = s;
+  effView = v ? v.name : "";
+  effZoomBack = null;
+  effSolo = "";
+  effFocus = "";
+  effNote = "";
+  if (load) loadEfficiency();
+}
+
+function effVal(s, k) {
+  if (!s) return null;
+  if (effState.metric === "usdt") return s.profit[k];
+  const e = s.eff[k];
+  return e == null ? null : effState.metric === "apr" ? e * 365 : e;
+}
+function effTotalVal(k) {
+  const t = effData.total;
+  if (effState.metric === "usdt") return t.profit[k];
+  const e = t.eff[k];
+  return e == null ? null : effState.metric === "apr" ? e * 365 : e;
+}
+function effRankVal(r) {
+  if (!r) return null;
+  if (effState.metric === "usdt") return r.profit;
+  return r.eff == null ? null : effState.metric === "apr" ? r.eff * 365 : r.eff;
+}
+function effFmt(v, metric = effState.metric) {
+  if (v == null || !Number.isFinite(v)) return "—";
+  if (metric === "usdt") { const a = Math.abs(v); return signed(v, a >= 100 ? 1 : a >= 1 ? 2 : 3); }
+  return signed(v, metric === "apr" ? 1 : 3) + "%";
+}
+function effAxis(metric = effState.metric) {
+  return (v) => String(+v.toFixed(4)) + (metric === "usdt" ? "" : "%");
+}
+const effFlagText = (f) => (EFF_FLAG[f] ? `（${EFF_FLAG[f]}）` : "");
+
+function effIds() {
+  return Object.keys((effData && effData.series) || {}).sort((a, b) => effPos(a).color - effPos(b).color);
+}
+
+function effBucketIndex(t) {
+  const b = effData.buckets;
+  let lo = 0, hi = b.length - 1, ans = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (b[mid] <= t) { ans = mid; lo = mid + 1; } else hi = mid - 1;
+  }
+  return ans;
+}
+
+function effMarkers(ids) {
+  const want = new Set(ids);
+  const out = [];
+  (effData.events || []).forEach((e) => {
+    if (!want.has(e.id)) return;
+    const k = effBucketIndex(e.t);
+    if (k < 0) return;
+    out.push({ i: k, color: effColor(e.id),
+      tip: `${effPos(e.id).label}：${eventLabel(e.event)}（${Charts.fmtTime(e.t, "1h")}${e.source === "ledger" ? "，每日帳本" : ""}）` });
+  });
+  return out;
+}
+
+function effTip(k, lines, withTotal) {
+  const d = effData;
+  const rows = lines.filter((l) => l.values[k] != null).map((l) => ({
+    color: l.color, label: effPos(l.id).label, v: l.values[k], cls: cls(l.values[k]),
+    value: effFmt(l.values[k]) + effFlagText(l.flags && l.flags[k]),
+  })).sort((a, b) => b.v - a.v);
+  if (withTotal) {
+    const tv = effTotalVal(k);
+    if (tv != null) rows.unshift({ color: Charts.token("--accent", "#2e6970"), label: "合計（已選）", value: effFmt(tv) + effFlagText(d.total.flag[k]), cls: cls(tv) });
+  }
+  if (!rows.length) return "";
+  return Charts.tipRows(Charts.fmtRange(d.buckets[k], d.bucket_hours[k], d.granularity), rows, "", 24);
+}
+
+function effZoom(i0, i1) {
+  const d = effData;
+  const from = d.buckets[i0];
+  const to = d.buckets[i1] + d.bucket_hours[i1] * HOUR_MS;
+  if (!effZoomBack) effZoomBack = { range: effState.range, from: effState.from, to: effState.to, granularity: effState.granularity };
+  effState.range = "custom";
+  effState.from = inputTaipei(from);
+  effState.to = inputTaipei(to);
+  // 放大後時段太少時改用較細的顆粒度；細顆粒度只在有每小時資料的區段才有意義。
+  const order = EFF_GRAINS.map((x) => x[0]);
+  const since = Date.parse((effMeta && effMeta.intraday_since) || "");
+  let k = order.indexOf(effState.granularity);
+  while (k > 0 && effCount([from, to], order[k]) < 10) {
+    const finer = order[k - 1];
+    if (EFF_FINE.has(finer) && !(Number.isFinite(since) && to > since)) break;
+    k -= 1;
+  }
+  effState.granularity = order[k];
+  effNote = "";
+  loadEfficiency();
+}
+
+async function loadEfficiency() {
+  const seq = ++effSeq;
+  const fitted = effFit();
+  if (fitted) effNote = fitted;
+  const sel = effSelected();
+  if (sel && !sel.size) {
+    effData = null;
+    effError = "";
+    effBusy = false;
+    if (page === "efficiency") paintEfficiency();
+    return;
+  }
+  const [a, b] = effSpan();
+  const qs = new URLSearchParams({ from: isoTaipei(a), to: isoTaipei(b), g: effState.granularity });
+  if (sel) qs.set("ids", [...sel].join(","));
+  effBusy = true;
+  const busy = document.getElementById("effBusy");
+  if (busy) busy.textContent = "載入中…";
+  else if (page === "efficiency") paintEfficiency();
+  try {
+    const res = await fetch("/api/v1/efficiency?" + qs.toString());
+    const data = await res.json().catch(() => ({}));
+    if (seq !== effSeq) return;
+    if (!res.ok) {
+      if (data.suggest && data.suggest !== effState.granularity) {
+        effNote = `區間太長，顆粒度已改成 ${effGrainLabel(data.suggest)}。`;
+        effState.granularity = data.suggest;
+        return loadEfficiency();
+      }
+      throw new Error(data.error || "HTTP " + res.status);
+    }
+    effData = data;
+    effError = "";
+  } catch (err) {
+    if (seq !== effSeq) return;
+    effError = err.message;
+  }
+  effBusy = false;
+  if (page === "efficiency") paintEfficiency();
+}
+
+async function renderEfficiency() {
+  const meta = await get("/api/v1/efficiency/meta");
+  meta.byId = Object.fromEntries((meta.positions || []).map((p) => [p.id, p]));
+  effMeta = meta;
+  if (!effState) {
+    const saved = effSavedViews();
+    effApplyView(saved.views.find((v) => v.name === saved.default), false);
+  }
+  paintEfficiency();
+  await loadEfficiency();
+}
+
+function effSeg(attr, items, cur, disabled) {
+  return `<div class="seg" role="group">${items.map(([v, label]) =>
+    `<button type="button" data-${attr}="${v}" class="${v === cur ? "on" : ""}"${disabled && disabled(v) ? " disabled" : ""}>${label}</button>`).join("")}</div>`;
+}
+
+function effControlsHtml(span) {
+  const st = effState;
+  const sel = effSelected();
+  const isOn = (id) => !sel || sel.has(id);
+  const groups = new Map();
+  effMeta.positions.forEach((p) => {
+    if (!effAlive(p, span) && !(sel && sel.has(p.id))) return;
+    const key = effSymbol(p);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(p);
+  });
+  const chips = `<button type="button" class="chip${sel ? "" : " on"}" data-chip="">全部</button>`
+    + [...groups].map(([sym, list]) => {
+      const on = list.filter((p) => isOn(p.id)).length;
+      const state = on === list.length ? " on" : on ? " part" : "";
+      return `<button type="button" class="chip${state}" data-chip="${esc(sym)}">${esc(sym)}${list.length > 1 ? `<span class="n">${on}/${list.length}</span>` : ""}</button>`;
+    }).join("")
+    + `<button type="button" class="chip ghost" id="effPick">${effPickOpen ? "收起細選" : "細選倉位"}</button>`;
+  const pick = !effPickOpen ? "" : `<div class="pick">${[...groups.values()].flat().map((p) =>
+    `<label class="pick-item"><input type="checkbox" data-pick="${esc(p.id)}" ${isOn(p.id) ? "checked" : ""}>`
+    + `<i class="sw" style="background:${Charts.color(p.color)}"></i>${esc(p.label)}`
+    + `${p.lifecycle !== "active" ? ' <span class="badge">已關倉</span>' : ""}</label>`).join("")}</div>`;
+  const saved = effSavedViews();
+  const isDefault = effView && effView === saved.default;
+  return `<div class="card eff-controls">
+    <div class="eff-row"><span class="lbl">標的</span><div class="chips">${chips}</div></div>
+    ${pick}
+    <div class="eff-row"><span class="lbl">區間</span>${effSeg("range", EFF_RANGES, st.range)}
+      ${st.range === "custom" ? `<span class="eff-custom"><input type="datetime-local" id="effFrom" value="${esc(st.from || inputTaipei(span[0]))}">至
+        <input type="datetime-local" id="effTo" value="${esc(st.to || inputTaipei(span[1]))}"><button type="button" class="btn tiny" id="effApply">套用</button></span>` : ""}
+      ${effZoomBack ? `<button type="button" class="btn ghost tiny" id="effUnzoom">重設縮放</button>` : ""}</div>
+    <div class="eff-row"><span class="lbl">顆粒度</span>${effSeg("grain", EFF_GRAINS, st.granularity, (g) => !effAllowed(span, g))}
+      <span class="lbl">指標</span>${effSeg("metric", EFF_METRICS, st.metric)}</div>
+    <div class="eff-row"><span class="lbl">圖型</span>${effSeg("chart", EFF_CHARTS, st.chart, (c) => c === "stack" && st.metric !== "usdt")}
+      ${st.chart === "split" ? `<label class="eff-custom"><input type="checkbox" id="effSharedY" ${st.shared_y ? "checked" : ""}> 共用 Y 軸</label>` : ""}
+      <div class="eff-views"><span class="eff-busy" id="effBusy">${effBusy ? "載入中…" : ""}</span>
+        <label class="eff-custom">常用檢視 <select id="effView"><option value="">內建：全部倉位</option>${saved.views.map((v) =>
+          `<option value="${esc(v.name)}"${v.name === effView ? " selected" : ""}>${esc(v.name)}${v.name === saved.default ? " ★" : ""}</option>`).join("")}</select></label>
+        ${effDirty() ? `<span class="eff-busy">（已修改）</span>` : ""}
+        <button type="button" class="btn tiny" id="effSave">儲存目前設定</button>
+        <button type="button" class="btn ghost tiny" id="effStar" ${effView ? "" : "disabled"}>${isDefault ? "取消預設" : "設為預設 ★"}</button>
+        <button type="button" class="btn ghost tiny" id="effDel" ${effView ? "" : "disabled"}>刪除</button>
+      </div></div>
+  </div>`;
+}
+
+function effNoticesHtml(span) {
+  const notes = [];
+  if (effNote) notes.push(effNote);
+  const since = Date.parse(effMeta.intraday_since || "");
+  if (!Number.isFinite(since)) {
+    notes.push("每小時資料會從下一次 30 分鐘排程開始累積。1 天以上的顆粒度可以先看每日帳本（08:05 截點，圖上以虛線、空心點標示）。");
+  } else if (EFF_FINE.has(effState.granularity) && span[0] < since) {
+    notes.push(`每小時資料從 ${fmtTaipei(effMeta.intraday_since).slice(0, 16)} 開始累積，之前只有每日帳本；要看更早的走勢請切到 1 天以上。`);
+  }
+  return (effError ? `<div class="notice is-error" style="margin:0 0 10px"><span>讀取失敗：${esc(effError)}</span></div>` : "")
+    + notes.map((t) => `<div class="notice" style="margin:0 0 10px"><span>${esc(t)}</span></div>`).join("");
+}
+
+function effStatsHtml() {
+  const sum = effData.summary || {};
+  const best = (effData.ranking || []).find((r) => r.eff != null);
+  const heatTotal = effData.heatmap && effData.heatmap.total;
+  let bestHour = null;
+  if (heatTotal) heatTotal.eff.forEach((v, h) => { if (v != null && (bestHour == null || v > heatTotal.eff[bestHour])) bestHour = h; });
+  const small = 'style="font-size:17px;white-space:normal;line-height:1.35"';
+  return `<div class="stats">
+    <div class="stat">${tip("區間總利潤", "已選倉位在這段期間的網格利潤加總。複投、加倉、提領已依每日帳本同一套規則排除；幣本位依當下幣價換算。")}
+      <strong class="${cls(sum.profit)}">${signed(sum.profit)}<span class="unit">USDT</span></strong></div>
+    <div class="stat">${tip("平均日化每U效率", "區間利潤 ÷ 倉位 × 3 ÷ 槓桿，換算成每天 %，合計＝總利潤 ÷（投入 × 槓桿 ÷ 3）× 時數，調槓桿但保證金留在原倉不會讓它跳動。和其他頁「每U效率」同一口徑。")}
+      <strong class="${cls(sum.eff)}">${sum.eff == null ? "—" : signed(sum.eff, 3) + "%"}<span class="twd">年化 ${sum.eff == null ? "—" : signed(sum.eff * 365, 1) + "%"}</span></strong></div>
+    <div class="stat">${tip("效率最好的倉位", "這段期間日化每U效率最高的倉位。")}
+      <strong ${small}>${best ? esc(effPos(best.id).label) : "—"}${best ? `<span class="pct ${cls(best.eff)}">${signed(best.eff, 3)}%／日</span>` : ""}</strong></div>
+    <div class="stat">${tip("效率最好的時段", "依下方「一天中的時段」熱度圖，已選倉位合計效率最高的一小時（只用每 30 分鐘實測的資料，最多看最近 180 天）。")}
+      <strong ${small}>${bestHour == null ? "累積中" : `${pad2(bestHour)}:00–${pad2((bestHour + 1) % 24)}:00`}${bestHour == null ? ""
+        : `<span class="pct ${cls(heatTotal.eff[bestHour])}">${signed(heatTotal.eff[bestHour], 3)}%／日</span>`}</strong></div>
+  </div>`;
+}
+
+function effRankingHtml() {
+  const rows = (effData.ranking || []).slice();
+  const key = effRankSort.key, dir = effRankSort.dir === "asc" ? 1 : -1;
+  const val = (r) => key === "label" ? effPos(r.id).label : key === "best" ? (r.best && r.best.eff)
+    : key === "worst" ? (r.worst && r.worst.eff) : key === "apr" ? (r.eff == null ? null : r.eff * 365) : r[key];
+  rows.sort((a, b) => {
+    const x = val(a), y = val(b);
+    if (x == null && y == null) return 0;
+    if (x == null) return 1;
+    if (y == null) return -1;
+    if (typeof x === "string") return x.localeCompare(y, "zh-Hant") * dir;
+    return (x - y) * dir;
+  });
+  const g = effData.granularity;
+  const th = (k, label, note) => `<th class="sortable" data-rank="${k}">${note ? tip(label, note) : label}${effRankSort.key === k ? (effRankSort.dir === "asc" ? " ▲" : " ▼") : ""}</th>`;
+  const when = (b) => b ? `<span class="${cls(b.eff)}">${signed(b.eff, 3)}%</span><small>${esc(Charts.fmtRange(b.t, effData.bucket_hours[effBucketIndex(b.t)] || 1, g))}</small>` : "—";
+  return `<table class="plain eff-rank" style="min-width:900px"><colgroup><col style="width:25%"><col><col><col><col><col><col style="width:13%"><col></colgroup>
+    <thead><tr>${th("label", "倉位")}${th("profit", "區間利潤")}${th("eff", "日化每U效率", "區間利潤 ÷ 倉位 × 3 ÷ 槓桿，換算成每天 %。")}${th("apr", "年化")}
+      ${th("positive_ratio", "正報酬時段", "有賺錢（利潤大於 0）的時段比例。")}${th("best", "最佳時段")}${th("worst", "最差時段")}
+      ${th("coverage", "實測覆蓋", "有每 30 分鐘實測資料的時數比例；其餘是跨過空檔的估算或每日帳本。")}</tr></thead>
+    <tbody>${rows.map((r) => `<tr class="clickable" data-id="${esc(r.id)}">
+      <td><i class="sw" style="background:${effColor(r.id)}"></i> ${esc(effPos(r.id).label)}${effPos(r.id).lifecycle !== "active" ? ' <span class="badge">已關倉</span>' : ""}</td>
+      <td class="${cls(r.profit)}">${signed(r.profit)}</td>
+      <td class="${cls(r.eff)}">${r.eff == null ? "—" : signed(r.eff, 3) + "%"}</td>
+      <td class="${cls(r.eff)}">${r.eff == null ? "—" : signed(r.eff * 365, 1) + "%"}</td>
+      <td>${n(r.positive_ratio * 100, 0)}%</td>
+      <td>${when(r.best)}</td><td>${when(r.worst)}</td>
+      <td>${r.coverage == null ? "—" : n(r.coverage * 100, 0) + "%"}</td></tr>`).join("")
+      || `<tr><td colspan="8" class="muted">這段期間沒有資料</td></tr>`}</tbody></table>`;
+}
+
+function paintEfficiency() {
+  if (!effMeta || !effState) return;
+  const span = effSpan();
+  const sel = effSelected();
+  let body;
+  if (sel && !sel.size) body = `<div class="card"><p class="muted">請在上方至少選一個倉位。</p></div>`;
+  else if (!effData) body = `<div class="card"><p class="muted">${effError ? "沒有資料" : "載入中…"}</p></div>`;
+  else {
+    const cov = effData.summary && effData.summary.coverage;
+    body = effStatsHtml()
+      + `<div class="card"><div class="card-head"><h3>${tip("合計（已選倉位）", "已選倉位每個時段的合計。效率＝總利潤 ÷（投入 × 槓桿 ÷ 3）× 時數，不受調槓桿影響。")}</h3>
+          <span class="note">${cov == null ? "" : `實測覆蓋 ${n(cov * 100, 0)}%　`}拖曳圖表可放大區間</span></div>
+          <div class="chart" id="effTotal"></div></div>
+        <div class="card"><div class="card-head"><h3>各倉位</h3><span class="note">滑過圖例突顯、點一下只看那一筆；拖曳可放大</span></div>
+          <div class="chart" id="effMain"></div>
+          <div class="chart-legend" id="effLegend"></div>
+          <p class="note">實線＝每 30 分鐘實測；細虛線、空心點＝跨過空檔的估算或每日帳本（08:05 截點）；粗虛線＝已關倉；三角形＝加倉、複投、提領等事件。標「未滿」的時段還在進行中。</p></div>
+        <div class="card"><div class="card-head"><h3>${tip("一天中的時段", "把每一天同一個小時（台北時間）的表現平均起來，看哪些時段效率比較好。只用每 30 分鐘實測的資料，最多看最近 180 天。點倉位名稱可看單一網格。")}</h3>
+          <span class="note">${effData.heatmap ? `自 ${esc(fmtTaipei(effData.heatmap.from).slice(0, 10))} 起` : ""}</span></div>
+          <div id="effHeat"></div></div>
+        <div class="card"><div class="card-head"><h3>倉位排行</h3>
+          <button type="button" class="btn ghost tiny" id="effCsv">匯出 CSV</button></div>
+          ${effRankingHtml()}</div>`;
+  }
+  app.innerHTML = effControlsHtml(span) + effNoticesHtml(span) + body;
+  if (effData && !(sel && !sel.size)) {
+    effDrawTotal();
+    effDrawMain();
+    effDrawLegend();
+    effDrawHeat();
+  }
+  bindEfficiency(span);
+}
+
+function effDrawTotal() {
+  const el = document.getElementById("effTotal");
+  if (!el) return;
+  const d = effData;
+  const vals = d.buckets.map((_, k) => effTotalVal(k));
+  const accent = Charts.token("--accent", "#2e6970");
+  const common = {
+    n: d.buckets.length, times: d.buckets, g: d.granularity, height: 190, yFormat: effAxis(), onBrush: effZoom,
+    label: "已選倉位合計",
+    tooltip: (k) => vals[k] == null ? "" : Charts.tipRows(Charts.fmtRange(d.buckets[k], d.bucket_hours[k], d.granularity),
+      [{ color: accent, label: "合計（已選）", value: effFmt(vals[k]) + effFlagText(d.total.flag[k]), cls: cls(vals[k]) }]),
+  };
+  if (effState.metric === "usdt") {
+    Charts.plot(el, { ...common, barFlags: d.total.flag, stacks: [
+      { id: "up", color: accent, values: vals.map((v) => (v != null && v > 0 ? v : null)) },
+      { id: "down", color: Charts.token("--down", "#b42318"), values: vals.map((v) => (v != null && v < 0 ? v : null)) },
+    ] });
+  } else {
+    Charts.plot(el, { ...common, lines: [{ id: "total", color: accent, values: vals, flags: d.total.flag, strong: true }] });
+  }
+}
+
+function effLine(id) {
+  const s = effData.series[id];
+  return {
+    id, color: effColor(id), values: effData.buckets.map((_, k) => effVal(s, k)), flags: s.flag,
+    faded: !!effFocus && effFocus !== id, strong: effFocus === id, dashed: effPos(id).lifecycle !== "active",
+  };
+}
+
+function effDrawMain() {
+  const el = document.getElementById("effMain");
+  if (!el || !effData) return;
+  const d = effData;
+  const ids = effIds().filter((id) => !effSolo || id === effSolo);
+  const base = { n: d.buckets.length, times: d.buckets, g: d.granularity, yFormat: effAxis(), onBrush: effZoom };
+  if (effState.chart === "split") {
+    el._chartDraw = null;
+    const ranks = Object.fromEntries((d.ranking || []).map((r) => [r.id, r]));
+    el.innerHTML = `<div class="minis">${ids.map((id) => {
+      const v = effRankVal(ranks[id]);
+      return `<div class="mini"><h4><span><i class="sw" style="background:${effColor(id)}"></i> ${esc(effPos(id).label)}</span>`
+        + `<span class="${cls(v)}">${effFmt(v)}</span></h4><div class="chart" data-mini="${esc(id)}"></div></div>`;
+    }).join("") || `<div class="chart-empty">這段期間沒有資料</div>`}</div>`;
+    let domain = null;
+    if (effState.shared_y) {
+      let lo = Infinity, hi = -Infinity;
+      ids.forEach((id) => effLine(id).values.forEach((v) => { if (v != null) { lo = Math.min(lo, v); hi = Math.max(hi, v); } }));
+      if (Number.isFinite(lo)) domain = [lo, hi];
+    }
+    el.querySelectorAll("[data-mini]").forEach((node) => {
+      const line = { ...effLine(node.dataset.mini), faded: false, strong: false };
+      Charts.plot(node, { ...base, height: 150, yDomain: domain, lines: [line], markers: effMarkers([line.id]),
+        label: effPos(line.id).label, tooltip: (k) => effTip(k, [line], false) });
+    });
+    return;
+  }
+  const lines = ids.map(effLine);
+  const common = { ...base, height: 330, markers: effMarkers(ids), label: "各倉位走勢", tooltip: (k) => effTip(k, lines, !effSolo) };
+  if (effState.chart === "stack" && effState.metric === "usdt") {
+    Charts.plot(el, { ...common, barFlags: d.total.flag,
+      stacks: lines.map((l) => ({ id: l.id, color: l.color, values: l.values, faded: l.faded })) });
+  } else {
+    Charts.plot(el, { ...common, lines });
+  }
+}
+
+function effDrawLegend() {
+  const el = document.getElementById("effLegend");
+  if (!el) return;
+  const ranks = Object.fromEntries((effData.ranking || []).map((r) => [r.id, r]));
+  el.innerHTML = effIds().map((id) => {
+    const p = effPos(id);
+    const v = effRankVal(ranks[id]);
+    return `<button type="button" data-legend="${esc(id)}" class="${effSolo === id ? "solo" : ""}${p.lifecycle !== "active" ? " closed" : ""}">`
+      + `<i class="sw" style="background:${effColor(id)}"></i>${esc(p.label)}${v == null ? "" : ` <b class="${cls(v)}">${effFmt(v)}</b>`}</button>`;
+  }).join("");
+  el.querySelectorAll("[data-legend]").forEach((btn) => {
+    const id = btn.dataset.legend;
+    btn.onmouseenter = () => { if (effState.chart !== "split") { effFocus = id; effDrawMain(); } };
+    btn.onmouseleave = () => { if (effFocus) { effFocus = ""; effDrawMain(); } };
+    btn.onclick = () => { effSolo = effSolo === id ? "" : id; effFocus = ""; effDrawMain(); effDrawLegend(); };
+  });
+}
+
+function effDrawHeat() {
+  const el = document.getElementById("effHeat");
+  if (!el) return;
+  const h = effData.heatmap;
+  if (!h) {
+    el.innerHTML = `<div class="chart-empty">每 30 分鐘的實測資料累積之後，這裡會顯示一天 24 個時段的平均表現。</div>`;
+    return;
+  }
+  const m = effState.metric;
+  const pick = (row) => (m === "usdt" ? row.profit : row.eff.map((v) => (v == null ? null : m === "apr" ? v * 365 : v)));
+  const tips = (label, row, vals) => vals.map((v, i) =>
+    `${label}｜${pad2(i)}:00–${pad2((i + 1) % 24)}:00 平均 ${effFmt(v)}（${row.n[i] || 0} 個時段）`);
+  const rows = [{ label: "合計（已選）", color: Charts.token("--accent", "#2e6970"), strong: true, scale: "total", values: pick(h.total), tips: tips("合計", h.total, pick(h.total)) }];
+  effIds().forEach((id) => {
+    const row = h.rows[id];
+    if (!row) return;
+    const vals = pick(row);
+    rows.push({ id, label: effPos(id).label, color: effColor(id), values: vals, tips: tips(effPos(id).label, row, vals) });
+  });
+  Charts.heat(el, { cols: Array.from({ length: 24 }, (_, i) => pad2(i)), rows,
+    onRowClick: (id) => { historyFrom = "efficiency"; historyId = id; go("history"); } });
+}
+
+function effCsv() {
+  const d = effData;
+  if (!d) return;
+  const ids = effIds();
+  const metric = (EFF_METRICS.find((x) => x[0] === effState.metric) || ["", ""])[1];
+  const num = (v) => (v == null || !Number.isFinite(v) ? "" : String(+v.toFixed(6)));
+  const rows = [[`時段開始（台北）／${metric}`, ...ids.map((id) => effPos(id).label), "合計"]];
+  d.buckets.forEach((t, k) => {
+    rows.push([isoTaipei(t).slice(0, 16).replace("T", " "), ...ids.map((id) => num(effVal(d.series[id], k))), num(effTotalVal(k))]);
+  });
+  const quote = (c) => (/[",\r\n]/.test(c) ? `"${c.replace(/"/g, '""')}"` : c);
+  const csv = "﻿" + rows.map((r) => r.map(quote).join(",")).join("\r\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+  a.download = `pionex-efficiency-${effState.metric}-${d.granularity}-${isoTaipei(Date.now()).slice(0, 10)}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+
+async function effStoreViews(doc, message) {
+  try {
+    effMeta.views = await postJson("/api/v1/efficiency/views", doc);
+    if (message) showFlash(message);
+  } catch (err) {
+    showFlash("常用檢視儲存失敗：" + err.message, "error");
+  }
+  if (page === "efficiency") paintEfficiency();
+}
+
+function effSetPositions(ids) {
+  const all = effMeta.positions.map((p) => p.id);
+  const set = new Set(ids);
+  effState.positions = all.every((id) => set.has(id)) ? "all" : all.filter((id) => set.has(id));
+  effSolo = "";
+  loadEfficiency();
+}
+
+function bindEfficiency(span) {
+  const st = effState;
+  const current = () => new Set(st.positions === "all" ? effMeta.positions.map((p) => p.id) : st.positions);
+  app.querySelectorAll("[data-chip]").forEach((btn) => {
+    btn.onclick = () => {
+      const sym = btn.dataset.chip;
+      if (!sym) { st.positions = "all"; effSolo = ""; loadEfficiency(); return; }
+      const group = effMeta.positions.filter((p) => effSymbol(p) === sym && (effAlive(p, span) || current().has(p.id))).map((p) => p.id);
+      const set = current();
+      const allOn = group.every((id) => set.has(id));
+      group.forEach((id) => (allOn ? set.delete(id) : set.add(id)));
+      effSetPositions([...set]);
+    };
+  });
+  const pickBtn = document.getElementById("effPick");
+  if (pickBtn) pickBtn.onclick = () => { effPickOpen = !effPickOpen; paintEfficiency(); };
+  app.querySelectorAll("[data-pick]").forEach((box) => {
+    box.onchange = () => {
+      const set = current();
+      if (box.checked) set.add(box.dataset.pick); else set.delete(box.dataset.pick);
+      effSetPositions([...set]);
+    };
+  });
+  app.querySelectorAll("[data-range]").forEach((btn) => {
+    btn.onclick = () => {
+      const v = btn.dataset.range;
+      if (v === "custom") {
+        const cur = effSpan();
+        st.from = st.from || inputTaipei(cur[0]);
+        st.to = st.to || inputTaipei(cur[1]);
+      }
+      st.range = v;
+      effZoomBack = null;
+      effNote = "";
+      if (v === "custom") paintEfficiency(); else loadEfficiency();
+    };
+  });
+  const apply = document.getElementById("effApply");
+  if (apply) apply.onclick = () => {
+    const from = document.getElementById("effFrom").value, to = document.getElementById("effTo").value;
+    if (!(parseTaipeiInput(to) > parseTaipeiInput(from))) { showFlash("結束時間要晚於開始時間", "error"); return; }
+    st.from = from;
+    st.to = to;
+    effNote = "";
+    loadEfficiency();
+  };
+  const unzoom = document.getElementById("effUnzoom");
+  if (unzoom) unzoom.onclick = () => {
+    Object.assign(st, effZoomBack);
+    effZoomBack = null;
+    effNote = "";
+    loadEfficiency();
+  };
+  app.querySelectorAll("[data-grain]").forEach((btn) => {
+    btn.onclick = () => { st.granularity = btn.dataset.grain; effNote = ""; loadEfficiency(); };
+  });
+  app.querySelectorAll("[data-metric]").forEach((btn) => {
+    btn.onclick = () => {
+      st.metric = btn.dataset.metric;
+      if (st.metric !== "usdt" && st.chart === "stack") st.chart = "line";
+      paintEfficiency();
+    };
+  });
+  app.querySelectorAll("[data-chart]").forEach((btn) => {
+    btn.onclick = () => { st.chart = btn.dataset.chart; effFocus = ""; paintEfficiency(); };
+  });
+  const shared = document.getElementById("effSharedY");
+  if (shared) shared.onchange = () => { st.shared_y = shared.checked; effDrawMain(); };
+  const viewSel = document.getElementById("effView");
+  if (viewSel) viewSel.onchange = () => {
+    effApplyView(effSavedViews().views.find((v) => v.name === viewSel.value));
+  };
+  const save = document.getElementById("effSave");
+  if (save) save.onclick = async () => {
+    const saved = effSavedViews();
+    const got = await askDialog({
+      title: "儲存常用檢視",
+      body: "會記住目前的標的、區間、顆粒度、指標和圖型。區間按鈕（例如 7 天）會存成相對時間，下次打開會從當下往回算。",
+      input: { label: "名稱", value: effView, max: 40, check: { label: "設為預設（打開這一頁時自動套用）", value: saved.default === effView && !!effView } },
+      okText: "儲存",
+    });
+    if (!got) return;
+    if (!got.value) { showFlash("請輸入名稱", "error"); return; }
+    const views = saved.views.slice();
+    const entry = { name: got.value, settings: effSettings() };
+    const at = views.findIndex((v) => v.name === got.value);
+    if (at >= 0) views[at] = entry; else views.push(entry);
+    const def = got.check ? got.value : saved.default === got.value ? null : saved.default;
+    effView = got.value;
+    await effStoreViews({ views, default: def }, `已儲存常用檢視「${got.value}」。`);
+  };
+  const star = document.getElementById("effStar");
+  if (star) star.onclick = () => {
+    const saved = effSavedViews();
+    const def = saved.default === effView ? null : effView;
+    effStoreViews({ views: saved.views, default: def }, def ? `打開這一頁時會自動套用「${def}」。` : "已取消預設，打開這一頁會顯示全部倉位。");
+  };
+  const del = document.getElementById("effDel");
+  if (del) del.onclick = async () => {
+    if (!effView) return;
+    const ok = await askDialog({ title: `刪除常用檢視「${effView}」？`, body: "只刪掉這組設定，資料不受影響。", okText: "刪除", danger: true });
+    if (!ok) return;
+    const saved = effSavedViews();
+    const name = effView;
+    effView = "";
+    await effStoreViews({ views: saved.views.filter((v) => v.name !== name), default: saved.default === name ? null : saved.default }, `已刪除「${name}」。`);
+  };
+  app.querySelectorAll("[data-rank]").forEach((th) => {
+    th.onclick = () => {
+      const k = th.dataset.rank;
+      if (effRankSort.key === k) effRankSort.dir = effRankSort.dir === "asc" ? "desc" : "asc";
+      else effRankSort = { key: k, dir: k === "label" ? "asc" : "desc" };
+      paintEfficiency();
+    };
+  });
+  const csv = document.getElementById("effCsv");
+  if (csv) csv.onclick = effCsv;
+  bindHistoryClicks();
+}
+
+// 資金費（試做）：派網每倉累計資金費，和上一次每日快照相減得到當日資金費；淨利＝當日配對＋資金費。只顯示，不進每日利潤。
+let fundingData = null;
+let fundRange = "30";
+let fundSelected = "";
+let fundMonth = null;
+
+const pctText = (v) => (v == null ? "—" : signed(v) + "%");
+const FUND_TIP = "資金費＝派網這個倉的累計資金費，和上一次每日記錄相減。付出為負、收到為正。幣本位（ETH）是當天新增的幣×抓取價，不含幣價重估。只顯示，不算進每日利潤，Portfolio 不受影響。";
+const NET_TIP = "淨利＝當日配對利潤＋當日資金費。每日利潤（Portfolio 用的那個）仍只有配對，這裡另外算給你看。";
+
+function fundCalendar(days) {
+  const byDate = {};
+  days.forEach((d) => { byDate[d.date] = d; });
+  const parts = fundSelected.split("-").map(Number);
+  if (!fundMonth) fundMonth = { y: parts[0], m: parts[1] };
+  const { y, m } = fundMonth;
+  const prefix = `${y}-${String(m).padStart(2, "0")}-`;
+  const startPad = new Date(y, m - 1, 1).getDay();
+  const dim = new Date(y, m, 0).getDate();
+  let heatMax = 0;
+  days.forEach((d) => {
+    const v = moneyNum(d.net);
+    if (d.date.startsWith(prefix) && v != null && !d.unresolved) heatMax = Math.max(heatMax, Math.abs(v));
+  });
+  const heat = (d) => {
+    const v = moneyNum(d.net);
+    if (!heatMax || v == null || v === 0 || d.unresolved) return "";
+    const a = (0.05 + 0.3 * Math.min(1, Math.abs(v) / heatMax)).toFixed(3);
+    return ` style="--cell-bg:rgba(var(${v > 0 ? "--heat-pos" : "--heat-neg"}),${a})"`;
+  };
+  const line = (label, value, klass = "", opt = false) =>
+    `<span class="cal-amt${opt ? " opt" : ""}"><span>${label}</span><b class="${klass}">${value}</b></span>`;
+  let cells = ["日", "一", "二", "三", "四", "五", "六"].map((w) => `<div class="cal-dow">${w}</div>`).join("");
+  for (let i = 0; i < startPad; i++) cells += `<div class="cal-cell is-pad"></div>`;
+  for (let day = 1; day <= dim; day++) {
+    const date = prefix + String(day).padStart(2, "0");
+    const d = byDate[date];
+    const sel = date === fundSelected ? " is-selected" : "";
+    if (!d) { cells += `<div class="cal-cell is-empty${sel}"><span class="cal-num">${day}</span></div>`; continue; }
+    const grid = moneyNum(d.grid_profit), fund = moneyNum(d.funding), net = moneyNum(d.net);
+    cells += `<button type="button" class="cal-cell${sel}" data-funddate="${date}"${heat(d)}><span class="cal-num">${day}${d.unresolved ? " · 待補" : ""}</span>`
+      + line("錢包", moneyNum(d.wallet) == null ? "—" : n(moneyNum(d.wallet), 0), "", true)
+      + line("倉位", `${n(moneyNum(d.equivalent), 0)} · ${d.active_count ?? "—"}`, "", true)
+      + line("配對/單日", `${n(moneyNum(d.running_grid), 0)} / ${signed(grid)}`, "", true)
+      + line("資金費", fund == null ? "—" : signed(fund), cls(fund))
+      + line("淨利", net == null ? "—" : signed(net), cls(net) + " net")
+      + `</button>`;
+  }
+  const mon = (fundingData.months || {})[prefix.slice(0, 7)];
+  const sum = mon
+    ? `本月配對 <b class="${cls(moneyNum(mon.grid_profit))}">${signed(moneyNum(mon.grid_profit))}</b> U · 資金費 <b class="${cls(moneyNum(mon.funding))}">${signed(moneyNum(mon.funding))}</b> U（吃掉配對 ${mon.pct_of_grid == null ? "—" : n(Math.abs(mon.pct_of_grid), 1) + "%"}）· 淨利 <b class="${cls(moneyNum(mon.net))}">${signed(moneyNum(mon.net))}</b> U · 日均淨利 ${mon.days ? signed(moneyNum(mon.net) / mon.days) : "—"} U（${mon.days} 天）`
+    : "本月尚無紀錄";
+  return `<div class="card fund-cal">
+      <div class="cal-head">
+        <button type="button" id="fundPrev" aria-label="上個月">‹</button>
+        <strong>${y} 年 ${m} 月</strong>
+        <button type="button" id="fundNext" aria-label="下個月">›</button>
+      </div>
+      <p class="cal-sum">${sum}</p>
+      <div class="cal">${cells}</div>
+      <div class="legend">
+        <span><b>錢包</b> 08:05 派網錢包總值（USDT）</span>
+        <span><b>倉位</b> 等效倉位（投入＋追加保證金）· 倉數</span>
+        <span><b>配對/單日</b> 運行中配對利潤 / 當日配對</span>
+        <span><b>資金費</b> 當日資金費，付出為負</span>
+        <span><b>淨利</b> 單日配對＋資金費，格子顏色依淨利</span>
+      </div>
+    </div>`;
+}
+
+function paintFunding() {
+  const data = fundingData || {};
+  const days = data.days || [];
+  const byDate = data.rows_by_date || {};
+  if (!days.length) {
+    app.innerHTML = "<p class='muted'>還沒有每日紀錄。</p>";
+    return;
+  }
+  const latest = days.find((d) => moneyNum(d.funding) != null) || days[0];
+  if (!fundSelected || !byDate[fundSelected]) fundSelected = latest.date;
+  const month = (data.months || {})[latest.date.slice(0, 7)];
+  const since = new Date(Date.parse(latest.date + "T00:00:00Z") - 30 * 86400000).toISOString().slice(0, 10);
+  const recent = days.filter((d) => d.date > since && moneyNum(d.funding) != null);
+  const sum30 = recent.reduce((a, d) => a + moneyNum(d.funding), 0);
+  const span30 = recent.reduce((a, d) => a + (d.span_days || 1), 0);
+  const eaten = (pct) => (pct == null ? "—" : n(Math.abs(pct), 1) + "%");
+  const stat = (label, note, value, sub) => `<div class="stat">${tip(label, note)}`
+    + `<strong class="${cls(moneyNum(value))}">${bothSigned(value)}<span class="twd" style="white-space:normal">${sub}</span></strong></div>`;
+
+  const sel = days.find((d) => d.date === fundSelected) || latest;
+  const rows = (byDate[fundSelected] || []).slice().sort((a, b) => (moneyNum(a.funding_day) ?? 0) - (moneyNum(b.funding_day) ?? 0));
+  const rowHtml = rows.length ? rows.map((r) => {
+    const f = moneyNum(r.funding_day), net = moneyNum(r.net);
+    return `<tr class="clickable" data-id="${esc(r.bu_order_id || "")}">
+      <td>${esc(r.symbol || "—")}</td>
+      <td>${eventLabel(r.event || r.status)}</td>
+      <td class="n">${usdt(r.investment)}</td>
+      <td class="n ${cls(moneyNum(r.daily_profit))}">${signed(moneyNum(r.daily_profit))}</td>
+      <td class="n ${cls(f)}">${signed(f)}</td>
+      <td class="n ${cls(net)}"><b>${signed(net)}</b></td>
+      <td class="n ${cls(r.pct_of_grid)}">${pctText(r.pct_of_grid)}</td>
+      <td class="n ${cls(moneyNum(r.funding_cum))}">${signed(moneyNum(r.funding_cum))}</td>
+    </tr>`;
+  }).join("") : `<tr><td colspan="8" class="muted">當日無倉位明細</td></tr>`;
+
+  const grids = data.grids || [];
+  const gridHtml = grids.map((g) => {
+    const closed = g.lifecycle === "closed";
+    return `<tr class="clickable" data-id="${esc(g.bu_order_id || "")}">
+      <td>${esc(g.symbol || "—")}<small>${esc(String(g.created_at || "").slice(0, 10))} 建倉</small></td>
+      <td>${closed ? `已關倉<small>${esc(String(g.closed_at || "").slice(0, 10))}</small>` : "運行中"}</td>
+      <td class="n ${cls(moneyNum(g.funding_cum))}">${signed(moneyNum(g.funding_cum))}</td>
+      <td class="n ${cls(moneyNum(g.funding_30d))}">${closed && !moneyNum(g.funding_30d) ? "—" : signed(moneyNum(g.funding_30d))}</td>
+      <td class="n">${usdt(g.lifetime_grid)}</td>
+      <td class="n ${cls(g.pct_of_grid)}">${pctText(g.pct_of_grid)}</td>
+    </tr>`;
+  }).join("");
+
+  app.innerHTML = `
+    <p class="muted">試做頁：配對、資金費、淨利放在一起看，確認好用再決定怎麼放進每日詳情或月曆。${tip("怎麼算", FUND_TIP + " " + NET_TIP)}</p>
+    <div class="stats">
+      ${stat("最近一天淨利", NET_TIP, latest.net,
+        `${latest.date} · 配對 ${signed(moneyNum(latest.grid_profit))} · 資金費 ${signed(moneyNum(latest.funding))}（吃掉 ${eaten(latest.pct_of_grid)}）`)}
+      ${stat("本月淨利", "本月每日配對＋資金費加總。和月曆的月合計同一規則，關倉待補的日子不計。", month ? month.net : null,
+        month ? `配對 ${signed(moneyNum(month.grid_profit))} · 資金費 ${signed(moneyNum(month.funding))}（吃掉 ${eaten(month.pct_of_grid)}）` : "")}
+      ${stat("近 30 天資金費", "最近 30 天的每日資金費加總與日均；年化＝日均 ÷ 最近一天的等效倉位 × 365。", { usdt: String(sum30) },
+        span30 ? `日均 ${signed(sum30 / span30)} U · 年化 ${moneyNum(latest.equivalent) ? pctText(sum30 / span30 * 365 / moneyNum(latest.equivalent) * 100) : "—"}` : "")}
+      ${stat("歷史累計資金費", "所有出現過的倉（含已關倉）從建倉起的累計資金費加總，USDT 用最近一次的換算。％＝佔歷史累計配對利潤。", latest.total,
+        `佔歷史累計配對 ${eaten(latest.total_pct_of_grid)}`)}
+    </div>
+    ${fundCalendar(days)}
+    <div class="card">
+      <div class="card-head"><h3>${tip("每日配對、資金費與淨利", FUND_TIP + " " + NET_TIP + " 點長條可切換到那一天。")}</h3>
+        ${effSeg("fundrange", [["30", "近 30 天"], ["90", "近 90 天"], ["all", "全部"]], fundRange)}</div>
+      <p class="note" style="margin:-4px 0 6px">藍綠長條＝當日配對；紅長條＝資金費（付出）；深色線＝淨利。同一個 USDT 軸。</p>
+      <div class="chart" id="fundBars"></div>
+    </div>
+    <div class="card">
+      <div class="card-head"><h3>${fundSelected} 每倉配對與資金費</h3>
+        <label class="note">日期 <select id="fundDate">${days.filter((d) => byDate[d.date]).map((d) =>
+          `<option value="${d.date}"${d.date === fundSelected ? " selected" : ""}>${d.date}</option>`).join("")}</select></label></div>
+      <p class="note">當天配對 <b class="${cls(moneyNum(sel.grid_profit))}">${signed(moneyNum(sel.grid_profit))}</b> U · 資金費 <b class="${cls(moneyNum(sel.funding))}">${signed(moneyNum(sel.funding))}</b> U · 淨利 <b class="${cls(moneyNum(sel.net))}">${signed(moneyNum(sel.net))}</b> U · 資金費年化 ${pctText(sel.annual_pct)}${sel.span_days > 1 ? ` · 資金費含前 ${sel.span_days - 1} 天沒記到的部分` : ""}${moneyNum(sel.funding) == null ? " · 這天沒有可比較的前一筆資金費" : ""}</p>
+      <table class="plain"><thead><tr><th>標的</th><th>事件</th><th>倉位</th><th>當日配對</th>
+        <th>${tip("當日資金費", FUND_TIP)}</th><th>${tip("淨利", NET_TIP)}</th>
+        <th>${tip("資金費／配對", "當日資金費 ÷ 當日配對利潤；配對為 0 或負時不算。")}</th>
+        <th>${tip("累計資金費", "這個倉從建倉起的累計資金費（派網數字）。")}</th></tr></thead>
+      <tbody>${rowHtml}</tbody></table>
+    </div>
+    <div class="card">
+      <div class="card-head"><h3>${tip("各倉累計資金費", "每個倉從建倉起的累計資金費，和它的累計配對利潤（含已提領、複投）比較。付最多的在上面。")}</h3></div>
+      <table class="plain"><thead><tr><th>標的</th><th>狀態</th><th>累計資金費</th><th>近 30 天</th><th>累計配對</th><th>佔配對</th></tr></thead>
+      <tbody>${gridHtml || `<tr><td colspan="6" class="muted">沒有資料</td></tr>`}</tbody></table>
+    </div>`;
+
+  drawFundingBars(days);
+  app.querySelectorAll("button[data-fundrange]").forEach((btn) => {
+    btn.onclick = () => { fundRange = btn.dataset.fundrange; paintFunding(); };
+  });
+  app.querySelectorAll("button[data-funddate]").forEach((btn) => {
+    btn.onclick = () => { fundSelected = btn.dataset.funddate; paintFunding(); };
+  });
+  const shift = (step) => () => {
+    fundMonth.m += step;
+    if (fundMonth.m < 1) { fundMonth.m = 12; fundMonth.y -= 1; }
+    if (fundMonth.m > 12) { fundMonth.m = 1; fundMonth.y += 1; }
+    paintFunding();
+  };
+  document.getElementById("fundPrev").onclick = shift(-1);
+  document.getElementById("fundNext").onclick = shift(1);
+  const pick = document.getElementById("fundDate");
+  if (pick) pick.onchange = () => selectFundDate(pick.value);
+  bindHistoryClicks();
+}
+
+function selectFundDate(date) {
+  fundSelected = date;
+  const [y, m] = date.split("-").map(Number);
+  fundMonth = { y, m };
+  paintFunding();
+}
+
+function drawFundingBars(days) {
+  const el = document.getElementById("fundBars");
+  if (!el) return;
+  const chron = days.slice().reverse();
+  const shown = fundRange === "all" ? chron : chron.slice(-Number(fundRange));
+  const grid = shown.map((d) => moneyNum(d.grid_profit));
+  const fund = shown.map((d) => moneyNum(d.funding));
+  const net = shown.map((d) => moneyNum(d.net));
+  const accent = Charts.token("--accent", "#2e6970");
+  const down = Charts.token("--down", "#b42318");
+  const ink = Charts.token("--ink-2", "#3d4d54");
+  const sel = shown.findIndex((d) => d.date === fundSelected);
+  Charts.plot(el, {
+    n: shown.length, labels: shown.map((d) => d.date.slice(5).replace("-", "/")), height: 230, label: "每日配對、資金費與淨利",
+    stacks: [
+      { id: "grid", color: accent, values: grid },
+      { id: "fund", color: down, values: fund },
+    ],
+    lines: [{ id: "net", color: ink, values: net, strong: true }],
+    yFormat: (v) => String(+v.toFixed(2)),
+    selected: sel >= 0 ? sel : null,
+    empty: "這段期間沒有資料",
+    tooltip: (i) => {
+      const d = shown[i];
+      return Charts.tipRows(d.date + (d.span_days > 1 ? `（資金費含前 ${d.span_days - 1} 天）` : ""), [
+        { color: accent, label: "當日配對", value: signed(grid[i]) + " U", cls: cls(grid[i]) },
+        { color: down, label: "資金費", value: fund[i] == null ? "—" : signed(fund[i]) + " U", cls: cls(fund[i]) },
+        { color: ink, label: "淨利", value: net[i] == null ? "—" : signed(net[i]) + " U", cls: cls(net[i]) },
+        { label: "資金費吃掉", value: d.pct_of_grid == null ? "—" : n(Math.abs(d.pct_of_grid), 1) + "%" },
+      ], "點長條看那一天");
+    },
+    onClick: (i) => selectFundDate(shown[i].date),
+  });
+}
+
+async function renderFunding() {
+  fundingData = await get("/api/v1/funding");
+  paintFunding();
+}
+
+// 槓桿對照（試做）：另一套「等效倉位＝倉位×倍率」和這裡「投入＋追加保證金」並排比較。只讀最近一次每日快照。
+let leverData = null;
+const OURS_TIP = "你的等效倉位＝投入＋追加保證金，也就是你放在這個倉裡的保證金。調高槓桿、保證金留在倉內時不變；補追加保證金會變大。";
+const THEIRS_TIP = "他的等效倉位＝當前倉位（quoteInvestment 換成 USDT）× 派網倍率，也就是槓桿放大後的規模。調高槓桿、保證金留在倉內時也不變；但補追加保證金不會讓它改變。";
+
+function paintLeverCompare() {
+  const data = leverData || {};
+  const rows = data.rows || [];
+  const t = data.totals;
+  if (!rows.length || !t) {
+    app.innerHTML = "<p class='muted'>還沒有每日快照。</p>";
+    return;
+  }
+  const u = (v, d = 0) => (v == null ? "—" : n(v, d));
+  const x = (v) => (v == null ? "—" : n(v, 2) + "×");
+  const pct = (v, d = 1) => (v == null ? "—" : n(v, d) + "%");
+  const stat = (label, note, main, sub) => `<div class="stat">${tip(label, note)}`
+    + `<strong>${main}<span class="twd" style="white-space:normal">${sub}</span></strong></div>`;
+
+  const coin = rows.find((r) => r.coin_margined && r.their_position != null
+    && Math.abs(r.their_position - r.investment) > 0.01);
+  const fundGap = rows.filter((r) => r.funding_net != null && r.funding_paid != null)
+    .sort((a, b) => Math.abs(b.funding_net - b.funding_paid) - Math.abs(a.funding_net - a.funding_paid))[0];
+
+  const body = rows.map((r) => {
+    const diffRatio = r.ratio != null && r.our_leverage != null && Math.abs(r.ratio - r.our_leverage) >= 0.01;
+    return `<tr class="clickable" data-id="${esc(r.bu_order_id || "")}">
+      <td>${esc(r.symbol || "—")}<small>派網 ${esc(r.leverage || "—")}</small></td>
+      <td>${u(r.investment)}${r.coin_margined && r.their_position != null && Math.abs(r.their_position - r.investment) > 0.01
+        ? `<small>他 ${u(r.their_position)}（現價）</small>` : ""}</td>
+      <td class="n">${u(r.extra_margin)}</td>
+      <td class="n"><b>${u(r.ours)}</b><small>${pct(r.our_share)}</small></td>
+      <td class="n"><b>${u(r.theirs)}</b><small>${pct(r.their_share)}</small></td>
+      <td class="n">${x(r.our_leverage)}${diffRatio ? `<small>他÷你 ${x(r.ratio)}</small>` : ""}</td>
+      <td class="n">${pct(r.our_eff)}</td>
+      <td class="n">${pct(r.their_eff)}</td>
+      <td class="n">${pct(r.liq_distance_pct, 2)}</td>
+    </tr>`;
+  }).join("");
+
+  const foot = `<tr class="total">
+      <td><b>合計</b><small>${t.count} 倉</small></td>
+      <td>${u(t.investment)}${Math.abs(t.their_position - t.investment) > 0.01 ? `<small>他：${u(t.their_position)}</small>` : ""}</td>
+      <td class="n">${u(t.extra_margin)}</td>
+      <td class="n"><b>${u(t.ours)}</b></td>
+      <td class="n"><b>${u(t.theirs)}</b></td>
+      <td class="n">${x(t.our_leverage)}<small>他÷你 ${x(t.ratio)}</small></td>
+      <td class="n">${pct(t.our_eff)}</td>
+      <td class="n">${pct(t.their_eff)}</td>
+      <td class="n">${pct(t.liq_ours, 2)}<small>他：${pct(t.liq_theirs, 2)}</small></td>
+    </tr>`;
+
+  const same = "<span class='up'>一樣</span>";
+  const diff = "<span class='down'>不一樣</span>";
+  const defs = [
+    ["等效倉位", "當前倉位 × 倍率（槓桿後的規模）", "投入＋追加保證金（你放在倉裡的保證金）",
+      `${diff}：他的 ＝ 你的 × 等效槓桿。合計 ${u(t.theirs)} 對 ${u(t.ours)} U`],
+    ["佔比", "他的等效倉位 ÷ 合計", "你的等效倉位 ÷ 合計", `${diff}：倍率越高的倉，在他的表佔比越大`],
+    ["當前倉位／倍率", "quoteInvestment 換成 USDT；派網倍率", "投入（派網顯示的倉位）；派網槓桿",
+      `U 本位${same}。${coin ? `幣本位 ${esc(coin.symbol)} 他用現價、你用開倉價：${u(coin.their_position)} 對 ${u(coin.investment)} U` : "幣本位他用現價、你用開倉價"}`],
+    ["等效槓桿", "沒有這欄，只看每倉倍率", "投入 × 倍率 ÷ 你的等效倉位", `你這邊才有。整體 ${x(t.our_leverage)}`],
+    ["現價／強平價", "永續行情 close；有效的預估強平價", "永續行情；同樣的強平價規則", same],
+    ["強平距離", "（現價 − 強平價）÷ 現價", "同一個公式", `每倉${same}；合計他用他的等效倉位加權（${pct(t.liq_theirs, 2)}），你用你的（${pct(t.liq_ours, 2)}）`],
+    ["網格上下限距離", "（現價 − 下限）÷ 現價、（上限 − 現價）÷ 現價", "沒有這欄", "你這邊沒有"],
+    ["可用網格／累積網格", "gridProfit − 提領 − 複投 − 減倉／gridProfit", "網格利潤＝gridProfit", "累積網格一樣；你這邊沒有「可用網格」"],
+    ["單天配對", "本日最新 − 本日基準（08:00 日界線，盤中一直更新）", "08:05 快照和前一天相減，另外處理提領、複投、關倉", "概念一樣，記錄時間點不同"],
+    ["資金費", "fundingFeePayment 的差額；沒資料當 0", "totalFundingFee 的差額（淨額，含收到的）；沒資料留空",
+      `${diff}：fundingFeePayment 只算付出的。目前合計他 ${signed(t.funding_paid)}、淨額 ${signed(t.funding_net)}${fundGap
+        ? `；差最多的是 ${esc(fundGap.symbol)}（${signed(fundGap.funding_paid)} 對 ${signed(fundGap.funding_net)}）` : ""}`],
+    ["單天淨利", "單天配對＋資金費", "資金費試做頁的淨利", "算法一樣，資金費來源不同（見上一列）"],
+    ["當前利潤／淨利", "保證金權益推算，再加回已轉入本金的獲利", "總損益＝趨勢盈虧＋網格利潤", `${diff}：是另一套算法`],
+    ["當前利潤%／淨利%", "÷ 他的等效倉位", "沒有；年化用你的等效倉位", "分母不同"],
+    ["配對效率（%/年）", "累積網格 ÷ 他的等效倉位 ÷ 天數 × 365", "網格年化＝網格利潤 ÷ 你的等效倉位 ÷ 天數 × 365",
+      `${diff}：他的 ≈ 你的 ÷ 等效槓桿（合計 ${pct(t.their_eff)} 對 ${pct(t.our_eff)}）。你頁面上的「每U效率」分母也是投入×倍率，和他同一個基準`],
+    ["運行時間", "現在 − 建立時間", "持有天數", same],
+  ].map(([col, theirs, ours, verdict]) =>
+    `<tr><td><b>${col}</b></td><td>${theirs}</td><td>${ours}</td><td>${verdict}</td></tr>`).join("");
+
+  app.innerHTML = `
+    <p class="muted">試做頁：把另一套「等效倉位＝倉位×倍率」和你的「等效倉位＝投入＋追加保證金」放在同一張表。資料是 ${esc(data.capture_date || "")} 每日快照（${data.as_of ? fmtTaipei(data.as_of) : "—"}），只讀不寫。</p>
+    <div class="stats">
+      ${stat("你的等效倉位", OURS_TIP, `${u(t.ours)}<span class="unit">USDT</span>`, `投入 ${u(t.investment)} ＋ 追加保證金 ${u(t.extra_margin)}`)}
+      ${stat("他的等效倉位", THEIRS_TIP, `${u(t.theirs)}<span class="unit">USDT</span>`, `投入 × 倍率；是你的 ${n(t.ratio, 2)} 倍`)}
+      ${stat("等效槓桿", "投入 × 派網倍率 加總 ÷ 你的等效倉位。他的表沒有整體槓桿，但「他的等效倉位 ÷ 你的」幾乎就是這個數；差一點是因為 ETH 幣本位他用現價換算。", `${n(t.our_leverage, 2)} 倍`, `他÷你 ${n(t.ratio, 2)}`)}
+      ${stat("配對效率（年化）", "各倉網格利潤 ÷ 持有天數加總，× 365，再除以合計的等效倉位。分子一樣，只差分母。", `${pct(t.our_eff)} <span class="unit">你</span>`, `他的算法 ${pct(t.their_eff)}`)}
+    </div>
+    <div class="card">
+      <div class="card-head"><h3>${tip("每倉對照", "點列可開單一網格頁。投入就是他的「當前倉位」；幣本位他用現價換算，所以會不同。")}</h3></div>
+      <p class="note">${tip("你的等效倉位", OURS_TIP)}和${tip("他的等效倉位", THEIRS_TIP)}剛好差一個「等效槓桿」。兩邊在調高槓桿、保證金留在倉內時都不會跳；差別在補追加保證金時，你的會變大、他的不變。</p>
+      <table class="plain wide lever-cmp"><thead><tr>
+        <th>標的</th><th>投入<small>＝他的「當前倉位」</small></th><th>追加保證金</th>
+        <th>${tip("你的等效倉位", OURS_TIP)}<small>佔比</small></th><th>${tip("他的等效倉位", THEIRS_TIP)}<small>佔比</small></th>
+        <th>${tip("等效槓桿", "投入 × 派網倍率 ÷ 你的等效倉位。U 本位的倉，這個數字就等於「他的 ÷ 你的」。")}</th>
+        <th>${tip("配對效率 你", "網格利潤 ÷ 你的等效倉位 ÷ 持有天數 × 365。")}<small>%/年</small></th>
+        <th>${tip("配對效率 他", "網格利潤 ÷ 他的等效倉位 ÷ 持有天數 × 365。")}<small>%/年</small></th>
+        <th>${tip("強平距離", "（現價 − 強平價）÷ 現價，兩邊每倉都一樣。合計是加權平均：你的用你的等效倉位加權，他用他的。")}</th>
+      </tr></thead><tbody>${body}${foot}</tbody></table>
+    </div>
+    <div class="card">
+      <div class="card-head"><h3>${tip("欄位算法對照", "他的每個欄位，對到你這邊的哪一個、算法一不一樣。")}</h3></div>
+      <table class="plain wide lever-defs"><thead><tr><th>他的欄位</th><th>他的算法</th><th>你這邊</th><th>比較</th></tr></thead>
+      <tbody>${defs}</tbody></table>
+    </div>`;
+  bindHistoryClicks();
+}
+
+async function renderLeverCompare() {
+  leverData = await get("/api/v1/leverage-compare");
+  paintLeverCompare();
 }
 
 async function render() {
@@ -957,6 +2712,9 @@ async function render() {
     else if (page === "records") await renderBoard();
     else if (page === "daily") await renderDaily();
     else if (page === "calendar") await renderCalendar();
+    else if (page === "efficiency") await renderEfficiency();
+    else if (page === "funding") await renderFunding();
+    else if (page === "levercmp") await renderLeverCompare();
     else if (page === "history") await renderHistory();
     else if (page === "settlements") await renderSettlements();
     else await renderStatus();
@@ -964,7 +2722,9 @@ async function render() {
     app.innerHTML = `<p class="warn">${esc(err.message)}</p>`;
   }
 }
-render();
+
+if (!parseHash().page && historyId) location.replace(pageHash("history"));
+else applyRoute();
 </script>
 </body>
 </html>

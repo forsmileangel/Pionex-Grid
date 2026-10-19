@@ -15,3 +15,6 @@ __pycache__/
 *.pyc
 .venv/
 v2-data/
+
+# Health-check reports contain real balances (local only)
+網格建議/
