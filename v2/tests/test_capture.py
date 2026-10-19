@@ -200,3 +200,49 @@ class ListModeTests(FinishedCacheTests):
         self.assertEqual((first["checked"], first["missing"]), (0, 0))
         self.collect_cmd(True)
         self.assertEqual(self.read()["last_list_check"], first)
+
+
+class NodePathTests(unittest.TestCase):
+    """PIONEX_NODE_PATH, then PATH, then the Codex cache, then the name node."""
+
+    CODEX = r"C:\Users\Forever you\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe"
+    WHICH = r"D:\Program Files\nodejs\node.exe"
+    ENV = r"D:\custom\node.exe"
+
+    def resolve(self, env, which, present):
+        from unittest.mock import patch
+
+        from v2.capture import node_path
+
+        with patch.dict(os.environ, {}, clear=False):
+            if env is None:
+                os.environ.pop("PIONEX_NODE_PATH", None)
+            else:
+                os.environ["PIONEX_NODE_PATH"] = env
+            with patch("v2.capture.shutil.which", return_value=which) as which_mock, \
+                    patch("v2.capture.Path.exists", lambda self: str(self) in present), \
+                    patch("v2.capture.Path.resolve", lambda self: self):
+                return node_path(), which_mock
+
+    def test_env_path_wins_when_the_file_exists(self):
+        found, which_mock = self.resolve(self.ENV, self.WHICH, {self.ENV, self.CODEX})
+        self.assertEqual(found, self.ENV)
+        which_mock.assert_not_called()
+
+    def test_which_wins_when_env_is_unset_or_missing(self):
+        found, which_mock = self.resolve(None, self.WHICH, {self.CODEX})
+        self.assertEqual(found, self.WHICH)
+        which_mock.assert_called_once_with("node")
+        found, which_mock = self.resolve(self.ENV, self.WHICH, {self.CODEX})
+        self.assertEqual(found, self.WHICH)
+        which_mock.assert_called_once_with("node")
+
+    def test_codex_cache_wins_when_which_finds_nothing(self):
+        found, which_mock = self.resolve(None, None, {self.CODEX})
+        self.assertEqual(found, self.CODEX)
+        which_mock.assert_called_once_with("node")
+
+    def test_plain_node_when_nothing_is_available(self):
+        found, which_mock = self.resolve(None, None, set())
+        self.assertEqual(found, "node")
+        which_mock.assert_called_once_with("node")

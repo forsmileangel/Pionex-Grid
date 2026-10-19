@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -29,6 +30,10 @@ def node_path() -> str:
     env = os.environ.get("PIONEX_NODE_PATH")
     if env and Path(env).exists():
         return env
+    found = shutil.which("node")
+    if found:
+        # which() keeps the PATHEXT spelling, such as node.EXE.
+        return str(Path(found).resolve())
     bundled = Path(r"C:\Users\Forever you\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe")
     if bundled.exists():
         return str(bundled)
