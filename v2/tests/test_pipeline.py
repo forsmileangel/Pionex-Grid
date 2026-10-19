@@ -86,7 +86,7 @@ class PipelineTests(unittest.TestCase):
 
     @unittest.skipUnless(os.name == "nt", "window flags exist only on Windows")
     def test_legacy_excel_runs_without_a_console_window(self):
-        main(self.args())
+        self.assertEqual(main(self.args("--skip-capture")), 0)
         kwargs = self.run_excel.call_args.kwargs
         self.assertTrue(kwargs["creationflags"] & 0x08000000)
         self.assertEqual(kwargs["errors"], "replace")
