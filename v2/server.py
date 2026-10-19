@@ -44,6 +44,10 @@ from .xlsx import write_xlsx
 ROOT = Path(__file__).resolve().parent
 STATIC = ROOT / "static"
 EXPORTS = ROOT.parent / "exports"
+_STATIC_TYPES = {
+    ".js": "text/javascript; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+}
 HOST = "127.0.0.1"
 PORT = 8787
 SERVER_LOG = ROOT.parent / "v2-data" / "dashboard-server.log"
@@ -109,6 +113,30 @@ def status_with_publish(db_path: Path, intraday_db: Path | None = None) -> dict:
     return payload
 
 
+def resolve_static(url_path: str) -> tuple[Path, str] | None:
+    """Map /js/**/*.js and /css/**/*.css onto a file inside STATIC.
+
+    `(STATIC / rel).resolve()` must stay under `STATIC.resolve()`. Any other
+    suffix is refused so a traversal cannot read server.py or other sources.
+    """
+    decoded = unquote(url_path or "")
+    if not decoded.startswith(("/js/", "/css/")):
+        return None
+    if "\\" in decoded or "\x00" in decoded:
+        return None
+    rel = decoded[1:]
+    root = STATIC.resolve()
+    candidate = (STATIC / rel).resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError:
+        return None
+    content_type = _STATIC_TYPES.get(candidate.suffix.lower())
+    if content_type is None or not candidate.is_file():
+        return None
+    return candidate, content_type
+
+
 def local_post_allowed(origin: str, referer: str, port: int) -> bool:
     """Only the dashboard page itself may POST. Blocks other websites hitting 127.0.0.1."""
     allowed = {
@@ -166,11 +194,13 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _file(self, path: Path, content_type: str):
+    def _file(self, path: Path, content_type: str, cache_control: str | None = None):
         data = path.read_bytes()
         self.send_response(200)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(data)))
+        if cache_control:
+            self.send_header("Cache-Control", cache_control)
         self.end_headers()
         self.wfile.write(data)
 
@@ -197,6 +227,13 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/chart.js":
             self._file(STATIC / "chart.js", "text/javascript; charset=utf-8")
+            return
+        asset = resolve_static(path)
+        if asset is not None:
+            self._file(asset[0], asset[1], "no-cache")
+            return
+        if path.startswith(("/js/", "/css/")) or unquote(path).startswith(("/js/", "/css/")):
+            self._json({"error": "not found"}, 404)
             return
         if path == "/api/v1/status":
             self._json(status_with_publish(self.db_path, self._intraday_path()))

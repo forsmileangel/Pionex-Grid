@@ -113,6 +113,37 @@ class DashboardApiTests(unittest.TestCase):
             self.assertIn("javascript", res.headers["Content-Type"])
             self.assertIn(b"global.Charts", res.read())
 
+    def test_module_assets_are_served_and_traversal_is_blocked(self):
+        import http.client
+
+        from v2.server import resolve_static
+
+        def raw(path):
+            conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+            conn.request("GET", path)
+            res = conn.getresponse()
+            body = res.read()
+            conn.close()
+            return res.status, res.headers, body
+
+        status, headers, body = raw("/js/main.js")
+        self.assertEqual(status, 200)
+        self.assertEqual(headers["Content-Type"], "text/javascript; charset=utf-8")
+        self.assertEqual(headers["Cache-Control"], "no-cache")
+        self.assertIn(b"setRenderers", body)
+        status, headers, body = raw("/js/pages/live.js")
+        self.assertEqual(status, 200)
+        self.assertEqual(headers["Content-Type"], "text/javascript; charset=utf-8")
+        status, headers, body = raw("/css/app.css")
+        self.assertEqual(status, 200)
+        self.assertEqual(headers["Content-Type"], "text/css; charset=utf-8")
+        self.assertEqual(headers["Cache-Control"], "no-cache")
+        self.assertIn(b"--ink:", body)
+        for path in ("/js/../server.py", "/js/..%2F..%2Fserver.py", "/css/x.py"):
+            status, _, _ = raw(path)
+            self.assertEqual(status, 404, path)
+            self.assertIsNone(resolve_static(path))
+
     def test_manual_save_is_audited_and_republish_skips_without_credentials(self):
         code, _ = self.call("/api/v1/settlements/g1", "POST", {"own_cash_in": "1000", "note": "check"})
         self.assertEqual(code, 200)
