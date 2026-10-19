@@ -132,7 +132,8 @@ class PipelineTests(unittest.TestCase):
 
     def test_dev_tree_refuses_production_workbooks(self):
         errors = io.StringIO()
-        with redirect_stderr(errors):
+        # The guard is about the dev tree; force that view so the test passes in production too.
+        with redirect_stderr(errors), patch("v2.pipeline._outside_production", return_value=True):
             code = main(["--skip-capture", "--db", str(self.db)])
         self.assertEqual(code, 0)
         self.run_excel.assert_not_called()
