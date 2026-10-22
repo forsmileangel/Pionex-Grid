@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import shutil
 import sqlite3
+import sys
 from contextlib import closing
 from datetime import datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
@@ -952,6 +953,26 @@ def _snapshot_fields(run_id: int, rec: dict) -> tuple:
     )
 
 
+def vanished_positions(snapshot: dict, db_path: Path | None = None) -> list[str]:
+    """Active ledger positions that are in neither the running nor the finished list.
+
+    Every real closure so far showed up in Pionex's finished list the same day, so a
+    position missing from both lists means the API returned an incomplete list.
+    Ingesting it would mark the position closed and drop its profit until it came back.
+    """
+    path = Path(db_path or DEFAULT_DB)
+    if not path.exists():
+        return []
+    listed = {str(r.get("ApiOrderId") or "") for r in snapshot.get("Records") or []}
+    con = connect(path)
+    try:
+        active = [row["bu_order_id"] for row in con.execute(
+            "SELECT bu_order_id FROM grid_positions WHERE lifecycle='active' ORDER BY bu_order_id")]
+    finally:
+        con.close()
+    return [oid for oid in active if oid not in listed]
+
+
 def ingest(snapshot: dict, db_path: Path | None = None, replace_date: bool = False) -> dict:
     records = list(snapshot.get("Records") or [])
     captured = taipei_now(snapshot.get("CapturedAt"))
@@ -996,7 +1017,7 @@ def ingest(snapshot: dict, db_path: Path | None = None, replace_date: bool = Fal
             gap_days = 0
             if last:
                 prev_date = datetime.fromisoformat(last["capture_date"]).date()
-                gap_days = max(0, (captured.date() - prev_date).days)
+                gap_days = max(0, (captured.date() - prev_date).days - 1)
             by_id = _positions(con)
         overrides = _load_overrides(con)
 
@@ -1165,7 +1186,7 @@ def ingest(snapshot: dict, db_path: Path | None = None, replace_date: bool = Fal
         updated = con.execute("SELECT * FROM daily_summary WHERE capture_date=?", (capture_date,)).fetchone()
         daily_total, closed_count, unresolved = updated["daily_profit_i"], updated["closed_count"], updated["unresolved_count"]
         con.commit()
-        _backup(Path(db_path or DEFAULT_DB))
+        backup_error = backup_after_commit(Path(db_path or DEFAULT_DB))
         return {
             "run_id": run_id,
             "capture_date": capture_date,
@@ -1176,6 +1197,7 @@ def ingest(snapshot: dict, db_path: Path | None = None, replace_date: bool = Fal
             "unresolved": unresolved,
             "daily_profit": from_fixed(daily_total),
             "gap_days": gap_days,
+            **({"backup_error": backup_error} if backup_error else {}),
         }
     except Exception:
         con.rollback()
@@ -1196,6 +1218,21 @@ def _backup(db_path: Path) -> None:
     backups = sorted(BACKUP_DIR.glob("pionex-grid-*.sqlite"), reverse=True)
     for old in backups[30:]:
         old.unlink(missing_ok=True)
+
+
+def backup_after_commit(db_path: Path) -> str | None:
+    """Back up after a write that is already committed.
+
+    A failure here (disk full, file locked) must not turn a saved capture into a failed
+    one: the pipeline would then skip both Excel exports and the server would answer 500.
+    """
+    try:
+        _backup(db_path)
+    except Exception as exc:
+        message = f"backup failed: {exc}"
+        print(f"v2 ledger {message}", file=sys.stderr)
+        return message
+    return None
 
 
 def restore_latest_backup(db_path: Path | None = None) -> Path:

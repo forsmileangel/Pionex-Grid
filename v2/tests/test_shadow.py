@@ -33,7 +33,9 @@ class ShadowTests(unittest.TestCase):
         path = self.dir / "2026-10-21-0815.json"
         self.assertEqual(result["path"], str(path))
         self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["CapturedAt"], "x")
-        self.assertEqual(self.collect.call_args.kwargs, {"reuse_finished": True, "running_from_list": True})
+        self.assertEqual(self.collect.call_args.kwargs, {
+            "reuse_finished": True, "running_from_list": True, "cache_path": self.dir / "finished-details.json"})
+        self.assertEqual(sorted(p.name for p in self.dir.iterdir()), ["2026-10-21-0815.json"])
 
     def test_counts_settlements_that_posted_after_the_ledger_capture(self):
         official = {"a": (EARLIER, -1.0), "b": (SETTLE, -2.0), "c": (None, 0.0)}

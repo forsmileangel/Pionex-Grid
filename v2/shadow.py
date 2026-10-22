@@ -3,7 +3,8 @@
 Pionex settles funding at 08:00 Taipei. At 08:05 some positions have not posted
 it yet, so it lands in the next day's record. This keeps an 08:15 snapshot per
 day so a week of data shows whether a later daily capture would catch it.
-No ledger, intraday, Gist or Excel writes.
+No ledger, intraday, Gist or Excel writes; closed-bot details are cached in
+v2-data/shadow/, not in the shared cache the live and daily captures use.
 
     python -m v2.shadow            capture (08:10-08:30 only) into v2-data/shadow/
     python -m v2.shadow --report   compare each saved day with that day's ledger capture
@@ -24,6 +25,7 @@ from .store import DEFAULT_DB, SCALE, CaptureError
 
 ROOT = Path(__file__).resolve().parent.parent
 SHADOW_DIR = ROOT / "v2-data" / "shadow"
+FINISHED_CACHE_NAME = "finished-details.json"
 # A start after the PC was off would not measure 08:15, so skip it.
 WINDOW = ((8, 10), (8, 30))
 
@@ -32,11 +34,15 @@ def capture_shadow(credentials: Path, now: datetime | None = None, force: bool =
     now = now or datetime.now(TAIPEI)
     if not force and not (WINDOW[0] <= (now.hour, now.minute) <= WINDOW[1]):
         return {"ok": True, "skipped": True, "reason": f"outside 08:10-08:30 ({now:%H:%M})"}
-    # Same collector call as the 30-minute live capture.
-    snapshot = collect_snapshot(credentials, reuse_finished=True, running_from_list=True)
     SHADOW_DIR.mkdir(parents=True, exist_ok=True)
+    # Same collector call as the 30-minute live capture, with its own closed-bot cache:
+    # the shared one is rewritten by the live and daily captures around the same time.
+    snapshot = collect_snapshot(credentials, reuse_finished=True, running_from_list=True,
+                                cache_path=SHADOW_DIR / FINISHED_CACHE_NAME)
     path = SHADOW_DIR / f"{now.date().isoformat()}-{now:%H%M}.json"
-    path.write_text(json.dumps(snapshot, ensure_ascii=False), encoding="utf-8")
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(snapshot, ensure_ascii=False), encoding="utf-8")
+    temporary.replace(path)
     return {"ok": True, "path": str(path), "captured_at": snapshot.get("CapturedAt")}
 
 

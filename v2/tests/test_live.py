@@ -152,6 +152,22 @@ class LiveTests(unittest.TestCase):
                     publish.assert_not_called()
                 self.assertFalse(self.db.exists())
 
+    def test_commit_rejects_a_snapshot_missing_an_open_position(self):
+        today = datetime.now(TAIPEI).date().isoformat()
+        ingest(snap("2026-08-26", [rec(ApiOrderId="g1"), rec(ApiOrderId="g2", Key="ETH|x")]), self.db)
+        snapshot = live_snap([rec(ApiOrderId="g1", GridProfit=22)])
+        snapshot['CapturedAt'] = today + 'T00:00:00+08:00'
+        save_live_snapshot(snapshot, self.live)
+        with patch('v2.gist_publish.publish_ledger') as publish:
+            with self.assertRaises(CaptureError) as caught:
+                commit_live_to_daily(today, self.db, self.live)
+            publish.assert_not_called()
+        self.assertIn("g2", str(caught.exception))
+        con = connect(self.db)
+        dates = [r[0] for r in con.execute("SELECT capture_date FROM daily_summary")]
+        con.close()
+        self.assertEqual(dates, ["2026-08-26"])
+
     def test_commit_rejects_fast_mode_snapshot(self):
         today = datetime.now(TAIPEI).date().isoformat()
         snapshot = live_snap([rec(GridProfit=22)])

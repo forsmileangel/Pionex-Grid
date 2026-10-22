@@ -161,6 +161,11 @@ def _step_capture(db_path: Path, if_missing: bool, skip_capture: bool) -> str:
         _log("capture", f"fail {exc}")
         print(f"擷取失敗：{exc}", file=sys.stderr)
         return "failed"
+    if result.get("skipped"):
+        _log("capture", f"skip {result['reason']}")
+        return "skipped"
+    if result.get("backup_error"):
+        _log("capture", f"warn {result['backup_error']}")
     _note_publish(result)
     _log("capture", "ok")
     return "ok"

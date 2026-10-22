@@ -4,6 +4,9 @@ import fs from "node:fs";
 const API_BASE = "https://api.pionex.com";
 const DEFAULT_CREDENTIAL_PATH = "D:\\My-project\\pionex grid record\\PIONEX API.txt";
 const SOURCE = "Pionex API (read-only)";
+// Without a limit, a stalled connection waits about five minutes per request, and the
+// 08:05 task stays running long enough to block the next day's start.
+const REQUEST_TIMEOUT_MS = 20000;
 
 function option(name, fallback = "") {
   const index = process.argv.indexOf(name);
@@ -40,36 +43,52 @@ function privateGet(path, params, credentials) {
   return fetch(`${API_BASE}${pathUrl}`, {
     method: "GET",
     headers: { "PIONEX-KEY": credentials.apiKey, "PIONEX-SIGNATURE": signature, Accept: "application/json" },
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
 }
 
 function publicGet(path, params) {
   const query = sortedQuery(params);
-  return fetch(`${API_BASE}${path}?${query}`, { method: "GET", headers: { Accept: "application/json" } });
+  return fetch(`${API_BASE}${path}?${query}`, {
+    method: "GET",
+    headers: { Accept: "application/json" },
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
 }
 
 async function parseResponse(response, label, sentAt) {
   const body = await response.text();
   let json;
-  try { json = JSON.parse(body); } catch { throw new Error(`${label} returned non-JSON HTTP ${response.status}.`); }
+  try {
+    json = JSON.parse(body);
+  } catch {
+    // An HTML error page from the proxy in front of the API: a passing outage, not an API answer.
+    const error = new Error(`${label} returned non-JSON HTTP ${response.status}.`);
+    error.retryable = true;
+    throw error;
+  }
   noteServerTime(json, sentAt, Date.now());
   if (!response.ok || json.result === false) {
     const error = new Error(`${label} failed: HTTP ${response.status}; code=${json.code || "unknown"}; message=${json.message || "unknown"}`);
     error.code = json.code;
+    error.retryable = response.status === 429 || response.status >= 500;
     throw error;
   }
   return json;
 }
 
-// Every call is a read-only GET, so a dropped connection (fetch rejects with a TypeError, e.g.
-// "fetch failed" or "terminated") is retried a few times. HTTP and API errors are not retried.
+// Every call is a read-only GET, so passing failures are retried a few times: a dropped
+// connection (fetch rejects with a TypeError, e.g. "fetch failed" or "terminated"), a request
+// over REQUEST_TIMEOUT_MS (TimeoutError), HTTP 429 / 5xx and non-JSON pages. Other API errors
+// are answers, not outages, and are not retried.
 async function withNetworkRetry(label, send) {
   const attempts = 3;
   for (let attempt = 1; ; attempt += 1) {
     try {
       return await send();
     } catch (error) {
-      if (!(error instanceof TypeError)) throw error;
+      const passing = error instanceof TypeError || error.name === "TimeoutError" || error.retryable === true;
+      if (!passing) throw error;
       if (attempt >= attempts) {
         const cause = error.cause && (error.cause.code || error.cause.message);
         throw new Error(`${label}: ${error.message}${cause ? ` (${cause})` : ""} after ${attempts} attempts`);

@@ -14,7 +14,7 @@ from pathlib import Path
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from .store import DEFAULT_DB, CaptureError, connect, ingest
+from .store import DEFAULT_DB, CaptureError, connect, ingest, vanished_positions
 
 TAIPEI = ZoneInfo("Asia/Taipei")
 
@@ -24,6 +24,10 @@ API_JS = ROOT / "pionex-grid-api.mjs"
 FINISHED_CACHE = ROOT / "v2-data" / "finished-details.json"
 # Pionex rewrites this timestamp on closed bots without any money field changing.
 _VOLATILE_RAW_KEYS = {"lastFundingFeeTs"}
+# A daily detail capture takes about 20 seconds. Each request also has its own timeout
+# in the collector; this one stops a stuck Node process, which would otherwise hold the
+# 08:05 task (and the server's refresh lock) until someone killed it.
+COLLECTOR_TIMEOUT_SECONDS = 300
 
 
 def node_path() -> str:
@@ -195,7 +199,10 @@ def collect_snapshot(credentials: Path, reuse_finished: bool = False, cache_path
             cmd += ["--finished-cache", str(cache)]
         if running_from_list and _list_mode_allowed(cache):
             cmd += ["--running-from-list"]
-        proc = subprocess.run(cmd, **_collector_run_kwargs())
+        try:
+            proc = subprocess.run(cmd, timeout=COLLECTOR_TIMEOUT_SECONDS, **_collector_run_kwargs())
+        except subprocess.TimeoutExpired:
+            raise CaptureError(f"Collector did not finish within {COLLECTOR_TIMEOUT_SECONDS} seconds; stopped")
         if proc.returncode != 0:
             raise CaptureError((proc.stderr or proc.stdout or "collector failed").strip())
         snapshot = json.loads(out.read_text(encoding="utf-8"))
@@ -242,16 +249,38 @@ def capture_live(credentials: Path, dest: Path | None = None, skip_publish: bool
     return result
 
 
-def capture(credentials: Path, db_path: Path, replace_date: bool = False, skip_publish: bool = False) -> dict:
-    if not replace_date and Path(db_path).exists():
-        con = connect(db_path)
-        try:
-            today = datetime.now(TAIPEI).date().isoformat()
-            if con.execute("SELECT 1 FROM daily_summary WHERE capture_date=?", (today,)).fetchone():
-                replace_date = True
-        finally:
-            con.close()
+def _today_captured_at(db_path: Path, now: datetime) -> datetime | None:
+    if not Path(db_path).exists():
+        return None
+    con = connect(db_path)
+    try:
+        row = con.execute("""SELECT r.captured_at FROM daily_summary d JOIN capture_runs r ON r.id=d.run_id
+                             WHERE d.capture_date=?""", (now.date().isoformat(),)).fetchone()
+    finally:
+        con.close()
+    return datetime.fromisoformat(row["captured_at"]) if row else None
+
+
+def capture(credentials: Path, db_path: Path, replace_date: bool = False, skip_publish: bool = False,
+            allow_missing: bool = False) -> dict:
+    if not replace_date:
+        now = datetime.now(TAIPEI)
+        existing = _today_captured_at(db_path, now)
+        cutoff = now.replace(hour=8, minute=5, second=0, microsecond=0)
+        if existing is not None and existing >= cutoff:
+            # A second run the same day would move today's cut-off from 08:05 to now,
+            # stretching today and shrinking tomorrow without any trace. Only an
+            # explicit --replace-date does that.
+            reason = f"today's daily record ({existing:%H:%M}) already exists; use --replace-date to replace it"
+            return {"skipped": True, "reason": reason, "publish": {"ok": False, "skipped": True, "reason": reason}}
+        # A record taken before 08:05 is replaced so the day still ends at the 08:05 cut-off.
+        replace_date = existing is not None
     snapshot = collect_snapshot(credentials)
+    missing = vanished_positions(snapshot, db_path)
+    if missing and not allow_missing:
+        raise CaptureError(
+            f"Pionex lists are missing {len(missing)} open position(s) ({', '.join(missing)}); nothing was written. "
+            "Run again later; if they are really gone, rerun with --allow-missing")
     intraday = record_intraday(snapshot, "daily", db_path)
     result = ingest(snapshot, db_path=db_path, replace_date=replace_date)
     result["intraday"] = intraday
@@ -287,6 +316,8 @@ def main() -> int:
     parser.add_argument("--credentials", default=str(V1_CREDENTIALS))
     parser.add_argument("--db", default=str(DEFAULT_DB))
     parser.add_argument("--replace-date", action="store_true")
+    parser.add_argument("--allow-missing", action="store_true",
+                        help="Ingest even when an open position is in neither Pionex list (marks it closed)")
     parser.add_argument("--skip-publish", action="store_true", help="Do not PATCH Gist after ingest")
     parser.add_argument("--live", action="store_true", help="Fetch current positions only; do not write daily sqlite")
     parser.add_argument("--if-missing", action="store_true",
@@ -330,11 +361,15 @@ def main() -> int:
             Path(args.db),
             replace_date=args.replace_date,
             skip_publish=args.skip_publish,
+            allow_missing=args.allow_missing,
         )
     except CaptureError as exc:
         print(f"v2 capture failed: {exc}", file=sys.stderr)
         return 1
     print(json.dumps(result, ensure_ascii=False, indent=2))
+    if result.get("skipped"):
+        print(f"v2 capture skipped: {result['reason']}", file=sys.stderr)
+        return 0
     pub = result.get("publish") or {}
     if pub.get("skipped"):
         print(f"v2 gist publish skipped: {pub.get('reason')}", file=sys.stderr)

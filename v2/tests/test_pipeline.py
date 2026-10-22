@@ -138,6 +138,15 @@ class PipelineTests(unittest.TestCase):
         self.assertIn("匯出失敗", errors.getvalue())
         self.assertFalse(self.preview_state.exists())
 
+    def test_capture_skipped_by_an_existing_record_still_exports(self):
+        self.capture.side_effect = None
+        self.capture.return_value = {"skipped": True, "reason": "today's daily record (08:05) already exists"}
+        code = main(self.args())
+        self.assertEqual(code, 0)
+        self.assertIn("capture skip today's daily record (08:05) already exists", self.log.read_text(encoding="utf-8"))
+        self.run_excel.assert_called_once()
+        self.export_report.assert_called_once()
+
     def test_capture_failure_does_not_export(self):
         self.capture.side_effect = CaptureError("down")
         errors = io.StringIO()

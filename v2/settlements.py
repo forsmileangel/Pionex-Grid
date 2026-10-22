@@ -359,7 +359,7 @@ def refresh(snapshot, db_path=None):
         apply_to_daily(con)
         store.record_corrections(con, before, '補抓關倉資料')
         con.commit()
-        store._backup(store.Path(db_path or store.DEFAULT_DB))
+        store.backup_after_commit(store.Path(db_path or store.DEFAULT_DB))
         return payload(con)
     finally:
         con.close()
@@ -414,7 +414,7 @@ def save_manual(oid, body, db_path=None):
             pos = con.execute('SELECT symbol FROM grid_positions WHERE bu_order_id=?', (oid,)).fetchone()
             store.record_corrections(con, before, f"人工補登：{pos['symbol'] if pos else oid}")
             con.commit()
-            store._backup(store.Path(db_path or store.DEFAULT_DB))
+            store.backup_after_commit(store.Path(db_path or store.DEFAULT_DB))
         return payload(con)
     finally:
         con.close()

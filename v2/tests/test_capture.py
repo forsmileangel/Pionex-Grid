@@ -202,6 +202,114 @@ class ListModeTests(FinishedCacheTests):
         self.assertEqual(self.read()["last_list_check"], first)
 
 
+class CollectorTimeoutTests(FinishedCacheTests):
+    def test_stuck_collector_is_stopped_and_reported(self):
+        from unittest.mock import patch
+        from v2.capture import COLLECTOR_TIMEOUT_SECONDS, collect_snapshot
+        from v2.store import CaptureError
+        seen = {}
+
+        def stuck(cmd, **kwargs):
+            seen.update(kwargs)
+            raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
+
+        with patch("v2.capture.subprocess.run", side_effect=stuck), self.assertRaises(CaptureError) as caught:
+            collect_snapshot(self.creds, cache_path=self.cache)
+        self.assertEqual(seen["timeout"], COLLECTOR_TIMEOUT_SECONDS)
+        self.assertIn("did not finish", str(caught.exception))
+
+
+class DailyCaptureGuardTests(unittest.TestCase):
+    """capture() must not quietly move today's cut-off or drop positions the API left out."""
+
+    def setUp(self):
+        import tempfile
+        from datetime import datetime
+        from pathlib import Path
+        from unittest.mock import patch
+        from v2.capture import TAIPEI
+        from v2.tests.test_store import FX
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.db = Path(self._tmp.name) / "ledger.sqlite"
+        self.today = datetime.now(TAIPEI).date()
+        self.collect = patch("v2.capture.collect_snapshot").start()
+        self.intraday = patch("v2.capture.record_intraday", return_value={"ok": True}).start()
+        patch("v2.store.usdt_twd", return_value=FX).start()
+        self.addCleanup(patch.stopall)
+
+    def snap_at(self, day, hhmm, records):
+        from v2.tests.test_store import snap
+        data = snap(day.isoformat(), records)
+        data["CapturedAt"] = f"{day.isoformat()}T{hhmm}:00+08:00"
+        return data
+
+    def seed(self, hhmm, records, day=None):
+        from v2.store import ingest
+        ingest(self.snap_at(day or self.today, hhmm, records), self.db)
+
+    def run_capture(self, **kwargs):
+        from v2.capture import capture
+        return capture(self._tmp.name, self.db, skip_publish=True, **kwargs)
+
+    def rows(self, day):
+        from v2.store import connect
+        con = connect(self.db)
+        try:
+            return {r["bu_order_id"]: r["status"] for r in con.execute(
+                "SELECT bu_order_id, status FROM daily_grid_profit WHERE capture_date=?", (day.isoformat(),))}
+        finally:
+            con.close()
+
+    def test_second_run_after_0805_skips_without_calling_the_api(self):
+        from v2.tests.test_store import rec
+        self.seed("08:05", [rec(GridProfit=10)])
+        result = self.run_capture()
+        self.assertTrue(result["skipped"])
+        self.assertIn("--replace-date", result["reason"])
+        self.collect.assert_not_called()
+
+    def test_record_taken_before_0805_is_replaced(self):
+        from v2.tests.test_store import rec
+        self.seed("07:00", [rec(GridProfit=10)])
+        self.collect.return_value = self.snap_at(self.today, "08:05", [rec(GridProfit=12)])
+        result = self.run_capture()
+        self.assertEqual(result["status"], "success")
+        self.collect.assert_called_once()
+
+    def test_position_missing_from_both_lists_stops_the_capture(self):
+        from datetime import timedelta
+        from v2.store import CaptureError
+        from v2.tests.test_store import rec
+        yesterday = self.today - timedelta(days=1)
+        self.seed("08:05", [rec(ApiOrderId="g1"), rec(ApiOrderId="g2", Key="ETH|x")], day=yesterday)
+        self.collect.return_value = self.snap_at(self.today, "08:05", [rec(ApiOrderId="g1")])
+        with self.assertRaises(CaptureError) as caught:
+            self.run_capture()
+        self.assertIn("g2", str(caught.exception))
+        self.assertEqual(self.rows(self.today), {})
+        self.intraday.assert_not_called()
+
+    def test_closed_position_in_the_finished_list_is_accepted(self):
+        from datetime import timedelta
+        from v2.tests.test_store import rec
+        yesterday = self.today - timedelta(days=1)
+        self.seed("08:05", [rec(ApiOrderId="g1"), rec(ApiOrderId="g2", Key="ETH|x")], day=yesterday)
+        self.collect.return_value = self.snap_at(self.today, "08:05", [
+            rec(ApiOrderId="g1"), rec(ApiOrderId="g2", Key="ETH|x", ListStatus="finished")])
+        self.assertEqual(self.run_capture()["status"], "success")
+        self.assertEqual(self.rows(self.today)["g2"], "closed")
+
+    def test_allow_missing_marks_the_position_unresolved(self):
+        from datetime import timedelta
+        from v2.tests.test_store import rec
+        yesterday = self.today - timedelta(days=1)
+        self.seed("08:05", [rec(ApiOrderId="g1"), rec(ApiOrderId="g2", Key="ETH|x")], day=yesterday)
+        self.collect.return_value = self.snap_at(self.today, "08:05", [rec(ApiOrderId="g1")])
+        self.run_capture(allow_missing=True)
+        self.assertEqual(self.rows(self.today)["g2"], "closed_unresolved")
+
+
 class NodePathTests(unittest.TestCase):
     """PIONEX_NODE_PATH, then PATH, then the Codex cache, then the name node."""
 
