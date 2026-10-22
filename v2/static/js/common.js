@@ -99,7 +99,8 @@ export async function get(url) {
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(30000) });
     if (!res.ok) throw new Error(url + " " + res.status);
-    return res.json();
+    // await here so a timeout while reading the body is also caught below.
+    return await res.json();
   } catch (err) {
     if (err && err.name === "TimeoutError") throw new Error("連線逾時（30 秒），請稍後再試");
     throw err;
