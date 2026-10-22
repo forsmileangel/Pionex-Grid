@@ -6,7 +6,14 @@ from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
+from v2 import store
 from v2.store import CaptureError, apply_event_decision, connect, export_sheets, from_fixed, ingest, ledger_publish_payload, rebuild_daily_profits, restore_latest_backup, summary_latest, to_fixed
+
+# ingest() backs up into the real v2-data/backups, which keeps only the newest 30 copies.
+# Every ledger test imports this module, so redirect the folder for the whole run; a test
+# run in the production folder must not push out real backups (it did on 2026-10-20).
+_BACKUPS = tempfile.TemporaryDirectory(prefix="pionex-test-backups-")
+store.BACKUP_DIR = Path(_BACKUPS.name)
 
 FX = {
     "usdt_twd": 31.49,
@@ -447,6 +454,13 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(row["grid_profit_i"], to_fixed(11))
         con.close()
 
+    def test_replace_keeps_the_gap_to_the_previous_day(self):
+        ingest(snap("2026-08-26", [rec(GridProfit=10)]), self.db)
+        ingest(snap("2026-08-27", [rec(GridProfit=11)]), self.db)
+        self.assertEqual(ingest(snap("2026-08-27", [rec(GridProfit=12)]), self.db, replace_date=True)["gap_days"], 0)
+        ingest(snap("2026-08-29", [rec(GridProfit=13)]), self.db)
+        self.assertEqual(ingest(snap("2026-08-29", [rec(GridProfit=14)]), self.db, replace_date=True)["gap_days"], 1)
+
     def test_ledger_publish_payload_compact(self):
         first = snap("2026-08-25", [rec(GridProfit=15)])
         first["Wallet"] = {"totalInUsdt": "1000"}
@@ -522,9 +536,21 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(dates, ["2026-08-26"])
         con.close()
 
+    def test_backup_failure_keeps_the_committed_capture(self):
+        import io
+        from contextlib import redirect_stderr
+        ingest(snap("2026-08-26", [rec()]), self.db)
+        with patch("v2.store._backup", side_effect=OSError("disk full")), redirect_stderr(io.StringIO()):
+            result = ingest(snap("2026-08-27", [rec(GridProfit=12)]), self.db)
+        self.assertEqual(result["status"], "success")
+        self.assertIn("disk full", result["backup_error"])
+        con = connect(self.db)
+        dates = [r["capture_date"] for r in con.execute("SELECT capture_date FROM daily_summary ORDER BY 1")]
+        con.close()
+        self.assertEqual(dates, ["2026-08-26", "2026-08-27"])
+
     def test_backup_restore(self):
         ingest(snap("2026-08-26", [rec()]), self.db)
-        from v2 import store
         original_backup = store.BACKUP_DIR
         store.BACKUP_DIR = Path(self.tmp.name) / "backups"
         try:
