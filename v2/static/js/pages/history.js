@@ -2,7 +2,7 @@ import { state } from "../state.js";
 
 import { app, both, bothSigned, cls, esc, eventChip, eventLabel, get, moneyNum, n, signed, tip, usdt } from "../common.js";
 
-import { go, PAGE_LABELS } from "../router.js";
+import { go, isCurrent, PAGE_LABELS } from "../router.js";
 
 import { closureCard } from "./settlements.js";
 
@@ -22,11 +22,13 @@ function kvTable(rows) {
   return `<table class="kv">${rows.map((r) => `<tr><th>${esc(r.key)}</th><td>${esc(fmt(r.value))}</td></tr>`).join("")}</table>`;
 }
 
-export async function renderHistory() {
+export async function renderHistory(seq) {
   const list = await get("/api/v1/grids-index");
+  if (!isCurrent(seq, "history")) return;
   if (!list.length) { app.innerHTML = "<p class='muted'>沒有網格</p>"; return; }
   if (!state.historyId || !list.some((g) => g.bu_order_id === state.historyId)) state.historyId = list[0].bu_order_id;
   const data = await get("/api/v1/grids/" + encodeURIComponent(state.historyId) + "/history");
+  if (!isCurrent(seq, "history")) return;
   const lifeLabel = { active: "運行中", closed: "已關倉", closed_unresolved: "關倉待補" };
   const options = list.map((g) => `<option value="${esc(g.bu_order_id)}" ${g.bu_order_id===state.historyId?"selected":""}>${esc(g.symbol)} · ${esc(g.created_at)} · ${esc(lifeLabel[g.lifecycle] || g.lifecycle)}</option>`).join("");
   const b = data.board || {};
@@ -36,6 +38,7 @@ export async function renderHistory() {
   let closure = null;
   if (current.lifecycle && current.lifecycle !== "active") {
     try { closure = ((await get("/api/v1/settlements")).rows || []).find((r) => r.id === state.historyId) || null; } catch (_) { closure = null; }
+    if (!isCurrent(seq, "history")) return;
   }
   app.innerHTML = `
     ${backLabel ? `<div class="live-bar history-back"><button type="button" class="btn ghost" id="historyBack">返回${esc(backLabel)}</button></div>` : ""}
@@ -70,7 +73,7 @@ export async function renderHistory() {
       <h3>${tip("每日差額", "調高槓桿、保證金留在原倉時，投資額會變小，但等效倉位不變，當日差額也不受影響。")}</h3>
       <table class="plain"><thead><tr><th>日期</th><th>狀態</th><th>槓桿</th><th>投資額</th><th>等效倉位</th><th>前次利潤</th><th>當次利潤</th><th>當日差額</th><th>累計</th></tr></thead>
       <tbody>${(data.profits||[]).map((p)=>`<tr>
-        <td>${esc(p.capture_date)}</td><td>${eventLabel(p.event || p.status)}</td>
+        <td>${esc(p.capture_date)}</td><td>${esc(eventLabel(p.event || p.status))}</td>
         <td>${esc(p.leverage || "—")}</td>
         <td>${usdt(p.investment)}</td>
         <td>${usdt(p.equivalent)}</td>
@@ -101,7 +104,7 @@ export async function renderHistory() {
     </div>`;
   document.getElementById("gridPick").onchange = (e) => { state.historyId = e.target.value; go("history", { replace: true }); };
   drawGridTrend(data.profits || []);
-  drawGridIntraday(state.historyId);
+  drawGridIntraday(state.historyId, seq);
   const backBtn = document.getElementById("historyBack");
   if (backBtn) backBtn.onclick = () => history.back();
 }
@@ -135,7 +138,7 @@ function drawGridTrend(profits) {
 let gridIntra = { range: "7d", g: "1h", metric: "usdt" };
 let gridIntraSeq = 0;
 
-async function drawGridIntraday(id) {
+async function drawGridIntraday(id, renderSeq) {
   const el = document.getElementById("gridIntra");
   const ctl = document.getElementById("gridIntraCtl");
   if (!el || !ctl) return;
@@ -149,7 +152,7 @@ async function drawGridIntraday(id) {
       if (btn.dataset.giRange) st.range = btn.dataset.giRange;
       if (btn.dataset.giGrain) st.g = btn.dataset.giGrain;
       if (btn.dataset.giMetric) st.metric = btn.dataset.giMetric;
-      drawGridIntraday(id);
+      drawGridIntraday(id, renderSeq);
     };
   });
   const now = Date.now();
@@ -159,10 +162,12 @@ async function drawGridIntraday(id) {
   try {
     d = await get("/api/v1/efficiency?" + qs.toString());
   } catch (err) {
-    if (seq === gridIntraSeq) el.innerHTML = `<p class="warn">${esc(err.message)}</p>`;
+    if (seq === gridIntraSeq && isCurrent(renderSeq, "history") && document.body.contains(el)) {
+      el.innerHTML = `<p class="warn">${esc(err.message)}</p>`;
+    }
     return;
   }
-  if (seq !== gridIntraSeq || !document.body.contains(el)) return;
+  if (seq !== gridIntraSeq || !isCurrent(renderSeq, "history") || !document.body.contains(el)) return;
   const s = d.series[id];
   const metric = st.metric;
   const values = s ? d.buckets.map((_, k) => (metric === "usdt" ? s.profit[k] : s.eff[k])) : [];

@@ -2,6 +2,8 @@ import { state } from "../state.js";
 
 import { app, ageText, bindHistoryClicks, bindSortHeaders, clearFlash, ensureSparks, fmtTaipei, get, n, positionTable, postJson, publishText, showFlash, summaryCards, taipeiToday } from "../common.js";
 
+import { isCurrent } from "../router.js";
+
 let liveData = null;
 let liveBusy = false;
 
@@ -38,7 +40,7 @@ function paintLive() {
       liveData = await postJson("/api/v1/live/refresh", {});
     } catch (err) {
       liveBusy = false;
-      paintLive();
+      if (state.page === "live") paintLive();
       const network = /fetch failed|terminated|ECONN|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|UND_ERR/i.test(err.message);
       const clock = /INVALID_TIMESTAMP/.test(err.message);
       showFlash("更新目前倉位失敗：" + err.message
@@ -48,7 +50,7 @@ function paintLive() {
     }
     liveBusy = false;
     clearFlash();
-    paintLive();
+    if (state.page === "live") paintLive();
   };
   document.getElementById("liveCommit").onclick = () => {
     if (!hasLive) return;
@@ -81,9 +83,11 @@ function paintLive() {
   };
 }
 
-export async function renderLive() {
+export async function renderLive(seq) {
   await ensureSparks();
+  if (!isCurrent(seq, "live")) return;
   liveData = await get("/api/v1/live");
+  if (!isCurrent(seq, "live")) return;
   paintLive();
 }
 

@@ -2,6 +2,8 @@ import { state } from "../state.js";
 
 import { app, bindHistoryClicks, bindSortHeaders, ensureSparks, fmtTaipei, get, n, positionTable, summaryCards } from "../common.js";
 
+import { isCurrent } from "../router.js";
+
 let boardData = null;
 
 function paintBoard() {
@@ -18,8 +20,10 @@ function paintBoard() {
   bindHistoryClicks();
 }
 
-export async function renderBoard() {
+export async function renderBoard(seq) {
   await ensureSparks();
+  if (!isCurrent(seq, "records")) return;
   boardData = await get("/api/v1/board");
+  if (!isCurrent(seq, "records")) return;
   paintBoard();
 }

@@ -2,6 +2,8 @@ import { state } from "../state.js";
 
 import { app, cls, esc, fmtTaipei, get, n, postJson, publishText, showFlash, signed, tip } from "../common.js";
 
+import { isCurrent } from "../router.js";
+
 let settlementData = null;
 let settlementEditId = "";
 const CLOSE_REASON = { profit_stop: "止盈", loss_stop: "止損", user_cancel: "手動關倉", liquidation: "強平", liquidate: "強平", expired: "到期" };
@@ -169,6 +171,7 @@ function bindSettlementForm(selected) {
     const list = box.querySelector("ul");
     try {
       const data = await get("/api/v1/settlements/" + encodeURIComponent(selected.id) + "/audit");
+      if (state.page !== "settlements") return;
       list.innerHTML = (data.rows || []).map((a) => {
         const keys = [...new Set([...Object.keys(a.before || {}), ...Object.keys(a.after || {})])]
           .filter((k) => (a.before || {})[k] !== (a.after || {})[k]);
@@ -176,6 +179,7 @@ function bindSettlementForm(selected) {
         return `<li><b>${esc(fmtTaipei(a.changed_at).slice(0, 16))}</b>　${parts.join("；") || "無變更"}</li>`;
       }).join("") || '<li class="muted">沒有紀錄</li>';
     } catch (err) {
+      if (state.page !== "settlements") return;
       list.innerHTML = `<li class="warn">${esc(err.message)}</li>`;
     }
   };
@@ -214,7 +218,9 @@ function settlementForm(row) {
   </form>`;
 }
 
-export async function renderSettlements() {
-  settlementData = await get("/api/v1/settlements");
+export async function renderSettlements(seq) {
+  const data = await get("/api/v1/settlements");
+  if (!isCurrent(seq, "settlements")) return;
+  settlementData = data;
   paintSettlements();
 }

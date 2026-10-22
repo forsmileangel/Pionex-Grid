@@ -2,8 +2,11 @@ import { state } from "../state.js";
 
 import { app, esc, fmtTaipei, get, postJson, publishText, showFlash, signed, tip } from "../common.js";
 
-export async function renderStatus() {
+import { isCurrent } from "../router.js";
+
+export async function renderStatus(seq) {
   const s = await get("/api/v1/status");
+  if (!isCurrent(seq, "status")) return;
   const missing = (s.missing_dates || []);
   const gap = s.coin_fx_gap_month && s.coin_fx_gap_month.usdt != null ? signed(s.coin_fx_gap_month.usdt) + " USDT" : "—";
   const pub = s.publish || {};
@@ -65,9 +68,9 @@ export async function renderStatus() {
           ? `<span class="warn">電腦時鐘比派網${clockSec > 0 ? "慢" : "快"} ${Math.abs(clockSec).toFixed(1)} 秒</span>，抓資料時已自動校正<span class="hintline">建議到 Windows 設定 → 時間與語言 → 日期和時間 → 立即同步。${fmtTaipei(ck.at).slice(5, 16)}</span>`
           : `和派網差 ${Math.abs(clockSec).toFixed(1)} 秒，正常<span class="hintline">${fmtTaipei(ck.at).slice(5, 16)}</span>`}</dd>
       <dt>漏抓日期</dt>
-      <dd><span class="dot${missing.length ? " is-warn" : ""}"></span>${missing.join("、") || "無"}</dd>
+      <dd><span class="dot${missing.length ? " is-warn" : ""}"></span>${esc(missing.join("、")) || "無"}</dd>
       <dt>本月幣本位重估差</dt>
-      <dd>${gap}<span class="hintline">${s.coin_fx_gap_month_label || "—"}　月底再看要不要把幣價損益拆開。</span></dd>
+      <dd>${gap}<span class="hintline">${esc(s.coin_fx_gap_month_label || "—")}　月底再看要不要把幣價損益拆開。</span></dd>
     </dl>
   </div>
   <div class="card narrow">
@@ -102,6 +105,6 @@ export async function renderStatus() {
     } catch (err) {
       showFlash("重新發布失敗：" + err.message, "error");
     }
-    if (state.page === "status") renderStatus();
+    if (state.page === "status") renderStatus(state.renderSeq);
   };
 }

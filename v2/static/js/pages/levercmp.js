@@ -1,5 +1,7 @@
 import { app, bindHistoryClicks, esc, fmtTaipei, get, n, signed, tip } from "../common.js";
 
+import { isCurrent } from "../router.js";
+
 // 槓桿對照（試做）：另一套「等效倉位＝倉位×倍率」和這裡「投入＋追加保證金」並排比較。只讀最近一次每日快照。
 let leverData = null;
 const OURS_TIP = "你的等效倉位＝投入＋追加保證金，也就是你放在這個倉裡的保證金。調高槓桿、保證金留在倉內時不變；補追加保證金會變大。";
@@ -106,7 +108,9 @@ function paintLeverCompare() {
   bindHistoryClicks();
 }
 
-export async function renderLeverCompare() {
-  leverData = await get("/api/v1/leverage-compare");
+export async function renderLeverCompare(seq) {
+  const data = await get("/api/v1/leverage-compare");
+  if (!isCurrent(seq, "levercmp")) return;
+  leverData = data;
   paintLeverCompare();
 }

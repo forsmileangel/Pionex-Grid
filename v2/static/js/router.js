@@ -17,9 +17,18 @@ export const PAGE_LABELS = {
 
 // 頁面放在網址 #hash：重新整理留在原頁，瀏覽器上一頁可回到來源頁。
 export function parseHash() {
-  const raw = decodeURIComponent(location.hash.replace(/^#/, ""));
+  let raw = "";
+  try {
+    raw = decodeURIComponent(location.hash.replace(/^#/, ""));
+  } catch (_) {
+    return { page: "", id: "" };
+  }
   const [name, ...rest] = raw.split("/");
   return { page: PAGES.includes(name) ? name : "", id: rest.join("/") };
+}
+
+export function isCurrent(seq, page) {
+  return seq === state.renderSeq && state.page === page;
 }
 
 export function pageHash(name) {
@@ -61,18 +70,21 @@ export function setRenderers(map) {
 }
 
 export async function render() {
+  const seq = ++state.renderSeq;
+  const page = state.page;
   try {
-    if (state.page === "live") await renderers.live();
-    else if (state.page === "records") await renderers.records();
-    else if (state.page === "daily") await renderers.daily();
-    else if (state.page === "calendar") await renderers.calendar();
-    else if (state.page === "efficiency") await renderers.efficiency();
-    else if (state.page === "funding") await renderers.funding();
-    else if (state.page === "levercmp") await renderers.levercmp();
-    else if (state.page === "history") await renderers.history();
-    else if (state.page === "settlements") await renderers.settlements();
-    else await renderers.status();
+    if (page === "live") await renderers.live(seq);
+    else if (page === "records") await renderers.records(seq);
+    else if (page === "daily") await renderers.daily(seq);
+    else if (page === "calendar") await renderers.calendar(seq);
+    else if (page === "efficiency") await renderers.efficiency(seq);
+    else if (page === "funding") await renderers.funding(seq);
+    else if (page === "levercmp") await renderers.levercmp(seq);
+    else if (page === "history") await renderers.history(seq);
+    else if (page === "settlements") await renderers.settlements(seq);
+    else await renderers.status(seq);
   } catch (err) {
+    if (!isCurrent(seq, page)) return;
     app.innerHTML = `<p class="warn">${esc(err.message)}</p>`;
   }
 }

@@ -2,6 +2,8 @@ import { state } from "../state.js";
 
 import { app, bindHistoryClicks, both, bothSigned, cls, esc, eventCell, get, moneyNum, n, postJson, publishText, showFlash, signed, tip, usdt } from "../common.js";
 
+import { isCurrent } from "../router.js";
+
 import { effSeg } from "./efficiency.js";
 
 let calendarData = null;
@@ -107,13 +109,13 @@ function paintCalendar() {
         : ""}
     </div>
     <div class="stats">
-      <div class="stat"><span class="label">點選日</span><strong>${calSelected}</strong></div>
+      <div class="stat"><span class="label">點選日</span><strong>${esc(calSelected)}</strong></div>
       <div class="stat">${tip("每日利潤", "U 本位：畫面網格利潤的日差。幣本位（ETH）：當天新增的幣×抓取現貨價，不含舊庫存被幣價重估。第一天基準是 0。")}<strong class="${cls(selected.daily_profit && selected.daily_profit.usdt)}">${bothSigned(selected.daily_profit)}</strong></div>
       <div class="stat">${tip("運行中配對利潤", "那天還開著的倉，派網畫面上的網格利潤加總（USDT，幣本位含幣價）。關倉後這筆會掉。")}<strong>${both(selected.cumulative)}</strong></div>
       <div class="stat">${tip("歷史累計配對利潤（含已關倉）", "截至當日快照，含基準帶入、每日配對增量、已關倉成果與複投調整。派網配對值已含已提領收益，不再加回；記錄開始前未保留的複投收益可能未涵蓋。")}<strong>${both(selected.true_profit)}</strong></div>
     </div>
     <div class="card">
-      <h3>${calSelected} 明細</h3>
+      <h3>${esc(calSelected)} 明細</h3>
       ${Number(selected.unresolved_count) > 0 ? '<p class="warn">有關倉配對資料待補，單日與歷史合計為暫計，補齊後重算。</p>' : ''}
       <table class="plain"><thead><tr><th>標的</th><th>${tip("事件", "續存＝照常；加倉＝只是本金變多、網格利潤沒被重置；複投＝網格利潤打進倉位後從接近 0 再算。對不上才會出現待確認。")}</th><th>倉位</th><th>單日利潤</th><th>當時網格利潤</th></tr></thead>
       <tbody>${rowHtml}</tbody></table>
@@ -174,8 +176,10 @@ function drawCalendarBars(byDate, y, m, dim) {
   });
 }
 
-export async function renderCalendar() {
-  calendarData = await get("/api/v1/days");
+export async function renderCalendar(seq) {
+  const data = await get("/api/v1/days");
+  if (!isCurrent(seq, "calendar")) return;
+  calendarData = data;
   paintCalendar();
 }
 
@@ -193,11 +197,11 @@ function bindEventDecisions() {
         });
         calendarData = await get("/api/v1/days");
         state.dailyData = calendarData;
-        paintCalendar();
+        if (state.page === "calendar") paintCalendar();
         showFlash("已記錄判定並重算歷史。" + publishText(result.publish));
       } catch (err) {
         showFlash("判定失敗：" + err.message, "error");
-        btn.disabled = false;
+        if (state.page === "calendar") btn.disabled = false;
       }
     };
   });

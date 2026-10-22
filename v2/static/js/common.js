@@ -96,9 +96,14 @@ export function showFlash(text, kind = "info") {
 export function clearFlash() { flashBox.innerHTML = ""; }
 
 export async function get(url) {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(url + " " + res.status);
-  return res.json();
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(30000) });
+    if (!res.ok) throw new Error(url + " " + res.status);
+    return res.json();
+  } catch (err) {
+    if (err && err.name === "TimeoutError") throw new Error("連線逾時（30 秒），請稍後再試");
+    throw err;
+  }
 }
 
 export function signed(v, digits=2) {
@@ -236,7 +241,7 @@ export function positionTable(rows, profitKey, sort) {
     const openTime = opened.split(" ")[1] || "";
     const chip = profitKey === "daily" ? eventChip(r.event || r.status) : "";
     return `<tr class="clickable" data-id="${esc(r.bu_order_id || "")}">
-      <td class="t c-date">${cell(openDate || "—", openTime)}</td>
+      <td class="t c-date">${cell(esc(openDate) || "—", esc(openTime))}</td>
       <td class="n c-size">${cell(usdt(size), sizeSub(r))}</td>
       <td class="t c-sym">${cell(esc(r.symbol || "—"), esc(r.leverage || "") + chip)}</td>
       <td class="n c-mark">${cell(n(r.mark_price, 4), "")}</td>
@@ -286,32 +291,38 @@ export function taipeiToday() {
 }
 
 export async function postJson(url, body) {
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body || {}),
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || (url + " " + res.status));
-  return data;
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body || {}),
+      signal: AbortSignal.timeout(360000),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || (url + " " + res.status));
+    return data;
+  } catch (err) {
+    if (err && err.name === "TimeoutError") throw new Error("連線逾時（360 秒），請稍後再試");
+    throw err;
+  }
 }
 
 export function eventLabel(ev) {
   const map = { baseline:"基準", new:"新增", continue:"續存", closed:"關倉", closed_unresolved:"關倉未對上", reinvest:"複投", add:"加倉", review:"待確認", withdraw:"提取", reduce:"減倉" };
-  return String(ev || "").split("+").map((p) => map[p] || esc(p)).filter(Boolean).join("＋") || "—";
+  return String(ev || "").split("+").map((p) => map[p] || p).filter(Boolean).join("＋") || "—";
 }
 
 export function eventChip(ev) {
   const key = String(ev || "");
   if (!key || key === "continue" || key === "baseline" || key === "new") return "";
   const kind = key.split("+").includes("review") ? "is-review" : key.split("+").includes("add") ? "is-add" : "";
-  return ` <span class="event-tag ${kind}">${eventLabel(key)}</span>`;
+  return ` <span class="event-tag ${kind}">${esc(eventLabel(key))}</span>`;
 }
 
 export function eventCell(r, date) {
   const ev = r.event || r.status || "";
   const review = String(ev).split("+").includes("review");
-  let html = `<span class="event-tag${review ? " is-review" : String(ev).split("+").includes("add") ? " is-add" : ""}">${eventLabel(ev)}</span>`;
+  let html = `<span class="event-tag${review ? " is-review" : String(ev).split("+").includes("add") ? " is-add" : ""}">${esc(eventLabel(ev))}</span>`;
   if (review && r.bu_order_id) {
     html += `<div class="decide">
       <button type="button" class="btn tiny" data-decide="add" data-date="${esc(date)}" data-id="${esc(r.bu_order_id)}">這是加倉</button>

@@ -2,7 +2,7 @@ import { state } from "../state.js";
 
 import { app, askDialog, bindHistoryClicks, cls, esc, eventLabel, fmtTaipei, get, n, postJson, showFlash, signed, tip } from "../common.js";
 
-import { go } from "../router.js";
+import { go, isCurrent } from "../router.js";
 
 // ---------------------------------------------------------------- 效率走勢
 export const HOUR_MS = 3600 * 1000;
@@ -220,6 +220,7 @@ function effZoom(i0, i1) {
 
 async function loadEfficiency() {
   const seq = ++effSeq;
+  const renderSeq = state.renderSeq;
   const fitted = effFit();
   if (fitted) effNote = fitted;
   const sel = effSelected();
@@ -238,9 +239,10 @@ async function loadEfficiency() {
   if (busy) busy.textContent = "載入中…";
   else if (state.page === "efficiency") paintEfficiency();
   try {
-    const res = await fetch("/api/v1/efficiency?" + qs.toString());
+    const res = await fetch("/api/v1/efficiency?" + qs.toString(), { signal: AbortSignal.timeout(30000) });
     const data = await res.json().catch(() => ({}));
     if (seq !== effSeq) return;
+    if (!isCurrent(renderSeq, "efficiency")) { effBusy = false; return; }
     if (!res.ok) {
       if (data.suggest && data.suggest !== effState.granularity) {
         effNote = `區間太長，顆粒度已改成 ${effGrainLabel(data.suggest)}。`;
@@ -253,14 +255,16 @@ async function loadEfficiency() {
     effError = "";
   } catch (err) {
     if (seq !== effSeq) return;
-    effError = err.message;
+    if (!isCurrent(renderSeq, "efficiency")) { effBusy = false; return; }
+    effError = err && err.name === "TimeoutError" ? "連線逾時（30 秒），請稍後再試" : err.message;
   }
   effBusy = false;
-  if (state.page === "efficiency") paintEfficiency();
+  if (isCurrent(renderSeq, "efficiency")) paintEfficiency();
 }
 
-export async function renderEfficiency() {
+export async function renderEfficiency(seq) {
   const meta = await get("/api/v1/efficiency/meta");
+  if (!isCurrent(seq, "efficiency")) return;
   meta.byId = Object.fromEntries((meta.positions || []).map((p) => [p.id, p]));
   effMeta = meta;
   if (!effState) {

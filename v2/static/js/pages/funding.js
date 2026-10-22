@@ -1,5 +1,7 @@
 import { app, bindHistoryClicks, bothSigned, cls, esc, eventLabel, get, moneyNum, n, signed, tip, usdt } from "../common.js";
 
+import { isCurrent } from "../router.js";
+
 import { effSeg } from "./efficiency.js";
 
 // 資金費（試做）：派網每倉累計資金費，和上一次每日快照相減得到當日資金費；淨利＝當日配對＋資金費。只顯示，不進每日利潤。
@@ -97,7 +99,7 @@ function paintFunding() {
     const f = moneyNum(r.funding_day), net = moneyNum(r.net);
     return `<tr class="clickable" data-id="${esc(r.bu_order_id || "")}">
       <td>${esc(r.symbol || "—")}</td>
-      <td>${eventLabel(r.event || r.status)}</td>
+      <td>${esc(eventLabel(r.event || r.status))}</td>
       <td class="n">${usdt(r.investment)}</td>
       <td class="n ${cls(moneyNum(r.daily_profit))}">${signed(moneyNum(r.daily_profit))}</td>
       <td class="n ${cls(f)}">${signed(f)}</td>
@@ -124,7 +126,7 @@ function paintFunding() {
     <p class="muted">試做頁：配對、資金費、淨利放在一起看，確認好用再決定怎麼放進每日詳情或月曆。${tip("怎麼算", FUND_TIP + " " + NET_TIP)}</p>
     <div class="stats">
       ${stat("最近一天淨利", NET_TIP, latest.net,
-        `${latest.date} · 配對 ${signed(moneyNum(latest.grid_profit))} · 資金費 ${signed(moneyNum(latest.funding))}（吃掉 ${eaten(latest.pct_of_grid)}）`)}
+        `${esc(latest.date)} · 配對 ${signed(moneyNum(latest.grid_profit))} · 資金費 ${signed(moneyNum(latest.funding))}（吃掉 ${eaten(latest.pct_of_grid)}）`)}
       ${stat("本月淨利", "本月每日配對＋資金費加總。和月曆的月合計同一規則，關倉待補的日子不計。", month ? month.net : null,
         month ? `配對 ${signed(moneyNum(month.grid_profit))} · 資金費 ${signed(moneyNum(month.funding))}（吃掉 ${eaten(month.pct_of_grid)}）` : "")}
       ${stat("近 30 天資金費", "最近 30 天的每日資金費加總與日均；年化＝日均 ÷ 最近一天的等效倉位 × 365。", { usdt: String(sum30) },
@@ -140,9 +142,9 @@ function paintFunding() {
       <div class="chart" id="fundBars"></div>
     </div>
     <div class="card">
-      <div class="card-head"><h3>${fundSelected} 每倉配對與資金費</h3>
+      <div class="card-head"><h3>${esc(fundSelected)} 每倉配對與資金費</h3>
         <label class="note">日期 <select id="fundDate">${days.filter((d) => byDate[d.date]).map((d) =>
-          `<option value="${d.date}"${d.date === fundSelected ? " selected" : ""}>${d.date}</option>`).join("")}</select></label></div>
+          `<option value="${esc(d.date)}"${d.date === fundSelected ? " selected" : ""}>${esc(d.date)}</option>`).join("")}</select></label></div>
       <p class="note">當天配對 <b class="${cls(moneyNum(sel.grid_profit))}">${signed(moneyNum(sel.grid_profit))}</b> U · 資金費 <b class="${cls(moneyNum(sel.funding))}">${signed(moneyNum(sel.funding))}</b> U · 淨利 <b class="${cls(moneyNum(sel.net))}">${signed(moneyNum(sel.net))}</b> U · 資金費年化 ${pctText(sel.annual_pct)}${sel.span_days > 1 ? ` · 資金費含前 ${sel.span_days - 1} 天沒記到的部分` : ""}${moneyNum(sel.funding) == null ? " · 這天沒有可比較的前一筆資金費" : ""}</p>
       <table class="plain"><thead><tr><th>標的</th><th>事件</th><th>倉位</th><th>當日配對</th>
         <th>${tip("當日資金費", FUND_TIP)}</th><th>${tip("淨利", NET_TIP)}</th>
@@ -218,7 +220,9 @@ function drawFundingBars(days) {
   });
 }
 
-export async function renderFunding() {
-  fundingData = await get("/api/v1/funding");
+export async function renderFunding(seq) {
+  const data = await get("/api/v1/funding");
+  if (!isCurrent(seq, "funding")) return;
+  fundingData = data;
   paintFunding();
 }
