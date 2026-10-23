@@ -16,7 +16,7 @@ from .fx import attach_twd, attach_twd_tree, usdt_twd
 from .liq import normalize_liq
 
 SCALE = 100_000_000
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 EVENT_EPS = 1_000_000
 ADD_MIN_I = 10 * SCALE
 REINVEST_MIN_I = 20 * SCALE
@@ -367,7 +367,18 @@ def _load_overrides(con: sqlite3.Connection) -> dict[tuple[str, str], str]:
     return {(row["capture_date"], row["bu_order_id"]): row["decision"] for row in rows}
 
 
-def _classify_event(status: str, prev, grid_i, inv_i, withdrawn_i, reinvest_i, reduce_i, override=None) -> tuple[str, int, int]:
+def _opened_since(created_at, previous_captured_at) -> bool:
+    """True when a bot opened after the previous capture, so all its grid profit is this interval's."""
+    if not created_at or not previous_captured_at:
+        return False
+    try:
+        return taipei_now(str(created_at).replace(" ", "T")) > taipei_now(previous_captured_at)
+    except (TypeError, ValueError):
+        return False
+
+
+def _classify_event(status: str, prev, grid_i, inv_i, withdrawn_i, reinvest_i, reduce_i, override=None,
+                    first_day=False) -> tuple[str, int, int]:
     """Return (event, daily_i, lifetime_i).
 
     複投: 網格利潤明顯掉進倉位（倉位變大、網格利潤少掉相近的一筆）。
@@ -375,7 +386,10 @@ def _classify_event(status: str, prev, grid_i, inv_i, withdrawn_i, reinvest_i, r
     lifetime is running true profit from our snapshots, not Pionex lifetime stocks.
     """
     if status in ("baseline", "new") or prev is None:
-        return status, 0, _nz(grid_i)
+        # A bot opened inside this interval earned all of its grid profit here. Baseline
+        # bots and bots first seen late carry profit from before the ledger, so they add 0.
+        daily = _nz(grid_i) if status == "new" and first_day else 0
+        return status, daily, _nz(grid_i)
     prev_grid = _rowget(prev, "grid_profit_i")
     prev_inv = _rowget(prev, "investment_i")
     prev_wd = _rowget(prev, "withdrawn_i")
@@ -472,7 +486,9 @@ def rebuild_daily_profits(con: sqlite3.Connection) -> None:
     if not runs:
         return
     overrides = _load_overrides(con)
+    opened = {row["bu_order_id"]: row["created_at"] for row in con.execute("SELECT bu_order_id, created_at FROM grid_positions")}
     prev_by_id: dict[str, dict] = {}
+    prev_captured = None
     for run in runs:
         date = run["capture_date"]
         snaps = {
@@ -520,16 +536,21 @@ def rebuild_daily_profits(con: sqlite3.Connection) -> None:
             else:
                 class_grid = _mul_fixed(coin_i, px_i) if coin_i is not None and px_i else grid_i
                 class_prev = _prev_revalued(prev, px_i) if coin_i is not None else prev
+                created = (snap["created_at"] if snap is not None else None) or opened.get(oid)
+                first_day = status == "new" and _opened_since(created, prev_captured)
                 event, daily_i, life_i = _classify_event(
                     status, class_prev, class_grid, inv_i, withdrawn_i, reinvest_i, reduce_i,
-                    override=overrides.get((date, oid)),
+                    override=overrides.get((date, oid)), first_day=first_day,
                 )
                 cum_i = grid_i
                 daily_total += daily_i
                 if status in ("baseline", "new", "continue") and grid_i is not None:
                     new_cum += grid_i
                 if coin_i is not None:
-                    daily_coin_i = 0 if status in ("baseline", "new") or prev is None else coin_i - _nz(prev.get("grid_profit_coin_i"))
+                    if first_day:
+                        daily_coin_i = coin_i
+                    else:
+                        daily_coin_i = 0 if status in ("baseline", "new") or prev is None else coin_i - _nz(prev.get("grid_profit_coin_i"))
                     fx_gap = 0 if status in ("baseline", "new") else _fx_gap_i(prev, coin_i, px_i, grid_i)
                     fx_gap_total += _nz(fx_gap)
             con.execute(
@@ -552,6 +573,7 @@ def rebuild_daily_profits(con: sqlite3.Connection) -> None:
                 "grid_profit_coin_i": coin_i,
                 "conversion_price_i": px_i,
             }
+        prev_captured = run["captured_at"]
         true_i = _true_grid_profit_i(con, date)
         con.execute(
             "UPDATE daily_summary SET daily_profit_i=?, cumulative_i=?, true_profit_i=?, fx_gap_i=? WHERE capture_date=?",
@@ -850,6 +872,11 @@ def _migrate(con: sqlite3.Connection) -> None:
         seed_history(con)
         if current < 10:
             rebuild_daily_profits(con)
+        if current < 12:
+            # v12 counts a new bot's first-interval grid profit in that day; log the changed days.
+            before = summary_values(con)
+            rebuild_daily_profits(con)
+            record_corrections(con, before, "新開倉位首日網格利潤計入單日")
         con.execute("INSERT INTO schema_meta(version, applied_at) VALUES (?, ?)", (SCHEMA_VERSION, datetime.now(TAIPEI).isoformat()))
         con.commit()
 
@@ -1119,11 +1146,12 @@ def ingest(snapshot: dict, db_path: Path | None = None, replace_date: bool = Fal
                     raise CaptureError(f"Cannot compute daily profit for {oid}")
             class_grid = _mul_fixed(coin_i, px_i) if coin_i is not None and px_i else grid_profit_i
             class_prev = _prev_revalued(prev_row, px_i) if coin_i is not None else prev_row
+            first_day = status == "new" and _opened_since(rec.get("Created"), previous_success_at)
             event, daily_i, life_i = _classify_event(
                 status, class_prev, class_grid, investment_i, withdrawn_i, reinvest_i, reduce_i,
-                override=overrides.get((capture_date, oid)),
+                override=overrides.get((capture_date, oid)), first_day=first_day,
             )
-            daily_coin_i = 0 if status in ("baseline", "new") or prev_row is None else (None if coin_i is None else coin_i - _nz(_rowget(prev_row, "grid_profit_coin_i")))
+            daily_coin_i = coin_i if first_day else 0 if status in ("baseline", "new") or prev_row is None else (None if coin_i is None else coin_i - _nz(_rowget(prev_row, "grid_profit_coin_i")))
             fx_gap = _fx_gap_i(prev_row, coin_i, px_i, grid_profit_i) if status not in ("baseline", "new") else 0
             cum_i = grid_profit_i
             profit_rows.append((

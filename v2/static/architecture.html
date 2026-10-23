@@ -154,7 +154,7 @@
   <ol>
     <li>資料庫是空的：整批標 <code>baseline</code>，當日利潤 = 0。只記住當天的累計網格利潤。</li>
     <li>隔天還在跑的舊倉：<code>continue</code>，當日利潤 = 今天 GridProfit − 昨天記住的 GridProfit。</li>
-    <li>新開的倉：<code>new</code>，當天也是 0，隔天起才開始減。</li>
+    <li>新開的倉：<code>new</code>。開倉時間在前一次擷取之後，當日利潤＝開倉以來的網格利潤（幣本位＝新增幣×當日價）；開倉更早、只是這次才第一次出現的倉位記 0。隔天起照 <code>continue</code> 相減。</li>
     <li>finished 清單對得上、資料完整：<code>closed</code>，最後一天仍算差額。</li>
     <li>人消失但 finished 對不上：<code>closed_unresolved</code>，當日利潤空白，不要猜。</li>
   </ol>

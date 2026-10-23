@@ -103,12 +103,77 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(rows["g1"]["daily_profit_i"], to_fixed(2))
         self.assertEqual(rows["g1"]["cumulative_i"], to_fixed(12))
         self.assertEqual(rows["g2"]["status"], "new")
-        self.assertEqual(rows["g2"]["daily_profit_i"], 0)
+        # g2 opened after the previous capture, so its whole profit is this day's income.
+        self.assertEqual(rows["g2"]["daily_profit_i"], to_fixed(3))
+        self.assertEqual(rows["g2"]["lifetime_i"], to_fixed(3))
         self.assertEqual(rows["g2"]["cumulative_i"], to_fixed(3))
         summary = con.execute("SELECT * FROM daily_summary WHERE capture_date='2026-08-27'").fetchone()
-        self.assertEqual(summary["daily_profit_i"], to_fixed(2))
+        self.assertEqual(summary["daily_profit_i"], to_fixed(5))
         self.assertEqual(summary["cumulative_i"], to_fixed(15))
         con.close()
+
+    def test_new_bot_opened_before_the_previous_capture_adds_nothing(self):
+        ingest(snap("2026-08-26", [rec()]), self.db)
+        ingest(snap("2026-08-27", [
+            rec(GridProfit=12),
+            rec(ApiOrderId="g2", Key="ETH/USDT|2026-08-20 09:00:00", Symbol="ETH/USDT",
+                Created="2026-08-20 09:00:00", GridProfit=30),
+        ]), self.db)
+        con = connect(self.db)
+        try:
+            row = con.execute("SELECT * FROM daily_grid_profit WHERE capture_date='2026-08-27' AND bu_order_id='g2'").fetchone()
+            self.assertEqual((row["status"], row["daily_profit_i"], row["lifetime_i"]), ("new", 0, to_fixed(30)))
+            summary = con.execute("SELECT * FROM daily_summary WHERE capture_date='2026-08-27'").fetchone()
+            self.assertEqual(summary["daily_profit_i"], to_fixed(2))
+        finally:
+            con.close()
+
+    def test_new_coin_margined_bot_counts_its_first_coin_profit(self):
+        ingest(snap("2026-08-26", [rec()]), self.db)
+        ingest(snap("2026-08-27", [rec(GridProfit=10), rec(
+            ApiOrderId="c1", Key="ETH|2026-08-26 12:00:00", Symbol="ETH", Created="2026-08-26 12:00:00",
+            Product="coin_margined_contract_grid", Investment=1000, GridProfit=5, RawGridProfit=0.002,
+            ConversionPrice=2500, ConversionSymbol="ETH_USDT",
+            RawJson={"order": {"quote": "ETH", "buOrderData": {"gridProfit": 0.002}}},
+        )]), self.db)
+        con = connect(self.db)
+        try:
+            row = con.execute("SELECT * FROM daily_grid_profit WHERE capture_date='2026-08-27' AND bu_order_id='c1'").fetchone()
+            self.assertEqual(row["daily_profit_i"], to_fixed(5))
+            self.assertEqual(row["daily_profit_coin_i"], to_fixed(0.002))
+            self.assertEqual(row["fx_gap_i"], 0)
+        finally:
+            con.close()
+
+    def test_v12_migration_backfills_first_day_profit_and_logs_it(self):
+        ingest(snap("2026-08-26", [rec()]), self.db)
+        ingest(snap("2026-08-27", [
+            rec(GridProfit=12),
+            rec(ApiOrderId="g2", Key="ETH/USDT|2026-08-27 09:00:00", Symbol="ETH/USDT",
+                Created="2026-08-27 09:00:00", GridProfit=3),
+        ]), self.db)
+        con = connect(self.db)
+        try:
+            true_before = con.execute("SELECT true_profit_i FROM daily_summary WHERE capture_date='2026-08-27'").fetchone()[0]
+            # Put the ledger back the way v11 recorded it.
+            con.execute("UPDATE daily_grid_profit SET daily_profit_i=0 WHERE bu_order_id='g2'")
+            con.execute("UPDATE daily_summary SET daily_profit_i=? WHERE capture_date='2026-08-27'", (to_fixed(2),))
+            con.execute("DELETE FROM schema_meta")
+            con.execute("INSERT INTO schema_meta(version, applied_at) VALUES (11, '2026-08-27T00:00:00+08:00')")
+            con.commit()
+        finally:
+            con.close()
+        con = connect(self.db)
+        try:
+            summary = con.execute("SELECT * FROM daily_summary WHERE capture_date='2026-08-27'").fetchone()
+            self.assertEqual(summary["daily_profit_i"], to_fixed(5))
+            self.assertEqual(summary["true_profit_i"], true_before)
+            logged = con.execute("SELECT * FROM ledger_corrections WHERE field='daily_profit_i'").fetchall()
+            self.assertEqual([(r["capture_date"], r["old_value"], r["new_value"]) for r in logged],
+                             [("2026-08-27", "2", "5")])
+            self.assertEqual(logged[0]["reason"], "新開倉位首日網格利潤計入單日")
+        finally:
+            con.close()
 
     def test_closed_from_finished(self):
         ingest(snap("2026-08-26", [rec(GridProfit=10)]), self.db)
