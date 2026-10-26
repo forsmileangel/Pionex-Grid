@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import atexit
 import json
+import os
 import threading
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -51,6 +53,13 @@ _STATIC_TYPES = {
 HOST = "127.0.0.1"
 PORT = 8787
 SERVER_LOG = ROOT.parent / "v2-data" / "dashboard-server.log"
+EXPORT_NAME = "pionex-grid-export.xlsx"
+EXPORT_LOCK = threading.Lock()
+
+
+def pid_file(port: int) -> Path:
+    """Where this server records its process id, so the start/stop scripts stop only it."""
+    return ROOT.parent / "v2-data" / f"dashboard-server-{port}.pid"
 
 
 LIVE_PUBLISH_LOCK = threading.Lock()
@@ -137,6 +146,15 @@ def resolve_static(url_path: str) -> tuple[Path, str] | None:
     return candidate, content_type
 
 
+def local_host_allowed(host: str, port: int) -> bool:
+    """Only requests addressed to this machine. A DNS-rebinding page sends its own host name."""
+    return (host or "").strip().lower() in {
+        f"127.0.0.1:{port}",
+        f"localhost:{port}",
+        f"[::1]:{port}",
+    }
+
+
 def local_post_allowed(origin: str, referer: str, port: int) -> bool:
     """Only the dashboard page itself may POST. Blocks other websites hitting 127.0.0.1."""
     allowed = {
@@ -194,6 +212,15 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _fail(self, exc: Exception, code: int = 500):
+        """Answer with the error; anything that is not the caller's mistake also goes to the log."""
+        if code >= 500:
+            _write_log(f"{self.command} {self.path} {code}: {type(exc).__name__}: {exc}")
+        self._json({"error": str(exc)}, code)
+
+    def _host_allowed(self) -> bool:
+        return local_host_allowed(self.headers.get("Host") or "", int(self.server.server_address[1]))
+
     def _file(self, path: Path, content_type: str, cache_control: str | None = None):
         data = path.read_bytes()
         self.send_response(200)
@@ -205,14 +232,16 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def do_GET(self):
+        if not self._host_allowed():
+            self._json({"error": "forbidden"}, 403)
+            return
         try:
             self._handle_get()
         except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError, ConnectionError):
             return
         except Exception as exc:
-            _write_log(f"GET {self.path} error: {exc}")
             try:
-                self._json({"error": str(exc)}, 500)
+                self._fail(exc)
             except Exception:
                 return
 
@@ -309,11 +338,12 @@ class Handler(BaseHTTPRequestHandler):
             self._json(summary_latest(self.db_path))
             return
         if path == "/api/v1/export.xlsx":
-            qs = parse_qs(parsed.query)
-            name = (qs.get("name") or ["pionex-grid-export.xlsx"])[0]
-            out = EXPORTS / Path(name).name
-            write_xlsx(out, export_sheets(self.db_path))
-            data = out.read_bytes()
+            # One fixed file: any page can make a browser request this URL, so it must not
+            # choose what gets written into exports/.
+            out = EXPORTS / EXPORT_NAME
+            with EXPORT_LOCK:
+                write_xlsx(out, export_sheets(self.db_path))
+                data = out.read_bytes()
             self.send_response(200)
             self.send_header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
             self.send_header("Content-Disposition", f'attachment; filename="{out.name}"')
@@ -342,7 +372,7 @@ class Handler(BaseHTTPRequestHandler):
         return local_post_allowed(self.headers.get("Origin") or "", self.headers.get("Referer") or "", port)
 
     def do_POST(self):
-        if not self._post_allowed():
+        if not self._host_allowed() or not self._post_allowed():
             self._json({"error": "forbidden"}, 403)
             return
         try:
@@ -350,9 +380,8 @@ class Handler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError, ConnectionError):
             return
         except Exception as exc:
-            _write_log(f"POST {self.path} error: {exc}")
             try:
-                self._json({"error": str(exc)}, 500)
+                self._fail(exc)
             except Exception:
                 return
 
@@ -407,10 +436,8 @@ class Handler(BaseHTTPRequestHandler):
                                       intraday_db=self._intraday_path(), skip_publish=True)
                 self._json(result["board"])
                 publish_live_later(result["board"])
-            except CaptureError as exc:
-                self._json({"error": str(exc)}, 500)
             except Exception as exc:
-                self._json({"error": str(exc)}, 500)
+                self._fail(exc)
             finally:
                 REFRESH_LOCK.release()
             return
@@ -425,14 +452,14 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"error": "refresh already running"}, 409)
                 return
             try:
-                # Same as the 08:05 capture: every bot read in full, no local closed-bot cache.
+                # Same as the 08:15 capture: every bot read in full, no local closed-bot cache.
                 save_live_snapshot(collect_snapshot(V1_CREDENTIALS))
                 result = commit_live_to_daily(confirm, self.db_path)
                 self._json({"ok": True, "capture_date": result.get("capture_date"), "publish": result.get("publish")})
             except CaptureError as exc:
                 self._json({"error": str(exc)}, 400)
             except Exception as exc:
-                self._json({"error": str(exc)}, 500)
+                self._fail(exc)
             finally:
                 REFRESH_LOCK.release()
             return
@@ -458,7 +485,7 @@ class Handler(BaseHTTPRequestHandler):
             except CaptureError as exc:
                 self._json({"error": str(exc)}, 400)
             except Exception as exc:
-                self._json({"error": str(exc)}, 500)
+                self._fail(exc)
             return
         self._json({"error": "not found"}, 404)
 
@@ -484,7 +511,25 @@ def main() -> None:
             return
         raise
     _write_log(f"Pionex Grid SQLite dashboard http://{HOST}:{args.port}")
+    _record_pid(args.port)
     httpd.serve_forever()
+
+
+def _record_pid(port: int) -> None:
+    path = pid_file(port)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(str(os.getpid()), encoding="ascii")
+    except OSError:
+        return
+
+    def remove():
+        try:
+            if path.read_text(encoding="ascii").strip() == str(os.getpid()):
+                path.unlink()
+        except OSError:
+            pass
+    atexit.register(remove)
 
 
 if __name__ == "__main__":

@@ -14,6 +14,7 @@ from pathlib import Path
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+from .fileio import atomic_write_text, file_lock
 from .store import DEFAULT_DB, CaptureError, connect, ingest, vanished_positions
 
 TAIPEI = ZoneInfo("Asia/Taipei")
@@ -26,8 +27,12 @@ FINISHED_CACHE = ROOT / "v2-data" / "finished-details.json"
 _VOLATILE_RAW_KEYS = {"lastFundingFeeTs"}
 # A daily detail capture takes about 20 seconds. Each request also has its own timeout
 # in the collector; this one stops a stuck Node process, which would otherwise hold the
-# 08:05 task (and the server's refresh lock) until someone killed it.
+# daily task (and the server's refresh lock) until someone killed it.
 COLLECTOR_TIMEOUT_SECONDS = 300
+# The daily cut-off. Pionex settles funding at 08:00 and some positions post it a few
+# minutes late; an 08:15 trial (2026-10-21..26) caught every one, 08:05 missed 2-3 most days.
+DAILY_CUTOFF = (8, 15)
+DAILY_CUTOFF_LABEL = f"{DAILY_CUTOFF[0]:02d}:{DAILY_CUTOFF[1]:02d}"
 
 
 def node_path() -> str:
@@ -121,52 +126,47 @@ def _update_finished_cache(snapshot: dict, path: Path, full: bool, list_check: d
     A full capture also reports how many closed bots differ from the remembered copy.
     """
     try:
-        data = _read_finished_cache(path)
-        records = dict(data.get("records") or {})
-        stamp = snapshot.get("CapturedAt")
-        fetched = reused = checked = changed = 0
-        for rec in snapshot.get("Records") or []:
-            oid = str(rec.get("ApiOrderId") or "")
-            if rec.get("ListStatus") != "finished" or not oid:
-                continue
-            if rec.get("DetailSource") == "cache":
-                reused += 1
-                continue
-            fetched += 1
-            old = (records.get(oid) or {}).get("record")
-            if isinstance(old, dict):
-                checked += 1
-                if _stable_raw(old.get("RawJson")) != _stable_raw(rec.get("RawJson")):
-                    changed += 1
-            records[oid] = {"fetched_at": stamp, "record": rec}
-        out = {
-            "version": 1,
-            "records": records,
-            "last_full_check": data.get("last_full_check"),
-            "last_reuse": data.get("last_reuse"),
-            "last_list_check": data.get("last_list_check"),
-        }
-        if list_check is not None:
-            out["last_list_check"] = {"at": stamp, **list_check}
-        if full:
-            out["last_full_check"] = {"at": stamp, "fetched": fetched, "checked": checked, "changed": changed}
-        else:
-            out["last_reuse"] = {"at": stamp, "fetched": fetched, "reused": reused, "changed": changed}
-        path = Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp_path = None
-        try:
-            with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, prefix=path.name + ".",
-                                             suffix=".tmp", delete=False) as tmp:
-                tmp_path = Path(tmp.name)
-                tmp.write(json.dumps(out, ensure_ascii=False))
-            os.replace(tmp_path, path)
-        finally:
-            if tmp_path:
-                tmp_path.unlink(missing_ok=True)
-        return {"ok": True, "records": len(records), "fetched": fetched, "reused": reused, "changed": changed}
+        # The live task, the daily capture and the dashboard all update this file.
+        with file_lock(path):
+            return _merge_finished_cache(snapshot, Path(path), full, list_check)
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
+
+
+def _merge_finished_cache(snapshot: dict, path: Path, full: bool, list_check: dict | None) -> dict:
+    data = _read_finished_cache(path)
+    records = dict(data.get("records") or {})
+    stamp = snapshot.get("CapturedAt")
+    fetched = reused = checked = changed = 0
+    for rec in snapshot.get("Records") or []:
+        oid = str(rec.get("ApiOrderId") or "")
+        if rec.get("ListStatus") != "finished" or not oid:
+            continue
+        if rec.get("DetailSource") == "cache":
+            reused += 1
+            continue
+        fetched += 1
+        old = (records.get(oid) or {}).get("record")
+        if isinstance(old, dict):
+            checked += 1
+            if _stable_raw(old.get("RawJson")) != _stable_raw(rec.get("RawJson")):
+                changed += 1
+        records[oid] = {"fetched_at": stamp, "record": rec}
+    out = {
+        "version": 1,
+        "records": records,
+        "last_full_check": data.get("last_full_check"),
+        "last_reuse": data.get("last_reuse"),
+        "last_list_check": data.get("last_list_check"),
+    }
+    if list_check is not None:
+        out["last_list_check"] = {"at": stamp, **list_check}
+    if full:
+        out["last_full_check"] = {"at": stamp, "fetched": fetched, "checked": checked, "changed": changed}
+    else:
+        out["last_reuse"] = {"at": stamp, "fetched": fetched, "reused": reused, "changed": changed}
+    atomic_write_text(path, json.dumps(out, ensure_ascii=False))
+    return {"ok": True, "records": len(records), "fetched": fetched, "reused": reused, "changed": changed}
 
 
 def finished_cache_status(path: Path | None = None) -> dict:
@@ -266,14 +266,14 @@ def capture(credentials: Path, db_path: Path, replace_date: bool = False, skip_p
     if not replace_date:
         now = datetime.now(TAIPEI)
         existing = _today_captured_at(db_path, now)
-        cutoff = now.replace(hour=8, minute=5, second=0, microsecond=0)
+        cutoff = now.replace(hour=DAILY_CUTOFF[0], minute=DAILY_CUTOFF[1], second=0, microsecond=0)
         if existing is not None and existing >= cutoff:
-            # A second run the same day would move today's cut-off from 08:05 to now,
+            # A second run the same day would move today's cut-off to now,
             # stretching today and shrinking tomorrow without any trace. Only an
             # explicit --replace-date does that.
             reason = f"today's daily record ({existing:%H:%M}) already exists; use --replace-date to replace it"
             return {"skipped": True, "reason": reason, "publish": {"ok": False, "skipped": True, "reason": reason}}
-        # A record taken before 08:05 is replaced so the day still ends at the 08:05 cut-off.
+        # A record taken before the cut-off is replaced so the day still ends at the cut-off.
         replace_date = existing is not None
     snapshot = collect_snapshot(credentials)
     missing = vanished_positions(snapshot, db_path)
@@ -297,10 +297,10 @@ def capture(credentials: Path, db_path: Path, replace_date: bool = False, skip_p
 
 
 def daily_capture_due(db_path: Path, now: datetime | None = None) -> tuple[bool, str]:
-    """For the logon catch-up: run only when today's 08:05 capture is missing."""
+    """For the logon catch-up: run only when today's daily capture is missing."""
     now = now or datetime.now(TAIPEI)
-    if (now.hour, now.minute) < (8, 5):
-        return False, "before 08:05; the scheduled capture will run"
+    if (now.hour, now.minute) < DAILY_CUTOFF:
+        return False, f"before {DAILY_CUTOFF_LABEL}; the scheduled capture will run"
     if Path(db_path).exists():
         con = connect(db_path)
         try:
@@ -321,7 +321,7 @@ def main() -> int:
     parser.add_argument("--skip-publish", action="store_true", help="Do not PATCH Gist after ingest")
     parser.add_argument("--live", action="store_true", help="Fetch current positions only; do not write daily sqlite")
     parser.add_argument("--if-missing", action="store_true",
-                        help="Capture only if today's daily record is missing and it is past 08:05 (logon catch-up)")
+                        help="Capture only if today's daily record is missing and it is past the daily cut-off (logon catch-up)")
     args = parser.parse_args()
     if args.if_missing and not args.live:
         due, reason = daily_capture_due(Path(args.db))
@@ -340,6 +340,12 @@ def main() -> int:
                     ledger_retry = republish_ledger_if_dirty(Path(args.db))
                 except Exception as exc:
                     ledger_retry = {"ok": False, "error": str(exc)}
+            # An Excel workbook that was open at the daily run is exported here once it closes.
+            try:
+                from .pipeline import catch_up_exports
+                exports = catch_up_exports(Path(args.db))
+            except Exception as exc:
+                exports = {"ok": False, "error": str(exc)}
             print(json.dumps({
                 "ok": True,
                 "kind": "live",
@@ -349,6 +355,7 @@ def main() -> int:
                 "finished_cache": result.get("finished_cache"),
                 "publish": result.get("publish"),
                 "ledger_retry": ledger_retry,
+                "exports": exports,
             }, ensure_ascii=False, indent=2))
             pub = result.get("publish") or {}
             if pub.get("skipped"):

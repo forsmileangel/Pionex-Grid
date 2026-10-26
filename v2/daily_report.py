@@ -332,7 +332,7 @@ def summary_sheet(summaries: list[dict]) -> tuple[list[list[Cell]], list[float],
     ]
     rows: list[list[Cell]] = [
         [c(REPORT_TITLE, 1)] + [c() for _ in range(len(headers) - 1)],
-        [c("來源：v2 SQLite 08:05 快照；單日利潤採 v2 事件分類，幣本位匯率重估另列。", 2)] + [c() for _ in range(len(headers) - 1)],
+        [c("來源：v2 SQLite 08:15 快照；單日利潤採 v2 事件分類，幣本位匯率重估另列。", 2)] + [c() for _ in range(len(headers) - 1)],
         [c() for _ in headers],
         [c(value, 3) for value in headers],
     ]

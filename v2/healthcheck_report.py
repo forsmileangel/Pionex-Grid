@@ -106,7 +106,7 @@ def goal_chart(data: dict) -> str:
                    f'<circle cx="{sx(td):.1f}" cy="{y:.1f}" r="4" class="target-dot"><title>{esc(t["label"])}：{num(t["usdt"])} U</title></circle>'
                    f'<text x="{W - R + 8}" y="{y + 4:.1f}" class="label">{"半年目標" if t["months"] == 6 else "一年目標"} {t["usdt"] / 1000:,.0f}k</text>')
     pts = " ".join(f'{sx(datetime.fromisoformat(h["date"]).date()):.1f},{sy(h["usdt"]):.1f}' for h in hist)
-    out.append(f'<polyline points="{pts}" class="actual"><title>實際錢包（每日 08:05 快照）</title></polyline>')
+    out.append(f'<polyline points="{pts}" class="actual"><title>實際錢包（每日 08:15 快照）</title></polyline>')
     label_y = []
     for name, path in g["paths"].items():
         coords = [(start, g["wallet"])] + [(start + timedelta(days=30 * (i + 1)), v) for i, v in enumerate(path)]

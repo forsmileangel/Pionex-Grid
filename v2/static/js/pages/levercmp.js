@@ -67,7 +67,7 @@ function paintLeverCompare() {
     ["強平距離", "（現價 − 強平價）÷ 現價", "同一個公式", `每倉${same}；合計他用他的等效倉位加權（${pct(t.liq_theirs, 2)}），你用你的（${pct(t.liq_ours, 2)}）`],
     ["網格上下限距離", "（現價 − 下限）÷ 現價、（上限 − 現價）÷ 現價", "沒有這欄", "你這邊沒有"],
     ["可用網格／累積網格", "gridProfit − 提領 − 複投 − 減倉／gridProfit", "網格利潤＝gridProfit", "累積網格一樣；你這邊沒有「可用網格」"],
-    ["單天配對", "本日最新 − 本日基準（08:00 日界線，盤中一直更新）", "08:05 快照和前一天相減，另外處理提領、複投、關倉", "概念一樣，記錄時間點不同"],
+    ["單天配對", "本日最新 − 本日基準（08:00 日界線，盤中一直更新）", "08:15 快照和前一天相減，另外處理提領、複投、關倉", "概念一樣，記錄時間點不同"],
     ["資金費", "fundingFeePayment 的差額；沒資料當 0", "totalFundingFee 的差額（淨額，含收到的）；沒資料留空",
       `${diff}：fundingFeePayment 只算付出的。目前合計他 ${signed(t.funding_paid)}、淨額 ${signed(t.funding_net)}${fundGap
         ? `；差最多的是 ${esc(fundGap.symbol)}（${signed(fundGap.funding_paid)} 對 ${signed(fundGap.funding_net)}）` : ""}`],

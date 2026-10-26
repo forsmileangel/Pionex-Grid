@@ -50,7 +50,7 @@ def fetch_candles(symbol: str, interval: str = "15M", bars: int = 2880) -> list[
 
 
 def ledger_day(ts_ms: int) -> str:
-    """Daily ledger interval ending 08:05 Taipei on the returned date."""
+    """Daily ledger interval ending 08:15 Taipei on the returned date."""
     t = datetime.fromtimestamp(ts_ms / 1000, TPE) - timedelta(hours=8, minutes=5)
     return (t.date() + timedelta(days=1)).isoformat()
 

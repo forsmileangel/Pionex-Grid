@@ -47,17 +47,17 @@ export async function renderStatus(seq) {
         ? `最後一筆 ${fmtTaipei(intra.last_at).slice(5, 16)} · 今天 ${intra.today_count} 筆`
           + `<span class="hintline">${intraMissing.length ? `<span class="warn">近 24 小時漏抓 ${intraMissing.length} 個時段：${esc(intraMissing.slice(-8).join("、"))}${intraMissing.length > 8 ? "…" : ""}</span>` : "近 24 小時沒有漏抓"}</span>`
         : `<span class="warn">尚未開始累積</span><span class="hintline">等下一次 30 分鐘排程，或在目前倉位按「更新目前倉位」。</span>`}</dd>
-      <dt>${tip("已關倉明細", "已關倉的網格結算後數字不會再變，所以記在本機 v2-data/finished-details.json。「更新目前倉位」和 30 分鐘排程直接沿用，不再逐筆向派網查；剛關倉 24 小時內、或派網清單有變動的仍會重抓。每日 08:05 照舊全部重抓一次，順便核對本機紀錄。")}</dt>
+      <dt>${tip("已關倉明細", "已關倉的網格結算後數字不會再變，所以記在本機 v2-data/finished-details.json。「更新目前倉位」和 30 分鐘排程直接沿用，不再逐筆向派網查；剛關倉 24 小時內、或派網清單有變動的仍會重抓。每日 08:15 照舊全部重抓一次，順便核對本機紀錄。")}</dt>
       <dd><span class="dot${fcWarn ? " is-warn" : ""}"></span>${fc.available
         ? `本機記住 ${fc.count} 筆`
           + (fcReuse.at ? ` · 最近更新沿用 ${fcReuse.reused} 筆、重抓 ${fcReuse.fetched} 筆` : "")
           + `<span class="hintline">${fcCheck.at
             ? `每日全部核對 ${fmtTaipei(fcCheck.at).slice(5, 16)}：${fcCheck.changed ? `<span class="warn">${fcCheck.changed} 筆和本機紀錄不同，已改用派網最新資料</span>` : fcCheck.checked ? `${fcCheck.checked} 筆和本機紀錄一致` : `重抓 ${fcCheck.fetched} 筆並記下`}`
-            : "等下一次每日 08:05 擷取做第一次全部核對。"}</span>`
+            : "等下一次每日 08:15 擷取做第一次全部核對。"}</span>`
         : `尚未建立<span class="hintline">下一次更新目前倉位時會自動建立。</span>`}</dd>
-      <dt>${tip("運行中清單", "派網的運行中清單本身就附上每個網格的完整明細，所以「更新目前倉位」和 30 分鐘排程直接用清單，不再逐筆查。每日 08:05 照舊逐筆查明細，並核對清單有沒有漏資料；有漏就自動改回逐筆查。")}</dt>
+      <dt>${tip("運行中清單", "派網的運行中清單本身就附上每個網格的完整明細，所以「更新目前倉位」和 30 分鐘排程直接用清單，不再逐筆查。每日 08:15 照舊逐筆查明細，並核對清單有沒有漏資料；有漏就自動改回逐筆查。")}</dt>
       <dd><span class="dot${lc.missing ? " is-warn" : ""}"></span>${!lc.at
-        ? `等下一次每日 08:05 擷取做第一次核對。`
+        ? `等下一次每日 08:15 擷取做第一次核對。`
         : lc.missing
           ? `<span class="warn">清單缺 ${lc.missing} 個欄位，已自動改回逐筆查明細</span><span class="hintline">${esc((lc.fields || []).join("、"))}</span>`
           : `每日核對 ${lc.checked} 筆：清單資料完整<span class="hintline">${fmtTaipei(lc.at).slice(5, 16)}</span>`}</dd>

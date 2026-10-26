@@ -20,6 +20,6 @@ $watch = New-ScheduledTaskTrigger -Once -At $FirstRun -RepetitionInterval (New-T
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -DontStopOnIdleEnd -ExecutionTimeLimit (New-TimeSpan -Minutes 8) -MultipleInstances IgnoreNew
 $principal = New-ScheduledTaskPrincipal -UserId ("{0}\{1}" -f $env:USERDOMAIN, $env:USERNAME) -LogonType Interactive -RunLevel Limited
 
-Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $watch -Settings $settings -Principal $principal -Description "Every 30 minutes: fetch current Pionex grids into live-snapshot.json, append an intraday point to intraday.sqlite, and PATCH pionex-grid-live.json. Runs on :00 and :30. Does not write the 08:00 Excel or 08:05 daily sqlite ledger." -Force | Out-Null
+Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $watch -Settings $settings -Principal $principal -Description "Every 30 minutes: fetch current Pionex grids into live-snapshot.json, append an intraday point to intraday.sqlite, and PATCH pionex-grid-live.json. Runs on :00 and :30. Does not write the 08:00 Excel or 08:15 daily sqlite ledger." -Force | Out-Null
 if ($RunNow) { Start-ScheduledTask -TaskName $TaskName }
 Get-ScheduledTask -TaskName $TaskName | Select-Object TaskName, State, Description

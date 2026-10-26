@@ -100,7 +100,7 @@
       <tr><td>收集</td><td>Node → JSON → PowerShell</td><td>同一份 Node → JSON → <code>python -m v2.capture</code></td></tr>
       <tr><td>保存</td><td><code>data/pionex-grid-history.xlsx</code></td><td><code>v2-data/pionex-grid.sqlite</code></td></tr>
       <tr><td>觀看</td><td>Excel</td><td><code>http://127.0.0.1:8787</code></td></tr>
-      <tr><td>排程</td><td>檔案仍在這個資料夾。08:05 的 v2 pipeline 一併寫入；舊的 08:10、08:12 排程在重新註冊後只停用、不刪除</td><td>08:05 <code>python -m v2.pipeline</code>，登入補跑 <code>--if-missing</code>。儀表板登入後自動開</td></tr>
+      <tr><td>排程</td><td>檔案仍在這個資料夾。08:15 的 v2 pipeline 一併寫入；舊的 08:10、08:12 排程在重新註冊後只停用、不刪除</td><td>08:15 <code>python -m v2.pipeline</code>，登入補跑 <code>--if-missing</code>。儀表板登入後自動開</td></tr>
       <tr><td>識別一筆倉</td><td>交易對 + 建立時間</td><td>API <code>buOrderId</code></td></tr>
     </tbody>
   </table>
@@ -111,13 +111,13 @@
     <tbody>
       <tr><td><code>pionex-grid-api.mjs</code></td><td>唯讀收集器。白名單：Bot 清單／詳情、錢包、公開 ticker。網路一時斷線時同一個 GET 最多重試 3 次。派網只接受和它時間相差 10 秒內的簽名請求，收集器用每個回應附的伺服器時間校正時鐘，被拒（INVALID_TIMESTAMP）時用校正後的時間立刻重送一次；偏差記在快照 <code>ClockOffsetMs</code>，顯示在執行狀態頁。</td></tr>
       <tr><td><code>v2/capture.py</code></td><td>跑 Node，ingest 進 SQLite。同日已有紀錄則覆蓋。</td></tr>
-      <tr><td><code>v2/pipeline.py</code></td><td>08:05 與登入補跑。先擷取，再匯出舊版 Excel 與每日報表。Excel 失敗不讓擷取重跑。</td></tr>
+      <tr><td><code>v2/pipeline.py</code></td><td>08:15 與登入補跑。先擷取，再匯出舊版 Excel 與每日報表。Excel 失敗不讓擷取重跑。</td></tr>
       <tr><td><code>v2/daily_report.py</code></td><td>每日報表，計算與原本的 08:10 程式相同。<code>python -m v2.daily_report</code>。</td></tr>
       <tr><td><code>v2/store.py</code></td><td>schema、差額、儀表板 payload、Excel 匯出。</td></tr>
       <tr><td><code>v2/liq.py</code></td><td>強平價顯示：U 本位為主，幣本位才倒數。</td></tr>
       <tr><td><code>v2/fx.py</code></td><td>USDT→TWD = 臺銀美金現金買入 × USDT/USD。</td></tr>
       <tr><td><code>v2/intraday.py</code></td><td>每 30 分鐘的盤中資料點（<code>v2-data/intraday.sqlite</code>）與效率走勢的時段計算、常用檢視。</td></tr>
-      <tr><td><code>v2-data/finished-details.json</code></td><td>已關倉網格的明細。即時更新沿用，每日 08:05 全部重抓核對。</td></tr>
+      <tr><td><code>v2-data/finished-details.json</code></td><td>已關倉網格的明細。即時更新沿用，每日 08:15 全部重抓核對。</td></tr>
       <tr><td><code>v2/server.py</code></td><td>只綁 127.0.0.1:8787，不讀金鑰。</td></tr>
       <tr><td><code>v2/static/index.html</code></td><td>儀表板。目前倉位頁每 5 分鐘、切回分頁時重讀本機暫存（不連派網）。</td></tr>
       <tr><td><code>v2/static/chart.js</code></td><td>儀表板圖表（純 SVG、不靠 CDN）。</td></tr>
@@ -161,12 +161,12 @@
   <p>同一日再 capture 會刪掉該日 summary／明細／snapshot 再寫。所以 8/25 按十次還是只有 8/25 一列。8/26 第一次成功才會出現第二天，且通常<strong>不是 0</strong>（除非過夜網格利潤完全沒動）。</p>
   <p>漏抓的日子不會自動補。v1 的 08:00 <strong>不會</strong>寫進 v2 sqlite。長天期 Excel 要靠每天至少一次 v2 capture。</p>
   <h3>盤中資料（效率走勢用）</h3>
-  <p>每 30 分鐘排程（:00、:30）、手動「更新目前倉位」和 08:05 擷取，都會把當下每個運行中倉位記一筆到另一個檔 <code>v2-data/intraday.sqlite</code>，不動帳本。每一筆和上一筆比網格利潤，複投、加倉、提領、幣本位重估沿用上面的日記帳規則；倉位第一次出現時接每日帳本最後一筆。派網 API 沒有歷史成交，漏掉的時段補不回來，所以 08:05 會備份這個檔（保留 7 份）。</p>
+  <p>每 30 分鐘排程（:00、:30）、手動「更新目前倉位」和 08:15 擷取，都會把當下每個運行中倉位記一筆到另一個檔 <code>v2-data/intraday.sqlite</code>，不動帳本。每一筆和上一筆比網格利潤，複投、加倉、提領、幣本位重估沿用上面的日記帳規則；倉位第一次出現時接每日帳本最後一筆。派網 API 沒有歷史成交，漏掉的時段補不回來，所以 08:15 會備份這個檔（保留 7 份）。</p>
   <h3>已關倉明細（加快即時更新）</h3>
-  <p>派網沒有一次抓全部網格的端點，只能逐筆查明細。已關倉網格結算後數字不會再變（9/21 起的快照比對過，只有 <code>lastFundingFeeTs</code> 時間戳變過），所以每次抓到的明細記在 <code>v2-data/finished-details.json</code>。「更新目前倉位」和 30 分鐘排程只在三個條件都成立時沿用本機那份：本機有這筆、那份是在關倉 24 小時後抓的、派網已關倉清單的內容沒變（忽略 <code>lastFundingFeeTs</code>）。其他情況照舊向派網查。每日 08:05 擷取、關倉紀錄頁「補抓」不用本機那份，全部重抓，08:05 那次順便核對有幾筆和本機不同，結果顯示在執行狀態頁。這份檔壞掉或不見，只會讓下一次更新慢回原本的速度，帳本不受影響。</p>
+  <p>派網沒有一次抓全部網格的端點，只能逐筆查明細。已關倉網格結算後數字不會再變（9/21 起的快照比對過，只有 <code>lastFundingFeeTs</code> 時間戳變過），所以每次抓到的明細記在 <code>v2-data/finished-details.json</code>。「更新目前倉位」和 30 分鐘排程只在三個條件都成立時沿用本機那份：本機有這筆、那份是在關倉 24 小時後抓的、派網已關倉清單的內容沒變（忽略 <code>lastFundingFeeTs</code>）。其他情況照舊向派網查。每日 08:15 擷取、關倉紀錄頁「補抓」不用本機那份，全部重抓，08:15 那次順便核對有幾筆和本機不同，結果顯示在執行狀態頁。這份檔壞掉或不見，只會讓下一次更新慢回原本的速度，帳本不受影響。</p>
   <h3>運行中清單（快速模式）</h3>
-  <p>派網的運行中清單每一筆已附完整明細（127 個欄位，和逐筆查的相同），所以「更新目前倉位」和 30 分鐘排程直接用清單，不再逐筆查；清單裡 10 個提領／賣出欄位是 null，一律當作 "0"。行情、清單、錢包同時讀取，同步 Portfolio 改在背景完成，畫面不用等。每日 08:05 照舊逐筆查明細並核對清單有沒有漏資料，有漏就自動停用快速模式。備援「寫入倉位歷史」寫入前會先完整重抓一次。</p>
-  <p>效率走勢把累計曲線切成台北時間整點起算的時段（30 分到月），邊界用前後兩筆線性內插；跨過 75 分鐘以上的空檔標成估算，1 天以上的顆粒度在盤中資料開始前改用每日帳本（08:05 截點）。效率 ＝ 時段利潤 ÷ 倉位 × 3 ÷ 槓桿，換算成每天 %，和「每U效率」同一口徑。</p>
+  <p>派網的運行中清單每一筆已附完整明細（127 個欄位，和逐筆查的相同），所以「更新目前倉位」和 30 分鐘排程直接用清單，不再逐筆查；清單裡 10 個提領／賣出欄位是 null，一律當作 "0"。行情、清單、錢包同時讀取，同步 Portfolio 改在背景完成，畫面不用等。每日 08:15 照舊逐筆查明細並核對清單有沒有漏資料，有漏就自動停用快速模式。備援「寫入倉位歷史」寫入前會先完整重抓一次。</p>
+  <p>效率走勢把累計曲線切成台北時間整點起算的時段（30 分到月），邊界用前後兩筆線性內插；跨過 75 分鐘以上的空檔標成估算，1 天以上的顆粒度在盤中資料開始前改用每日帳本（08:15 截點）。效率 ＝ 時段利潤 ÷ 倉位 × 3 ÷ 槓桿，換算成每天 %，和「每U效率」同一口徑。</p>
 
   <h2 id="ui">5. 畫面與報表</h2>
   <h3>儀表板 <code>http://127.0.0.1:8787</code></h3>
@@ -319,7 +319,7 @@
     <li>要新資料：雙擊 <code>capture-v2.cmd</code>（或 <code>python -m v2.capture</code>）。同日覆蓋、隔日新增。</li>
     <li>硬重新整理儀表板。點表頭可排序。</li>
     <li>長天期報表：頁上「匯出 Excel」。看的是資料庫歷史，不是再抓一次派網。</li>
-    <li>每天 08:05 <code>python -m v2.pipeline</code> 先擷取帳本，再更新舊版 Excel 與每日報表。08:05 沒開機時，登入後的 <code>--if-missing</code> 會補抓，兩份 Excel 也一起補。帳本日期沒有比上次新就略過。重新註冊後，舊的 08:10 與 08:12 排程只停用、不刪除。</li>
+    <li>每天 08:15 <code>python -m v2.pipeline</code> 先擷取帳本，再更新舊版 Excel 與每日報表。08:15 沒開機時，登入後的 <code>--if-missing</code> 會補抓，兩份 Excel 也一起補。帳本日期沒有比上次新就略過。重新註冊後，舊的 08:10 與 08:12 排程只停用、不刪除。</li>
   </ol>
   <p class="small">金鑰仍用 v1 資料夾的 <code>PIONEX API.txt</code>（兩行：key、secret）。v2 capture 預設指向那裡，不要複製進 Git。</p>
 

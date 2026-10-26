@@ -133,6 +133,8 @@ CREATE TABLE IF NOT EXISTS event_overrides (
   decided_at TEXT NOT NULL,
   PRIMARY KEY (capture_date, bu_order_id)
 );
+CREATE INDEX IF NOT EXISTS idx_grid_snapshots_order ON grid_snapshots(bu_order_id, run_id);
+CREATE INDEX IF NOT EXISTS idx_daily_grid_profit_order ON daily_grid_profit(bu_order_id, capture_date);
 """
 
 
@@ -1016,6 +1018,8 @@ def ingest(snapshot: dict, db_path: Path | None = None, replace_date: bool = Fal
         if rec.get("GridProfit") is None or rec.get("Investment") is None:
             raise CaptureError(f"Running grid {rec.get('ApiOrderId')} is missing profit or investment")
 
+    # Fetch the rate before BEGIN: a slow bank page must not hold the write lock.
+    fx = snapshot.get("Fx") or usdt_twd()
     con = connect(db_path)
     try:
         existing = con.execute("SELECT capture_date FROM daily_summary WHERE capture_date=?", (capture_date,)).fetchone()
@@ -1073,7 +1077,6 @@ def ingest(snapshot: dict, db_path: Path | None = None, replace_date: bool = Fal
                 "UPDATE capture_runs SET wallet_total_usdt=?, wallet_json=? WHERE id=?",
                 (wallet.get("totalInUsdt"), json.dumps(wallet, ensure_ascii=False), run_id),
             )
-        fx = snapshot.get("Fx") or usdt_twd()
         con.execute(
             """UPDATE capture_runs SET fx_usdt_twd=?, fx_usdt_usd=?, fx_usd_cash_buy=?, fx_source=?, fx_as_of=?
                WHERE id=?""",
@@ -2000,6 +2003,10 @@ def export_sheets(db_path: Path | None = None) -> dict[str, list[list]]:
 LEDGER_SCHEMA = 1
 LEDGER_SOURCE = "pionex-grid-v2"
 LEDGER_BASELINE_DATE = "2026-08-26"
+# Per-position rows in the Gist ledger cover the latest 90 days; older days keep only
+# their day totals (calendar, monthly averages and the cumulative curve use those).
+# The local dashboard still has every row.
+LEDGER_ROWS_DAYS = 90
 
 
 def _twd_from_usdt(usdt, rate) -> int | None:
@@ -2062,6 +2069,8 @@ def ledger_publish_payload(db_path: Path | None = None) -> dict:
         funding_rows, funding_totals = funding_by_day(con)
         funding_days = funding_by_date(funding_rows)
         # A day without funding data (intraday backfill) keeps the previous running total.
+        newest = datetime.fromisoformat(summaries[0]["capture_date"]).date()
+        rows_from = (newest - timedelta(days=LEDGER_ROWS_DAYS - 1)).isoformat()
         funding_total: dict = {}
         carried = None
         for summary in reversed(summaries):
@@ -2073,6 +2082,7 @@ def ledger_publish_payload(db_path: Path | None = None) -> dict:
             wallet_usdt = summary["wallet_total_usdt"]
             day_funding = funding_days.get(summary["capture_date"]) or {"funding_i": None, "span": 1}
             funding_i = day_funding["funding_i"]
+            keep_rows = summary["capture_date"] >= rows_from
             rows = []
             for row in con.execute(
                 """SELECT d.*, p.symbol, p.created_at
@@ -2081,18 +2091,19 @@ def ledger_publish_payload(db_path: Path | None = None) -> dict:
                    WHERE d.capture_date=?
                    ORDER BY p.symbol, p.created_at""",
                 (summary["capture_date"],),
-            ):
+            ) if keep_rows else ():
                 grid_funding = funding_rows.get((summary["capture_date"], row["bu_order_id"])) or {}
                 rows.append(
                     {
-                        "id": row["bu_order_id"],
+                        # Rows are rounded to what the tracker shows; day totals below keep full precision.
+                        "id": row["bu_order_id"][:8],
                         "symbol": row["symbol"],
                         "status": row["status"],
-                        "investment_usdt": from_fixed(row["investment_i"]),
-                        "daily_profit_usdt": from_fixed(row["daily_profit_i"]),
-                        "cumulative_usdt": from_fixed(row["cumulative_i"]),
+                        "investment_usdt": _rounded(row["investment_i"], 2),
+                        "daily_profit_usdt": _rounded(row["daily_profit_i"], 4),
+                        "cumulative_usdt": _rounded(row["cumulative_i"], 4),
                         "daily_profit_coin": from_fixed(row["daily_profit_coin_i"]) if "daily_profit_coin_i" in row.keys() else None,
-                        "fx_gap_usdt": from_fixed(row["fx_gap_i"]) if "fx_gap_i" in row.keys() else None,
+                        "fx_gap_usdt": _rounded(row["fx_gap_i"], 4) if "fx_gap_i" in row.keys() else None,
                         # Added for v15.974: investment + extra margin (running grids only) and funding.
                         "equivalent_usdt": _rounded(grid_equivalent.get((summary["run_id"], row["bu_order_id"])), 2),
                         "funding_usdt": _rounded(grid_funding.get("delta_i"), 4),
@@ -2126,7 +2137,7 @@ def ledger_publish_payload(db_path: Path | None = None) -> dict:
                                          else summary["daily_profit_i"] + funding_i, 4),
                     "funding_total_usdt": _rounded(funding_total.get(summary["capture_date"]), 4),
                     "leverage_equivalent": run_leverage.get(summary["run_id"]),
-                    "rows": rows,
+                    **({"rows": rows} if keep_rows else {"rows_trimmed": True}),
                 }
             )
         latest_row = summaries[0]

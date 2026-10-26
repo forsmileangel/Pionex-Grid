@@ -38,6 +38,7 @@ class PipelineTests(unittest.TestCase):
             patch("v2.pipeline.subprocess.run"),
             patch("v2.pipeline.export_report"),
             patch("v2.pipeline.ledger_rows"),
+            patch("v2.pipeline._automation_excel_pids", return_value=set()),
         ]
         started = [item.start() for item in self.patches]
         self.addCleanup(lambda: [item.stop() for item in self.patches])

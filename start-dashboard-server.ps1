@@ -25,15 +25,26 @@ function Test-DashboardHttp {
 }
 
 function Get-DashboardPids {
-    $pids = @()
+    # Only this dashboard: the pid it recorded in v2-data, or a v2.server python listening on
+    # this port. A dev preview on another port, or another program on this port, is left alone.
+    $servers = @{}
     try {
         Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
             Where-Object { $_.Name -match "^python(w)?\.exe$" -and $_.CommandLine -match "v2\.server" } |
-            ForEach-Object { $pids += [int]$_.ProcessId }
+            ForEach-Object { $servers[[int]$_.ProcessId] = $true }
     } catch {}
+    $pids = @()
+    $pidFile = Join-Path $RootDir ("v2-data\dashboard-server-{0}.pid" -f $Port)
+    if (Test-Path -LiteralPath $pidFile) {
+        $recorded = 0
+        $text = (Get-Content -LiteralPath $pidFile -Raw -ErrorAction SilentlyContinue)
+        if ($null -ne $text -and [int]::TryParse($text.Trim(), [ref]$recorded) -and $servers.ContainsKey($recorded)) {
+            $pids += $recorded
+        }
+    }
     try {
         Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue |
-            ForEach-Object { $pids += [int]$_.OwningProcess }
+            ForEach-Object { if ($servers.ContainsKey([int]$_.OwningProcess)) { $pids += [int]$_.OwningProcess } }
     } catch {}
     return $pids | Where-Object { $_ -gt 0 } | Select-Object -Unique
 }

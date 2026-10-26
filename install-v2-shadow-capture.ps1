@@ -2,6 +2,8 @@ param(
     [string]$TaskName = "Pionex Grid v2 Shadow 0815"
 )
 
+# Trial ended 2026-10-26: 08:15 caught every 08:00 funding settlement, so the daily capture
+# moved to 08:15 and this task is disabled. Kept to rerun a comparison if ever needed.
 # Trial (from 2026-10-20): an 08:15 snapshot into v2-data\shadow only, to measure 08:00
 # funding that posts after the 08:05 capture. Writes no ledger, Gist or Excel.
 # Remove with: Unregister-ScheduledTask -TaskName "Pionex Grid v2 Shadow 0815" -Confirm:$false

@@ -3,14 +3,21 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 import urllib.request
 from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 
+from .fileio import atomic_write_text
+
 ROOT = Path(__file__).resolve().parent.parent
 CACHE = ROOT / "v2-data" / "usdt-twd.json"
 TTL_SECONDS = 6 * 3600
+# After a failed fetch, keep the old rate for a while instead of retrying on every page
+# request; each attempt can take up to ~48 s when the bank or the peg sources hang.
+RETRY_SECONDS = 10 * 60
+_FETCH_LOCK = threading.Lock()
 BOT_URL = "https://rate.bot.com.tw/xrt/flcsv/0/day"
 COINGECKO_URL = "https://api.coingecko.com/api/v3/simple/price?ids=tether&vs_currencies=usd"
 COINBASE_URL = "https://api.coinbase.com/v2/prices/USDT-USD/spot"
@@ -36,20 +43,40 @@ def compose_usdt_twd(usd_cash_buy: float, usdt_usd: float | None) -> float:
     return float(rate.quantize(Decimal("0.000001"), rounding=ROUND_HALF_UP))
 
 
+def _fresh(cached: dict | None, now: float) -> bool:
+    if not cached:
+        return False
+    if cached.get("usdt_twd") and now - cached.get("fetched_at", 0) < TTL_SECONDS:
+        return True
+    return now - cached.get("failed_at", 0) < RETRY_SECONDS
+
+
 def usdt_twd() -> dict:
-    now = time.time()
     cached = _read_cache()
-    if cached and now - cached.get("fetched_at", 0) < TTL_SECONDS and cached.get("usdt_twd"):
-        return _with_alias(cached)
-    try:
-        payload = _fetch_live(now)
-        CACHE.parent.mkdir(parents=True, exist_ok=True)
-        CACHE.write_text(json.dumps(payload), encoding="utf-8")
+    if _fresh(cached, time.time()):
+        return _with_alias(cached) if cached.get("usdt_twd") else _empty()
+    # One fetch at a time; threads that waited reuse what the first one stored.
+    with _FETCH_LOCK:
+        now = time.time()
+        cached = _read_cache()
+        if _fresh(cached, now):
+            return _with_alias(cached) if cached.get("usdt_twd") else _empty()
+        try:
+            payload = _fetch_live(now)
+        except Exception:
+            kept = dict(cached or {})
+            kept["failed_at"] = now
+            _write_cache(kept)
+            return _with_alias(kept) if kept.get("usdt_twd") else _empty()
+        _write_cache(payload)
         return _with_alias(payload)
-    except Exception:
-        if cached and cached.get("usdt_twd"):
-            return _with_alias(cached)
-        return _empty()
+
+
+def _write_cache(payload: dict) -> None:
+    try:
+        atomic_write_text(CACHE, json.dumps(payload))
+    except OSError:
+        pass  # the rate still works for this call; the next one fetches again
 
 
 def usd_twd() -> dict:

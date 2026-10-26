@@ -68,7 +68,7 @@ def ledger_rows(db_path: Path, today: date, allow_stale: bool = False) -> dict:
                 amount(period_total), amount(day['investment_i']), '否', day['active_count'], source])
         return {'source': 'v2-sqlite', 'dates': [d['capture_date'] for d in summaries],
                 'note': '來源：v2 每日快照。每日利潤含關倉最後增量，提領不重複加回。累計欄為記錄期間每日利潤加總，基準日為 0；關倉待補時為暫計。',
-                'schedule_note': '每日 08:12 更新 Excel，採 v2 每日快照時間。重跑會重建帳本涵蓋日期，補登回填原區間；當天帳本未完成時保留原檔。',
+                'schedule_note': '每日 08:15 擷取帳本後更新 Excel，採 v2 每日快照時間。重跑會重建帳本涵蓋日期，補登回填原區間；當天帳本未完成時保留原檔。',
                 'latest_date': latest.isoformat(), 'rows': rows}
 
 

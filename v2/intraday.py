@@ -559,7 +559,7 @@ def efficiency_meta(ledger_db: Path | None = None, intraday_db: Path | None = No
 def _bucketize(curves: dict[str, _Curve], edges: list[float], fine: bool):
     """Per grid: profit, daily efficiency, investment, covered hours, flag, leverage per bucket.
 
-    Flags: 0 normal, 1 partly covered, 2 spans a gap over 75 minutes, 3 daily-ledger (08:05) data.
+    Flags: 0 normal, 1 partly covered, 2 spans a gap over 75 minutes, 3 daily-ledger (08:15) data.
     Fine granularities never show ledger data: one point a day cannot be split into hours.
     """
     keys = ("profit", "eff", "inv", "cov", "flag", "lev")

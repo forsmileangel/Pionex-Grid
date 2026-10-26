@@ -19,13 +19,13 @@ function paintLive() {
       <button class="btn ghost" id="liveCommit" ${hasLive && !liveBusy ? "" : "disabled"}>把現在倉位寫入倉位歷史</button>
       <span class="note">${hasLive
         ? `暫存時間：${fmtTaipei(board.as_of)}${age ? `（<span class="${age.stale ? "warn" : ""}">${age.text}</span>）` : ""}。只留在這一頁，不會改每日快照；排程每 30 分鐘更新一次。`
-        : "尚未抓過。按「更新目前倉位」只刷新這一頁暫存，不影響每日 08:05 紀錄。"}</span>
+        : "尚未抓過。按「更新目前倉位」只刷新這一頁暫存，不影響每日 08:15 紀錄。"}</span>
     </div>`
     + summaryCards(board, "即時更新時間", hasLive ? fmtTaipei(board.as_of) : "尚未抓過",
         "現在還開著的倉，把派網畫面上的網格利潤加起來。",
         "目前運行中倉位的配對利潤加總，已包含已提領收益。含已關倉成果及複投調整的歷史累計請見每日倉位紀錄。")
     + `<div class="card">
-      <p class="muted">這一頁是暫存屏，跟每日 08:05 快照分開。按「更新目前倉位」只抓此刻並留在這裡。台幣 USDT→TWD ${fxRate != null ? n(fxRate, 3) : "—"}。</p>
+      <p class="muted">這一頁是暫存屏，跟每日 08:15 快照分開。按「更新目前倉位」只抓此刻並留在這裡。台幣 USDT→TWD ${fxRate != null ? n(fxRate, 3) : "—"}。</p>
       ${hasLive ? positionTable(board.rows || [], "24h", state.boardSort) : "<p class='muted'>按「更新目前倉位」後才會出現表格。</p>"}
     </div>`;
   if (hasLive) {
@@ -61,7 +61,7 @@ function paintLive() {
     mask.className = "mask";
     mask.innerHTML = `<div class="dialog">
         <h3>把現在倉位寫入倉位歷史？</h3>
-        <p>只有這一顆備援鈕才會動每日紀錄。會先向派網<strong>完整重抓一次</strong>（約 15 秒），再寫成台北時間 <strong>${today}</strong> 的倉位歷史。今天若已有 08:05 快照，會被換成這一份，並重新發布到 Portfolio。Excel 排程本身不會被改。</p>
+        <p>只有這一顆備援鈕才會動每日紀錄。會先向派網<strong>完整重抓一次</strong>（約 15 秒），再寫成台北時間 <strong>${today}</strong> 的倉位歷史。今天若已有 08:15 快照，會被換成這一份，並重新發布到 Portfolio。Excel 排程本身不會被改。</p>
         <p class="muted">再按「確定寫入」才會存。取消則什麼都不改。</p>
         <div class="actions">
           <button class="btn ghost" type="button" id="commitCancel">取消</button>

@@ -12,10 +12,11 @@ import os
 import sqlite3
 import subprocess
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
-from .capture import TAIPEI, V1_CREDENTIALS, _collector_run_kwargs, capture, daily_capture_due
+from .capture import DAILY_CUTOFF, TAIPEI, V1_CREDENTIALS, _collector_run_kwargs, capture, daily_capture_due
+from .fileio import LockTimeout, file_lock
 from .daily_report import DEFAULT_OUTPUT, export_report
 from .legacy_excel import ledger_rows
 from .store import DEFAULT_DB
@@ -31,8 +32,14 @@ PRODUCTION_LEGACY_ROOT = Path(r"D:\My-project\pionex grid record")
 PRODUCTION_HISTORY = PRODUCTION_LEGACY_ROOT / "data" / "pionex-grid-history.xlsx"
 # A normal export takes about 10 seconds. The scheduled task has no time limit and
 # ignores a new start while one is running, so a hung Excel would block the next
-# day's 08:05 capture. The old 08:12 task stopped after an hour.
+# day's capture. The old 08:12 task stopped after an hour.
 LEGACY_TIMEOUT_SECONDS = 600
+# The legacy script copies the workbook to data/snapshot-legacy-excel-*.xlsx before every
+# export; keep the newest ones only.
+LEGACY_BACKUP_PATTERN = "snapshot-legacy-excel-*.xlsx"
+LEGACY_BACKUP_KEEP = 14
+# The 30-minute live task retries exports only after the daily task's own retries are over.
+CATCH_UP_AFTER = timedelta(minutes=45)
 
 
 def _stamp() -> str:
@@ -178,6 +185,46 @@ def _refuse(step: str, label: str) -> str:
     return "failed"
 
 
+def _prune_legacy_backups(workbook: Path | None) -> int:
+    folder = (workbook or PRODUCTION_HISTORY).parent
+    backups = sorted(folder.glob(LEGACY_BACKUP_PATTERN), key=lambda f: f.name, reverse=True)
+    removed = 0
+    for old in backups[LEGACY_BACKUP_KEEP:]:
+        try:
+            old.unlink()
+            removed += 1
+        except OSError:
+            pass
+    return removed
+
+
+def _automation_excel_pids() -> set[int]:
+    """EXCEL.EXE started through COM (an export), never a workbook the user opened."""
+    try:
+        listed = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-Command",
+             "Get-CimInstance Win32_Process -Filter \"Name='EXCEL.EXE'\" | "
+             "Where-Object { $_.CommandLine -match '/automation' } | ForEach-Object { $_.ProcessId }"],
+            timeout=30, **{**_collector_run_kwargs(), "errors": "replace"},
+        )
+        return {int(x) for x in (listed.stdout or "").split() if x.isdigit()}
+    except Exception:
+        return set()
+
+
+def _stop_new_excel(before: set[int]) -> list[int]:
+    """Stopping powershell on a timeout leaves the COM Excel it started running."""
+    stopped = []
+    for pid in sorted(_automation_excel_pids() - before):
+        try:
+            subprocess.run(["taskkill", "/F", "/PID", str(pid)], timeout=30,
+                           **{**_collector_run_kwargs(), "errors": "replace"})
+            stopped.append(pid)
+        except Exception:
+            pass
+    return stopped
+
+
 def _step_legacy(db_path: Path, state_file: Path, state: dict, latest: str | None,
                  legacy_root: Path | None, legacy_workbook: Path | None) -> str:
     _log("legacy_excel", "start")
@@ -194,6 +241,7 @@ def _step_legacy(db_path: Path, state_file: Path, state: dict, latest: str | Non
         # The script aborts on the first stderr line of the adapter, so its error is
         # only "Traceback". Run the adapter's read-only checks here for the reason.
         ledger_rows(db_path, datetime.now(TAIPEI).date())
+        excel_before = _automation_excel_pids()
         # Same no-window flags as the collector: the scheduled task runs hidden,
         # and a plain child powershell.exe would otherwise flash a console.
         completed = subprocess.run(
@@ -206,6 +254,9 @@ def _step_legacy(db_path: Path, state_file: Path, state: dict, latest: str | Non
             raise RuntimeError(detail[0][:300] if detail else f"exit {completed.returncode}")
     except subprocess.TimeoutExpired:
         message = f"超過 {LEGACY_TIMEOUT_SECONDS} 秒沒有結束，已中止"
+        stopped = _stop_new_excel(excel_before)
+        if stopped:
+            message += f"，並關閉殘留的 Excel（pid {', '.join(map(str, stopped))}）"
         _log("legacy_excel", f"fail {message}")
         print(f"舊版 Excel 匯出失敗：{message}", file=sys.stderr)
         return "failed"
@@ -215,7 +266,8 @@ def _step_legacy(db_path: Path, state_file: Path, state: dict, latest: str | Non
         return "failed"
     state["legacy_excel"] = latest
     _save_state(state_file, state)
-    _log("legacy_excel", f"ok {latest}")
+    removed = _prune_legacy_backups(workbook)
+    _log("legacy_excel", f"ok {latest}" + (f"（刪除 {removed} 份舊備份）" if removed else ""))
     return "ok"
 
 
@@ -275,10 +327,17 @@ def run(args: argparse.Namespace) -> int:
             "daily_report": "failed",
         }, ensure_ascii=False))
         return 0
-    state = _load_state(state_file)
-    legacy_status = _step_legacy(
-        args.db, state_file, state, latest, args.legacy_root, args.legacy_workbook)
-    report_status = _step_report(args.db, state_file, state, latest, args.report_output)
+    try:
+        # The 30-minute catch-up uses the same lock, so two exports never open the workbook at once.
+        with file_lock(state_file.parent / "excel-export", timeout=LEGACY_TIMEOUT_SECONDS + 60):
+            state = _load_state(state_file)
+            legacy_status = _step_legacy(
+                args.db, state_file, state, latest, args.legacy_root, args.legacy_workbook)
+            report_status = _step_report(args.db, state_file, state, latest, args.report_output)
+    except LockTimeout as exc:
+        _log("legacy_excel", f"fail {exc}")
+        _log("daily_report", f"fail {exc}")
+        legacy_status = report_status = "failed"
     print(json.dumps({
         "ok": True,
         "capture": capture_status,
@@ -289,10 +348,38 @@ def run(args: argparse.Namespace) -> int:
     return 0
 
 
+def catch_up_exports(db_path: Path = DEFAULT_DB, now: datetime | None = None) -> dict:
+    """Export a workbook the daily run could not write, e.g. because it was open in Excel.
+
+    Called by the 30-minute live task. Production folder only, today's ledger only, and
+    never while the daily task may still be retrying.
+    """
+    now = now or datetime.now(TAIPEI)
+    if _outside_production():
+        return {"skipped": True, "reason": "not the production folder"}
+    cutoff = now.replace(hour=DAILY_CUTOFF[0], minute=DAILY_CUTOFF[1], second=0, microsecond=0)
+    if now < cutoff + CATCH_UP_AFTER:
+        return {"skipped": True, "reason": "the daily task may still be running"}
+    latest = _latest_date(db_path)
+    if latest != now.date().isoformat():
+        return {"skipped": True, "reason": "today's ledger is not ready"}
+    try:
+        with file_lock(STATE_PATH.parent / "excel-export", timeout=0):
+            state = _load_state(STATE_PATH)
+            result = {}
+            if _needs_export(state, "legacy_excel", latest):
+                result["legacy_excel"] = _step_legacy(db_path, STATE_PATH, state, latest, None, None)
+            if _needs_export(state, "daily_report", latest):
+                result["daily_report"] = _step_report(db_path, STATE_PATH, state, latest, None)
+    except LockTimeout:
+        return {"skipped": True, "reason": "another export is running"}
+    return result or {"skipped": True, "reason": "exports are current"}
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Capture the daily ledger, then export both Excel workbooks")
     parser.add_argument("--if-missing", action="store_true",
-                        help="Capture only when today's 08:05 record is missing; exports still run")
+                        help="Capture only when today's daily record is missing; exports still run")
     parser.add_argument("--skip-capture", action="store_true", help="Do not call the Pionex API")
     parser.add_argument("--skip-excel", action="store_true", help="Do not export either workbook")
     parser.add_argument("--db", type=Path, default=DEFAULT_DB)

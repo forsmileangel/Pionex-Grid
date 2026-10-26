@@ -8,6 +8,7 @@ from pathlib import Path
 from threading import Lock
 from zoneinfo import ZoneInfo
 
+from .fileio import atomic_write_text, file_lock
 from .fx import attach_twd, attach_twd_tree, usdt_twd
 from .store import (
     CaptureError,
@@ -33,9 +34,10 @@ def live_path() -> Path:
 
 
 def save_live_snapshot(snapshot: dict, path: Path | None = None) -> Path:
+    # The 30-minute task and the dashboard both write this file; "write today" reads it.
     dest = Path(path or LIVE_PATH)
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(json.dumps(snapshot, ensure_ascii=False), encoding="utf-8")
+    with file_lock(dest):
+        atomic_write_text(dest, json.dumps(snapshot, ensure_ascii=False))
     return dest
 
 

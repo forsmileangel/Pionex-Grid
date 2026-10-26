@@ -10,10 +10,11 @@ import hashlib
 import json
 import urllib.error
 import urllib.request
+from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 
-from .store import DEFAULT_DB, ledger_publish_payload, taipei_now
+from .store import DEFAULT_DB, TAIPEI, ledger_publish_payload, taipei_now
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CREDS = ROOT / "GIST PUBLISH.txt"
@@ -24,6 +25,10 @@ LIVE_SOURCE = "pionex-grid-v2-live"
 HOLDINGS_FILENAME = "portfolio-tracker-holdings.json"
 USER_AGENT = "pionex-grid-v2-publish"
 STATE_FILENAME = "publish-state.json"
+# One line per PATCH with GitHub's remaining hourly quota. The quota (5,000/hour) is shared
+# by every token and app on the account, so this shows when something else drains it.
+RATE_LOG_FILENAME = "gist-rate.log"
+RATE_LOG_MAX_BYTES = 1_000_000
 
 
 def read_publish_credentials(path: Path | None = None) -> tuple[str, str] | None:
@@ -139,6 +144,8 @@ def _record_state(filename: str, payload: dict, result: dict, creds_path: Path |
                  error=None if result.get("ok") else str(result.get("error") or "unknown"))
     if result.get("ok"):
         entry.update(last_success_at=entry["last_attempt_at"], hash=content_hash(payload))
+    if "rate_remaining" in result:
+        entry.update(rate_remaining=result.get("rate_remaining"), rate_reset=result.get("rate_reset"))
     state[filename] = entry
     path = _state_path(creds_path)
     try:
@@ -162,7 +169,46 @@ def ledger_dirty(db_path: Path | None = None, creds_path: Path | None = None) ->
 def patch_gist_file(filename: str, payload: dict, creds_path: Path | None = None, extra: dict | None = None) -> dict:
     result = _patch_gist_file(filename, payload, creds_path, extra)
     _record_state(filename, payload, result, creds_path)
+    _log_rate(filename, result, creds_path)
     return result
+
+
+def _rate_info(status: int | None, headers, message: str = "") -> dict:
+    """GitHub's remaining hourly quota from the response headers, and whether this was a rate limit."""
+    headers = headers or {}
+    remaining = str(headers.get("X-RateLimit-Remaining") or "").strip()
+    reset = str(headers.get("X-RateLimit-Reset") or "").strip()
+    info = {
+        "rate_remaining": int(remaining) if remaining.isdigit() else None,
+        "rate_reset": datetime.fromtimestamp(int(reset), TAIPEI).isoformat() if reset.isdigit() else None,
+    }
+    if status in (403, 429) and (remaining == "0" or str(headers.get("Retry-After") or "").strip()
+                                 or "rate limit" in (message or "").lower()):
+        info["rate_limited"] = True
+    return info
+
+
+def _log_rate(filename: str, result: dict, creds_path: Path | None) -> None:
+    if result.get("skipped") or "rate_remaining" not in result:
+        return
+    remaining, reset = result.get("rate_remaining"), result.get("rate_reset")
+    until = reset[11:16] if reset else "?"
+    if result.get("rate_limited"):
+        text = f"rate-limited until {until}"
+    else:
+        text = f"rate {'?' if remaining is None else remaining}/5000 reset {until}"
+    status = "ok" if result.get("ok") else f"fail {result.get('status') or ''}".strip()
+    line = f"{taipei_now().isoformat(timespec='seconds')} {filename} {status} {text}\n"
+    path = _state_path(creds_path).parent / RATE_LOG_FILENAME
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.exists() and path.stat().st_size > RATE_LOG_MAX_BYTES:
+            kept = path.read_text(encoding="utf-8").splitlines(keepends=True)
+            path.write_text("".join(kept[len(kept) // 2:]), encoding="utf-8")
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(line)
+    except OSError:
+        pass  # logging only; never fail a publish because of it
 
 
 def _patch_gist_file(filename: str, payload: dict, creds_path: Path | None = None, extra: dict | None = None) -> dict:
@@ -195,6 +241,7 @@ def _patch_gist_file(filename: str, payload: dict, creds_path: Path | None = Non
                 "ok": True,
                 "filename": filename,
                 "updated_at": data.get("updated_at"),
+                **_rate_info(getattr(res, "status", 200), getattr(res, "headers", None)),
             }
             if extra:
                 result.update(extra)
@@ -208,7 +255,8 @@ def _patch_gist_file(filename: str, payload: dict, creds_path: Path | None = Non
                 msg = str(err_body["message"])
         except Exception:
             pass
-        return {"ok": False, "status": status, "error": msg}
+        # No retry here: a failed ledger publish is retried by the next 30-minute live task.
+        return {"ok": False, "status": status, "error": msg, **_rate_info(status, getattr(exc, "headers", None), msg)}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
 

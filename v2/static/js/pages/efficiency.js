@@ -331,7 +331,7 @@ function effNoticesHtml(span) {
   if (effNote) notes.push(effNote);
   const since = Date.parse(effMeta.intraday_since || "");
   if (!Number.isFinite(since)) {
-    notes.push("每小時資料會從下一次 30 分鐘排程開始累積。1 天以上的顆粒度可以先看每日帳本（08:05 截點，圖上以虛線、空心點標示）。");
+    notes.push("每小時資料會從下一次 30 分鐘排程開始累積。1 天以上的顆粒度可以先看每日帳本（08:15 截點，圖上以虛線、空心點標示）。");
   } else if (EFF_FINE.has(effState.granularity) && span[0] < since) {
     notes.push(`每小時資料從 ${fmtTaipei(effMeta.intraday_since).slice(0, 16)} 開始累積，之前只有每日帳本；要看更早的走勢請切到 1 天以上。`);
   }
@@ -406,7 +406,7 @@ function paintEfficiency() {
         <div class="card"><div class="card-head"><h3>各倉位</h3><span class="note">滑過圖例突顯、點一下只看那一筆；拖曳可放大</span></div>
           <div class="chart" id="effMain"></div>
           <div class="chart-legend" id="effLegend"></div>
-          <p class="note">實線＝每 30 分鐘實測；細虛線、空心點＝跨過空檔的估算或每日帳本（08:05 截點）；粗虛線＝已關倉；三角形＝加倉、複投、提領等事件。標「未滿」的時段還在進行中。</p></div>
+          <p class="note">實線＝每 30 分鐘實測；細虛線、空心點＝跨過空檔的估算或每日帳本（08:15 截點）；粗虛線＝已關倉；三角形＝加倉、複投、提領等事件。標「未滿」的時段還在進行中。</p></div>
         <div class="card"><div class="card-head"><h3>${tip("一天中的時段", "把每一天同一個小時（台北時間）的表現平均起來，看哪些時段效率比較好。只用每 30 分鐘實測的資料，最多看最近 180 天。點倉位名稱可看單一網格。")}</h3>
           <span class="note">${effData.heatmap ? `自 ${esc(fmtTaipei(effData.heatmap.from).slice(0, 10))} 起` : ""}</span></div>
           <div id="effHeat"></div></div>

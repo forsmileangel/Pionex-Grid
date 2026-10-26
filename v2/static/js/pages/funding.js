@@ -65,7 +65,7 @@ function fundCalendar(days) {
       <p class="cal-sum">${sum}</p>
       <div class="cal">${cells}</div>
       <div class="legend">
-        <span><b>錢包</b> 08:05 派網錢包總值（USDT）</span>
+        <span><b>錢包</b> 08:15 派網錢包總值（USDT）</span>
         <span><b>倉位</b> 等效倉位（投入＋追加保證金）· 倉數</span>
         <span><b>配對/單日</b> 運行中配對利潤 / 當日配對</span>
         <span><b>資金費</b> 當日資金費，付出為負</span>

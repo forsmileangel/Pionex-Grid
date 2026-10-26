@@ -1,6 +1,6 @@
 """Fill a missed daily capture from the 30-minute intraday record of that day.
 
-Picks the first intraday snapshot at or after 08:05 Taipei on the missing date.
+Picks the first intraday snapshot at or after the daily cut-off (08:15 Taipei) on the missing date.
 Dry run by default; --apply writes the ledger, then republishes the Gist ledger.
 
     python -m v2.backfill --date 2026-10-04
@@ -17,9 +17,10 @@ from contextlib import closing
 from pathlib import Path
 
 from .intraday import default_intraday_db
+from .capture import DAILY_CUTOFF_LABEL
 from .store import DEFAULT_DB, CaptureError, from_fixed, insert_missing_day
 
-DAILY_TIME = "08:05"
+DAILY_TIME = DAILY_CUTOFF_LABEL
 
 
 def pick_intraday_run(date: str, intraday_db: Path, at: str | None = None) -> tuple[dict, list[dict]]:
@@ -38,7 +39,7 @@ def pick_intraday_run(date: str, intraday_db: Path, at: str | None = None) -> tu
 def main() -> int:
     parser = argparse.ArgumentParser(description="Fill a missed daily capture from intraday records")
     parser.add_argument("--date", required=True, help="Missing Taipei date, YYYY-MM-DD")
-    parser.add_argument("--at", help="Use the first intraday record at or after this ISO time instead of 08:05")
+    parser.add_argument("--at", help="Use the first intraday record at or after this ISO time instead of 08:15")
     parser.add_argument("--db", default=str(DEFAULT_DB))
     parser.add_argument("--intraday-db", default="")
     parser.add_argument("--apply", action="store_true", help="Write the ledger (default is a dry run)")

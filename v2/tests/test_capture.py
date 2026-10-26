@@ -28,7 +28,7 @@ class CatchUpTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp, patch("v2.store.usdt_twd", return_value=FX), \
                 patch("v2.store.BACKUP_DIR", Path(tmp) / "backups"):
             db = Path(tmp) / "ledger.sqlite"
-            early = datetime(2026, 10, 4, 7, 50, tzinfo=TAIPEI)
+            early = datetime(2026, 10, 4, 8, 10, tzinfo=TAIPEI)
             late = datetime(2026, 10, 4, 8, 39, tzinfo=TAIPEI)
             self.assertFalse(daily_capture_due(db, early)[0])
             self.assertTrue(daily_capture_due(db, late)[0])
@@ -261,18 +261,19 @@ class DailyCaptureGuardTests(unittest.TestCase):
         finally:
             con.close()
 
-    def test_second_run_after_0805_skips_without_calling_the_api(self):
+    def test_second_run_after_the_cutoff_skips_without_calling_the_api(self):
         from v2.tests.test_store import rec
-        self.seed("08:05", [rec(GridProfit=10)])
+        self.seed("08:15", [rec(GridProfit=10)])
         result = self.run_capture()
         self.assertTrue(result["skipped"])
         self.assertIn("--replace-date", result["reason"])
         self.collect.assert_not_called()
 
-    def test_record_taken_before_0805_is_replaced(self):
+    def test_record_taken_before_the_cutoff_is_replaced(self):
         from v2.tests.test_store import rec
-        self.seed("07:00", [rec(GridProfit=10)])
-        self.collect.return_value = self.snap_at(self.today, "08:05", [rec(GridProfit=12)])
+        # 08:05 was the cut-off until 2026-10-26; a record from then is now before the 08:15 cut-off.
+        self.seed("08:05", [rec(GridProfit=10)])
+        self.collect.return_value = self.snap_at(self.today, "08:15", [rec(GridProfit=12)])
         result = self.run_capture()
         self.assertEqual(result["status"], "success")
         self.collect.assert_called_once()

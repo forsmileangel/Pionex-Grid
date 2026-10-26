@@ -5,7 +5,7 @@ const API_BASE = "https://api.pionex.com";
 const DEFAULT_CREDENTIAL_PATH = "D:\\My-project\\pionex grid record\\PIONEX API.txt";
 const SOURCE = "Pionex API (read-only)";
 // Without a limit, a stalled connection waits about five minutes per request, and the
-// 08:05 task stays running long enough to block the next day's start.
+// 08:15 task stays running long enough to block the next day's start.
 const REQUEST_TIMEOUT_MS = 20000;
 
 function option(name, fallback = "") {
