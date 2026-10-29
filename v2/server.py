@@ -41,6 +41,8 @@ from .store import (
     status_payload,
     summary_latest,
 )
+from .fileio import append_line
+from .version import VERSION
 from .xlsx import write_xlsx
 
 ROOT = Path(__file__).resolve().parent
@@ -53,6 +55,8 @@ _STATIC_TYPES = {
 HOST = "127.0.0.1"
 PORT = 8787
 SERVER_LOG = ROOT.parent / "v2-data" / "dashboard-server.log"
+# Every request is logged; about 0.2 MB a month, so this keeps well over a year.
+SERVER_LOG_MAX_BYTES = 2_000_000
 EXPORT_NAME = "pionex-grid-export.xlsx"
 EXPORT_LOCK = threading.Lock()
 
@@ -178,9 +182,7 @@ def _write_log(message: str) -> None:
     stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     text = f"{stamp} {line}" if not line.startswith("20") else line
     try:
-        SERVER_LOG.parent.mkdir(parents=True, exist_ok=True)
-        with SERVER_LOG.open("a", encoding="utf-8") as fh:
-            fh.write(text)
+        append_line(SERVER_LOG, text, SERVER_LOG_MAX_BYTES)
     except Exception:
         pass
     try:
@@ -221,8 +223,8 @@ class Handler(BaseHTTPRequestHandler):
     def _host_allowed(self) -> bool:
         return local_host_allowed(self.headers.get("Host") or "", int(self.server.server_address[1]))
 
-    def _file(self, path: Path, content_type: str, cache_control: str | None = None):
-        data = path.read_bytes()
+    def _file(self, path: Path, content_type: str, cache_control: str | None = None, data: bytes | None = None):
+        data = path.read_bytes() if data is None else data
         self.send_response(200)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(data)))
@@ -249,7 +251,9 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/") or "/"
         if path == "/":
-            self._file(STATIC / "index.html", "text/html; charset=utf-8")
+            # The version at the top left comes from v2/version.py.
+            page = (STATIC / "index.html").read_bytes().replace(b"__APP_VERSION__", VERSION.encode("ascii"))
+            self._file(STATIC / "index.html", "text/html; charset=utf-8", data=page)
             return
         if path == "/architecture.html":
             self._file(STATIC / "architecture.html", "text/html; charset=utf-8")

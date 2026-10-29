@@ -13,6 +13,12 @@ Two views, one shared SQLite ledger:
 
 The folder name still has `-v2` because it is a git worktree. On screen it is the SQLite dashboard, not “v2”.
 
+## Version
+
+The dashboard shows its version at the top left (`v2/version.py`). Each production deploy
+bumps it, adds an entry to `CHANGELOG.md` and tags the deployed commit `release-<version>`.
+The older `v1.0.0` tag belongs to the v1 Excel recorder.
+
 ## Security
 
 - Copy `PIONEX API.example.txt` to `PIONEX API.txt` locally. Line 1 = API key, line 2 = API secret.

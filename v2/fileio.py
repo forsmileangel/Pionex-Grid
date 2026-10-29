@@ -36,6 +36,18 @@ def atomic_write_text(path: Path, text: str) -> None:
         tmp_path.unlink(missing_ok=True)
 
 
+def append_line(path: Path, line: str, max_bytes: int) -> None:
+    """Append one line to a log. Past max_bytes the older half is dropped first, so a log the
+    tasks write every day cannot grow without end."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists() and path.stat().st_size > max_bytes:
+        kept = path.read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)
+        atomic_write_text(path, "".join(kept[len(kept) // 2:]))
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(line if line.endswith("\n") else line + "\n")
+
+
 class LockTimeout(Exception):
     pass
 

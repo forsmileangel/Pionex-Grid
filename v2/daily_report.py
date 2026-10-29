@@ -23,11 +23,13 @@ from decimal import Decimal
 from pathlib import Path
 from xml.sax.saxutils import escape, quoteattr
 
+from .paths import LEGACY_ROOT, PRODUCTION_REPO
+
 
 SCALE = Decimal("100000000")
-DEFAULT_DB = Path(r"D:\My-project\pionex grid record-v2\v2-data\pionex-grid.sqlite")
+DEFAULT_DB = PRODUCTION_REPO / "v2-data" / "pionex-grid.sqlite"
 # Kept at the original 08:10 workbook. __file__ now lives under v2/.
-DEFAULT_OUTPUT = Path(r"D:\My-project\pionex grid record\pionex grid daily report\data\pionex-grid-daily-report.xlsx")
+DEFAULT_OUTPUT = LEGACY_ROOT / "pionex grid daily report" / "data" / "pionex-grid-daily-report.xlsx"
 REPORT_TITLE = "派網網格每日利潤紀錄"
 
 
@@ -84,18 +86,21 @@ def translate_status(value: str | None) -> str:
 
 
 def translate_event(value: str | None) -> str:
-    return {
+    names = {
         "baseline": "基準",
         "new": "新增",
         "continue": "無調整",
         "add": "加倉",
-        "withdraw": "減倉",
+        # Withdrawn profit, named as on the dashboard and the 16-column Excel; 減倉 is reduce.
+        "withdraw": "提取",
         "reduce": "減倉",
         "reinvest": "再投資",
         "review": "待確認",
         "closed": "關倉",
         "closed_unresolved": "關倉待確認",
-    }.get(value or "", value or "")
+    }
+    # A combined event such as reinvest+withdraw is named part by part, like the dashboard.
+    return "＋".join(names.get(part, part) for part in value.split("+")) if value else ""
 
 
 def product_label(product: str | None) -> str:

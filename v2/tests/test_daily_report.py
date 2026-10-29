@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from v2 import store
-from v2.daily_report import export_report
+from v2.daily_report import export_report, translate_event
 from v2.tests.test_store import FX, rec, snap
 
 
@@ -22,6 +22,13 @@ class DailyReportTests(unittest.TestCase):
         ):
             item.start()
             self.addCleanup(item.stop)
+
+    def test_event_names_match_the_dashboard(self):
+        self.assertEqual(translate_event("withdraw"), "提取")
+        self.assertEqual(translate_event("reduce"), "減倉")
+        self.assertEqual(translate_event("reinvest+withdraw"), "再投資＋提取")
+        self.assertEqual(translate_event("something_new"), "something_new")
+        self.assertEqual(translate_event(None), "")
 
     def test_workbook_sheet_count_and_dates(self):
         store.ingest(snap("2026-09-18", [rec(GridProfit=1500)]), self.db)

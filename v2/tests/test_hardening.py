@@ -228,6 +228,41 @@ class GistRateLogTests(unittest.TestCase):
         self.assertIn("fail 403 rate 4990/? reset", self.log())
 
 
+class VersionTests(unittest.TestCase):
+    def test_the_page_shows_the_version(self):
+        import threading
+        from http.server import ThreadingHTTPServer
+        from urllib.request import urlopen
+
+        from v2 import server
+        from v2.version import VERSION
+
+        self.assertRegex(VERSION, r"^\d+\.\d+\.\d+$")
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        self.addCleanup(httpd.server_close)
+        self.addCleanup(httpd.shutdown)
+        with urlopen(f"http://127.0.0.1:{httpd.server_address[1]}/", timeout=10) as res:
+            page = res.read().decode("utf-8")
+        self.assertIn(f'<span class="ver">v{VERSION}</span>', page)
+        self.assertNotIn("__APP_VERSION__", page)
+        changelog = Path(server.__file__).resolve().parent.parent / "CHANGELOG.md"
+        self.assertIn(f"## {VERSION}", changelog.read_text(encoding="utf-8"))
+
+
+class LogCapTests(unittest.TestCase):
+    def test_a_full_log_keeps_its_newer_half(self):
+        from v2.fileio import append_line
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "x.log"
+            for i in range(10):
+                append_line(path, f"line {i}", 10_000)
+            append_line(path, "after", 40)          # over the cap: drop the older half first
+            lines = path.read_text(encoding="utf-8").splitlines()
+            self.assertEqual(lines, [f"line {i}" for i in range(5, 10)] + ["after"])
+
+
 class ServerHardeningTests(unittest.TestCase):
     def setUp(self):
         import threading

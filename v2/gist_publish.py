@@ -14,6 +14,7 @@ from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 
+from .fileio import append_line
 from .store import DEFAULT_DB, TAIPEI, ledger_publish_payload, taipei_now
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -209,12 +210,7 @@ def _log_rate(filename: str, result: dict, creds_path: Path | None) -> None:
     line = f"{taipei_now().isoformat(timespec='seconds')} {filename} {status} {text}\n"
     path = _state_path(creds_path).parent / RATE_LOG_FILENAME
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        if path.exists() and path.stat().st_size > RATE_LOG_MAX_BYTES:
-            kept = path.read_text(encoding="utf-8").splitlines(keepends=True)
-            path.write_text("".join(kept[len(kept) // 2:]), encoding="utf-8")
-        with path.open("a", encoding="utf-8") as handle:
-            handle.write(line)
+        append_line(path, line, RATE_LOG_MAX_BYTES)
     except OSError:
         pass  # logging only; never fail a publish because of it
 

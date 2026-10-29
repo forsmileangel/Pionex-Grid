@@ -16,9 +16,10 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from .capture import DAILY_CUTOFF, TAIPEI, V1_CREDENTIALS, _collector_run_kwargs, capture, daily_capture_due
-from .fileio import LockTimeout, file_lock
+from .fileio import LockTimeout, append_line, file_lock
 from .daily_report import DEFAULT_OUTPUT, export_report
 from .legacy_excel import ledger_rows
+from .paths import LEGACY_ROOT, PRODUCTION_REPO
 from .store import DEFAULT_DB
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -26,9 +27,11 @@ DATA_DIR = ROOT / "v2-data"
 STATE_PATH = DATA_DIR / "pipeline-state.json"
 PREVIEW_STATE_PATH = DATA_DIR / "preview" / "pipeline-state.json"
 LOG_PATH = DATA_DIR / "pipeline.log"
-LEGACY_PS1 = Path(r"D:\My-project\pionex grid record\pionex-grid-daily.ps1")
-PRODUCTION_REPO = Path(r"D:\My-project\pionex grid record-v2")
-PRODUCTION_LEGACY_ROOT = Path(r"D:\My-project\pionex grid record")
+LOG_MAX_BYTES = 1_000_000
+# The legacy Excel script ships with this checkout (the v1 folder has an identical copy). It
+# takes its folders from parameters and defaults, not from where the file sits.
+LEGACY_PS1 = ROOT / "pionex-grid-daily.ps1"
+PRODUCTION_LEGACY_ROOT = LEGACY_ROOT
 PRODUCTION_HISTORY = PRODUCTION_LEGACY_ROOT / "data" / "pionex-grid-history.xlsx"
 # A normal export takes about 10 seconds. The scheduled task has no time limit and
 # ignores a new start while one is running, so a hung Excel would block the next
@@ -50,10 +53,7 @@ def _stamp() -> str:
 
 
 def _log(step: str, message: str) -> None:
-    path = LOG_PATH
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(f"{_stamp()} {step} {message}\n")
+    append_line(LOG_PATH, f"{_stamp()} {step} {message}", LOG_MAX_BYTES)
 
 
 def _latest_date(db_path: Path) -> str | None:

@@ -15,12 +15,13 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from .fileio import atomic_write_text, file_lock
+from .paths import LEGACY_ROOT
 from .store import DEFAULT_DB, CaptureError, connect, ingest, vanished_positions
 
 TAIPEI = ZoneInfo("Asia/Taipei")
 
 ROOT = Path(__file__).resolve().parent.parent
-V1_CREDENTIALS = Path(r"D:\My-project\pionex grid record\PIONEX API.txt")
+V1_CREDENTIALS = LEGACY_ROOT / "PIONEX API.txt"
 API_JS = ROOT / "pionex-grid-api.mjs"
 FINISHED_CACHE = ROOT / "v2-data" / "finished-details.json"
 # Pionex rewrites this timestamp on closed bots without any money field changing.
@@ -43,7 +44,7 @@ def node_path() -> str:
     if found:
         # which() keeps the PATHEXT spelling, such as node.EXE.
         return str(Path(found).resolve())
-    bundled = Path(r"C:\Users\Forever you\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe")
+    bundled = Path.home() / ".cache" / "codex-runtimes" / "codex-primary-runtime" / "dependencies" / "node" / "bin" / "node.exe"
     if bundled.exists():
         return str(bundled)
     return "node"
