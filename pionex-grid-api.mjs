@@ -407,6 +407,8 @@ export async function buildRecord(item, order, listStatus, perpTickers) {
         throw new Error(`No cached ConversionPrice for finished order ${orderId} coin ${coin}: ${error.message}`);
       }
       conversionPrice = cachedPrice;
+      conversionSymbol = `${coin}_USDT`;
+      conversionTime = cached.record.ConversionTime || null;
       conversionStale = true;
     }
     if (rawQuoteInvestment === null && listStatus === "running") throw new Error(`Coin-margined quote investment missing for API order ${orderId}.`);

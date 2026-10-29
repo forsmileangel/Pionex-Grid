@@ -24,4 +24,5 @@ jobs:
           PYTHONPATH: .
           PYTHONUTF8: "1"
       - name: Run Node tests
-        run: node --test v2/tests/js
+        # Node expands the quoted pattern itself, the same on Linux and Windows.
+        run: node --test "v2/tests/js/*.test.mjs"

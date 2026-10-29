@@ -90,6 +90,7 @@ test("a finished coin-margined bot keeps the cached price and marks it stale", a
   const record = await buildRecord(item, order, "finished", new Map());
   assert.equal(record.ConversionPrice, 10);
   assert.equal(record.ConversionStale, true);
+  assert.equal(record.ConversionSymbol, "ETH_USDT");
   assert.equal(record.GridProfit, 20);
   assert.equal(record.Investment, 20);
   assert.equal(record.Symbol, "ETH");
