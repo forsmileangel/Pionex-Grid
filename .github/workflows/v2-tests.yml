@@ -6,13 +6,22 @@ on:
     branches: [v2/sqlite-dashboard]
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.14"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
       - name: Run fixture tests
         run: python -m unittest discover -s v2/tests -v
         env:
           PYTHONPATH: .
+          PYTHONUTF8: "1"
+      - name: Run Node tests
+        run: node --test v2/tests/js

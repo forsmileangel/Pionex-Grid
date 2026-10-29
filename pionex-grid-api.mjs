@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
+import { pathToFileURL } from "node:url";
 
 const API_BASE = "https://api.pionex.com";
 const DEFAULT_CREDENTIAL_PATH = "D:\\My-project\\pionex grid record\\PIONEX API.txt";
@@ -23,7 +24,7 @@ function readCredentials(filePath) {
   return { apiKey: lines[0], apiSecret: lines[1] };
 }
 
-function sortedQuery(params) {
+export function sortedQuery(params) {
   return new URLSearchParams(Object.entries(params).sort(([a], [b]) => a.localeCompare(b))).toString();
 }
 
@@ -56,7 +57,7 @@ function publicGet(path, params) {
   });
 }
 
-async function parseResponse(response, label, sentAt) {
+export async function parseResponse(response, label, sentAt) {
   const body = await response.text();
   let json;
   try {
@@ -81,7 +82,18 @@ async function parseResponse(response, label, sentAt) {
 // connection (fetch rejects with a TypeError, e.g. "fetch failed" or "terminated"), a request
 // over REQUEST_TIMEOUT_MS (TimeoutError), HTTP 429 / 5xx and non-JSON pages. Other API errors
 // are answers, not outages, and are not retried.
-async function withNetworkRetry(label, send) {
+// Production leaves this unset, so a retry still waits 2s times the attempt number.
+// Tests set PIONEX_RETRY_DELAY_MS=0. The retry decision itself is unchanged.
+function retryDelayMs(attempt) {
+  const override = process.env.PIONEX_RETRY_DELAY_MS;
+  if (override !== undefined && override !== "") {
+    const parsed = Number(override);
+    if (Number.isFinite(parsed) && parsed >= 0) return parsed;
+  }
+  return 2000 * attempt;
+}
+
+export async function withNetworkRetry(label, send) {
   const attempts = 3;
   for (let attempt = 1; ; attempt += 1) {
     try {
@@ -93,12 +105,12 @@ async function withNetworkRetry(label, send) {
         const cause = error.cause && (error.cause.code || error.cause.message);
         throw new Error(`${label}: ${error.message}${cause ? ` (${cause})` : ""} after ${attempts} attempts`);
       }
-      await new Promise((resolve) => setTimeout(resolve, 2000 * attempt));
+      await new Promise((resolve) => setTimeout(resolve, retryDelayMs(attempt)));
     }
   }
 }
 
-async function requestPrivate(path, params, credentials) {
+export async function requestPrivate(path, params, credentials) {
   const allowed = new Set(["/api/v1/bot/orders", "/api/v1/bot/orders/futuresGrid/order", "/api/v1/wallet/balancesFull"]);
   if (!allowed.has(path)) throw new Error(`Blocked non-read-only endpoint: ${path}`);
   const label = `Pionex ${path}`;
@@ -115,7 +127,7 @@ async function requestPrivate(path, params, credentials) {
   }
 }
 
-async function requestPublic(path, params) {
+export async function requestPublic(path, params) {
   if (path !== "/api/v1/market/tickers") throw new Error(`Blocked public endpoint: ${path}`);
   const label = `Pionex ${path}`;
   return withNetworkRetry(label, async () => {
@@ -170,7 +182,7 @@ function nowTaipeiIso() {
   return `${values.year}-${values.month}-${values.day}T${values.hour}:${values.minute}:${values.second}+08:00`;
 }
 
-function normalizeSymbol(base, quote) {
+export function normalizeSymbol(base, quote) {
   const cleanBase = String(base || "").replace(/\.PERP$/i, "");
   const cleanQuote = String(quote || "").replace(/\.PERP$/i, "");
   if (cleanBase === "USDT" && cleanQuote && cleanQuote !== "USDT") return cleanQuote;
@@ -184,11 +196,11 @@ function directionLabel(trend) {
   return String(trend || "");
 }
 
-async function getSpotClose(coin) {
+export async function getSpotClose(coin) {
   const symbol = `${coin}_USDT`;
   const response = await requestPublic("/api/v1/market/tickers", { symbol, type: "SPOT" });
   const tickers = response.data && Array.isArray(response.data.tickers) ? response.data.tickers : [];
-  const ticker = tickers.find((item) => item.symbol === symbol) || tickers[0];
+  const ticker = tickers.find((item) => item.symbol === symbol);
   const close = ticker ? numberOrNull(ticker.close) : null;
   if (close === null || close <= 0) throw new Error(`No valid USDT ticker for coin-margined quote ${coin}.`);
   return { symbol, close, time: ticker.time || null };
@@ -226,7 +238,7 @@ function isInverseCoinMargined(base, quote) {
   return String(quote || "").toUpperCase() !== "USDT" && String(base || "").replace(/\.PERP$/i, "").toUpperCase() === "USDT";
 }
 
-function liqDistance(side, mark, liq) {
+export function liqDistance(side, mark, liq) {
   return side === "short" ? ((liq - mark) / mark) * 100 : ((mark - liq) / mark) * 100;
 }
 
@@ -239,7 +251,7 @@ function magnitudeMismatch(mark, liq) {
   return Math.abs(Math.log10(mark) - Math.log10(liq)) >= 2;
 }
 
-function normalizeLiq(trend, mark, liq, coinMargined) {
+export function normalizeLiq(trend, mark, liq, coinMargined) {
   if (mark === null || liq === null || mark <= 0 || liq <= 0) return { liq, distance: null };
   const side = trend === "short" ? "short" : "long";
   const direct = liqDistance(side, mark, liq);
@@ -357,7 +369,7 @@ function orderFromListItem(item) {
   return { ...item, buOrderData: data };
 }
 
-async function buildRecord(item, order, listStatus, perpTickers) {
+export async function buildRecord(item, order, listStatus, perpTickers) {
   const orderId = String(item.buOrderId);
   const data = order.buOrderData || {};
   const base = order.base || item.base || "";
@@ -377,12 +389,26 @@ async function buildRecord(item, order, listStatus, perpTickers) {
   let conversionPrice = null;
   let conversionSymbol = "";
   let conversionTime = null;
+  let conversionStale = false;
 
   if (coinMargined) {
-    const ticker = await getSpotClose(String(quote).replace(/\.PERP$/i, ""));
-    conversionPrice = ticker.close;
-    conversionSymbol = ticker.symbol;
-    conversionTime = ticker.time;
+    const coin = String(quote).replace(/\.PERP$/i, "");
+    try {
+      const ticker = await getSpotClose(coin);
+      conversionPrice = ticker.close;
+      conversionSymbol = ticker.symbol;
+      conversionTime = ticker.time;
+    } catch (error) {
+      // A running bot still needs a live price. A finished bot can keep its last price after a delisting.
+      if (listStatus !== "finished") throw error;
+      const cached = readFinishedCache(option("--price-cache", ""))[orderId];
+      const cachedPrice = cached && cached.record ? numberOrNull(cached.record.ConversionPrice) : null;
+      if (cachedPrice === null || cachedPrice <= 0) {
+        throw new Error(`No cached ConversionPrice for finished order ${orderId} coin ${coin}: ${error.message}`);
+      }
+      conversionPrice = cachedPrice;
+      conversionStale = true;
+    }
     if (rawQuoteInvestment === null && listStatus === "running") throw new Error(`Coin-margined quote investment missing for API order ${orderId}.`);
     const openQuotePrice = firstNumber(data.openQuotePrice, data.open_quote_price, data.initQuotePrice);
     if ((openQuotePrice === null || openQuotePrice <= 0) && listStatus === "running") throw new Error(`Coin-margined open quote price missing for API order ${orderId}.`);
@@ -492,6 +518,7 @@ async function buildRecord(item, order, listStatus, perpTickers) {
     ConversionPrice: conversionPrice,
     ConversionSymbol: conversionSymbol,
     ConversionTime: conversionTime,
+    ...(conversionStale ? { ConversionStale: true } : {}),
     EstimatedStepPct: spacing.EstimatedStepPct,
     EstimatedStepPrice: spacing.EstimatedStepPrice,
     EstimatedRangePct: spacing.EstimatedRangePct,
@@ -527,7 +554,7 @@ function readFinishedCache(filePath) {
   }
 }
 
-function cachedFinishedRecord(cache, item) {
+export function cachedFinishedRecord(cache, item) {
   const entry = cache[String(item.buOrderId)];
   const record = entry && entry.record;
   if (!record || record.ListStatus !== "finished" || String(record.ApiOrderId) !== String(item.buOrderId)) return null;
@@ -642,13 +669,16 @@ async function collect() {
   };
 }
 
-try {
-  const snapshot = await collect();
-  const outputPath = option("--output", "");
-  const json = JSON.stringify(snapshot, null, 2);
-  if (outputPath) fs.writeFileSync(outputPath, `${json}\n`, { encoding: "utf8", flag: "w" });
-  console.log(json);
-} catch (error) {
-  console.error(`Pionex grid API collector failed: ${error.message}`);
-  process.exitCode = 1;
+const isMain = Boolean(process.argv[1]) && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (isMain) {
+  try {
+    const snapshot = await collect();
+    const outputPath = option("--output", "");
+    const json = JSON.stringify(snapshot, null, 2);
+    if (outputPath) fs.writeFileSync(outputPath, `${json}\n`, { encoding: "utf8", flag: "w" });
+    console.log(json);
+  } catch (error) {
+    console.error(`Pionex grid API collector failed: ${error.message}`);
+    process.exitCode = 1;
+  }
 }

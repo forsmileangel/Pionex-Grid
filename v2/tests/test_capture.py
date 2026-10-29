@@ -141,6 +141,16 @@ class FinishedCacheTests(unittest.TestCase):
         self.assertNotIn("--finished-cache", cmd)
         self.assertEqual(self.read()["last_full_check"]["checked"], 1)
 
+    def test_price_cache_goes_out_once_the_finished_file_exists(self):
+        cmd, _ = self._run_collect(reuse_finished=False)
+        self.assertNotIn("--price-cache", cmd)
+        cmd, _ = self._run_collect(reuse_finished=False)
+        self.assertNotIn("--finished-cache", cmd)
+        self.assertEqual(cmd[cmd.index("--price-cache") + 1], str(self.cache))
+        cmd, _ = self._run_collect(reuse_finished=True)
+        self.assertEqual(cmd[cmd.index("--finished-cache") + 1], str(self.cache))
+        self.assertEqual(cmd[cmd.index("--price-cache") + 1], str(self.cache))
+
 
 class ListModeTests(FinishedCacheTests):
     """The running list can stand in for the detail only while it leaves nothing out."""

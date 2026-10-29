@@ -198,6 +198,8 @@ def collect_snapshot(credentials: Path, reuse_finished: bool = False, cache_path
         cmd = [node_path(), str(API_JS), "--credentials", str(credentials), "--include-finished", "--output", str(out)]
         if reuse_finished and cache.exists():
             cmd += ["--finished-cache", str(cache)]
+        if cache.exists():
+            cmd += ["--price-cache", str(cache)]
         if running_from_list and _list_mode_allowed(cache):
             cmd += ["--running-from-list"]
         try:
