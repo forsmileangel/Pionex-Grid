@@ -242,6 +242,11 @@
     table.plain.wide th, table.plain.wide td { vertical-align:top; }
     .cal-sum { font-size:12.5px; color:var(--muted); font-variant-numeric:tabular-nums; text-align:center; }
     .cal-sum b { font-weight:650; }
+    /* 月曆卡片裡的「當月效率」「近 30 天日均」：淺底、不加陰影，兩張並排，手機上下排。 */
+    .cal-avg { margin:0 0 14px; }
+    .cal-avg .stat { grid-column:span 6; min-height:0; gap:4px; padding:12px 14px; background:var(--soft); box-shadow:none; }
+    .cal-avg .stat strong { font-size:22px; }
+    .cal-avg .stat .twd { white-space:normal; }
     .audit-list { margin:6px 0 0; padding:0; list-style:none; font-size:12.5px; }
     .audit-list li { padding:6px 0; border-bottom:1px solid var(--line); }
     tr.clickable:focus-visible > td { background:var(--accent-soft); }
@@ -369,6 +374,7 @@
     @media (max-width:1000px) {
       .stats { grid-template-columns:repeat(6,minmax(0,1fr)); }
       .stat.wide { grid-column:span 6; }
+      .cal-avg .stat { grid-column:span 3; }
     }
     @media (max-width:760px) {
       main { padding:16px 12px 48px; }
@@ -376,6 +382,8 @@
       .stats { grid-template-columns:repeat(3,minmax(0,1fr)); }
       .stat, .stat.wide { grid-column:span 3; }
       .stat strong { font-size:21px; }
+      .cal-avg .stat { grid-column:span 3; }
+      .cal-avg .stat strong { font-size:19px; }
       .cal-cell { min-height:64px; }
       .fund-cal .cal-cell { min-height:64px; }
       .fund-cal .cal-amt.opt { display:none; }

@@ -145,7 +145,8 @@ def _record_state(filename: str, payload: dict, result: dict, creds_path: Path |
     if result.get("ok"):
         entry.update(last_success_at=entry["last_attempt_at"], hash=content_hash(payload))
     if "rate_remaining" in result:
-        entry.update(rate_remaining=result.get("rate_remaining"), rate_reset=result.get("rate_reset"))
+        entry.update(rate_remaining=result.get("rate_remaining"), rate_limit=result.get("rate_limit"),
+                     rate_resource=result.get("rate_resource"), rate_reset=result.get("rate_reset"))
     state[filename] = entry
     path = _state_path(creds_path)
     try:
@@ -177,9 +178,14 @@ def _rate_info(status: int | None, headers, message: str = "") -> dict:
     """GitHub's remaining hourly quota from the response headers, and whether this was a rate limit."""
     headers = headers or {}
     remaining = str(headers.get("X-RateLimit-Remaining") or "").strip()
+    limit = str(headers.get("X-RateLimit-Limit") or "").strip()
     reset = str(headers.get("X-RateLimit-Reset") or "").strip()
+    # Gist writes report their own bucket (about 100 an hour), not the account's 5000 core
+    # requests, so the limit and the bucket name are logged as GitHub sends them.
     info = {
         "rate_remaining": int(remaining) if remaining.isdigit() else None,
+        "rate_limit": int(limit) if limit.isdigit() else None,
+        "rate_resource": str(headers.get("X-RateLimit-Resource") or "").strip() or None,
         "rate_reset": datetime.fromtimestamp(int(reset), TAIPEI).isoformat() if reset.isdigit() else None,
     }
     if status in (403, 429) and (remaining == "0" or str(headers.get("Retry-After") or "").strip()
@@ -191,12 +197,14 @@ def _rate_info(status: int | None, headers, message: str = "") -> dict:
 def _log_rate(filename: str, result: dict, creds_path: Path | None) -> None:
     if result.get("skipped") or "rate_remaining" not in result:
         return
-    remaining, reset = result.get("rate_remaining"), result.get("rate_reset")
+    remaining, limit, reset = result.get("rate_remaining"), result.get("rate_limit"), result.get("rate_reset")
     until = reset[11:16] if reset else "?"
+    resource = f" {result['rate_resource']}" if result.get("rate_resource") else ""
     if result.get("rate_limited"):
-        text = f"rate-limited until {until}"
+        text = f"rate-limited until {until}{resource}"
     else:
-        text = f"rate {'?' if remaining is None else remaining}/5000 reset {until}"
+        text = (f"rate {'?' if remaining is None else remaining}/{'?' if limit is None else limit}"
+                f"{resource} reset {until}")
     status = "ok" if result.get("ok") else f"fail {result.get('status') or ''}".strip()
     line = f"{taipei_now().isoformat(timespec='seconds')} {filename} {status} {text}\n"
     path = _state_path(creds_path).parent / RATE_LOG_FILENAME

@@ -188,7 +188,8 @@ class GistRateLogTests(unittest.TestCase):
 
         class Response:
             status = 200
-            headers = _headers(X_RateLimit_Remaining="4931", X_RateLimit_Reset=str(reset))
+            headers = _headers(X_RateLimit_Remaining="93", X_RateLimit_Limit="100",
+                               X_RateLimit_Resource="gist_write", X_RateLimit_Reset=str(reset))
 
             def read(self):
                 return b'{"updated_at": "2026-10-26T01:00:00Z"}'
@@ -200,11 +201,13 @@ class GistRateLogTests(unittest.TestCase):
                 return False
 
         result = self.publish(lambda req, timeout=0: Response())
-        self.assertEqual((result["ok"], result["rate_remaining"]), (True, 4931))
+        self.assertEqual((result["ok"], result["rate_remaining"], result["rate_limit"]), (True, 93, 100))
         self.assertNotIn("rate_limited", result)
-        self.assertIn("pionex-grid-live.json ok rate 4931/5000", self.log())
+        # The limit and bucket come from GitHub's headers, not a fixed 5000.
+        self.assertIn("pionex-grid-live.json ok rate 93/100 gist_write reset", self.log())
         state = json.loads((Path(self.tmp.name) / "publish-state.json").read_text(encoding="utf-8"))
-        self.assertEqual(state["pionex-grid-live.json"]["rate_remaining"], 4931)
+        entry = state["pionex-grid-live.json"]
+        self.assertEqual((entry["rate_remaining"], entry["rate_limit"], entry["rate_resource"]), (93, 100, "gist_write"))
 
     def test_exhausted_quota_is_flagged_as_a_rate_limit(self):
         def urlopen(req, timeout=0):
@@ -222,7 +225,7 @@ class GistRateLogTests(unittest.TestCase):
         result = self.publish(urlopen)
         self.assertFalse(result["ok"])
         self.assertNotIn("rate_limited", result)
-        self.assertIn("fail 403 rate 4990/5000", self.log())
+        self.assertIn("fail 403 rate 4990/? reset", self.log())
 
 
 class ServerHardeningTests(unittest.TestCase):

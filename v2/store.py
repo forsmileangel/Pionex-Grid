@@ -12,6 +12,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from .averages import averages_view, profit_averages
 from .fx import attach_twd, attach_twd_tree, usdt_twd
 from .liq import normalize_liq
 
@@ -1750,7 +1751,14 @@ def days_payload(db_path: Path | None = None) -> dict:
             item["investment"] = attach_twd(item["investment"], rate)
             item["equivalent"] = attach_twd(item["equivalent"], rate)
             item["rows"] = [attach_twd_tree(row, rate) for row in item["rows"]]
-        return {"days": days, "fx": _fx_view(fx)}
+        # 當月效率 and 近 30 天日均 for the calendar; the rules are in v2/averages.py.
+        entries = [{"date": s["capture_date"], "covered": 1 + (s["gap_days"] or 0), "baseline": i == 0,
+                    "pending": bool(s["unresolved_count"]) or s["daily_profit_i"] is None,
+                    "daily_profit": s["daily_profit_i"]}
+                   for i, s in enumerate(reversed(summaries))]
+        averages = averages_view(profit_averages(entries, ("daily_profit",)),
+                                 lambda value: attach_twd(money(value), rate))
+        return {"days": days, "averages": averages, "fx": _fx_view(fx)}
     finally:
         con.close()
 

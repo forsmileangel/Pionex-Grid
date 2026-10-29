@@ -31,6 +31,17 @@ export const bothSigned = (m) => {
   const extra = twd(m);
   return signed(m.usdt) + `<span class="unit">USDT</span>` + (extra ? `<span class="twd">${extra}</span>` : "");
 };
+// 月曆的「當月效率」「近 30 天日均」小卡，月曆和資金費頁共用。value 是日均的金額物件，sub 是小字。
+export function avgStat(label, note, value, sub) {
+  const v = moneyNum(value);
+  const extra = v == null ? "" : twd(value);
+  return `<div class="stat">${tip(label, note)}<strong class="${cls(v)}">`
+    + (v == null ? "—" : `${signed(v)}<span class="unit">USDT／日</span>`)
+    + (extra ? `<span class="twd">${extra}／日</span>` : "")
+    + `<span class="twd">${sub || ""}</span></strong></div>`;
+}
+export const dayRange = (b) => (b && b.from ? `${b.from.slice(5).replace("-", "/")}–${b.to.slice(5).replace("-", "/")}` : "");
+export const skippedNote = (b) => (b && b.skipped ? ` · ${b.skipped} 天待補未計` : "");
 export const cls = (v) => { const x = Number(v); if (!Number.isFinite(x) || x === 0) return ""; return x > 0 ? "up" : "down"; };
 export function esc(s) {
   return String(s == null ? "" : s)

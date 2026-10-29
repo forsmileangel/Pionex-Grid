@@ -1,4 +1,4 @@
-import { app, bindHistoryClicks, bothSigned, cls, esc, eventLabel, get, moneyNum, n, signed, tip, usdt } from "../common.js";
+import { app, avgStat, bindHistoryClicks, bothSigned, cls, dayRange, esc, eventLabel, get, moneyNum, n, signed, skippedNote, tip, usdt } from "../common.js";
 
 import { isCurrent } from "../router.js";
 
@@ -13,6 +13,17 @@ let fundMonth = null;
 const pctText = (v) => (v == null ? "—" : signed(v) + "%");
 const FUND_TIP = "資金費＝派網這個倉的累計資金費，和上一次每日記錄相減。付出為負、收到為正。幣本位（ETH）是當天新增的幣×抓取價，不含幣價重估。只顯示，不算進每日利潤，Portfolio 不受影響。";
 const NET_TIP = "淨利＝當日配對利潤＋當日資金費。每日利潤（Portfolio 用的那個）仍只有配對，這裡另外算給你看。";
+const MONTH_TIP = "所選月份的每日淨利（配對＋資金費）加總 ÷ 天數。一天＝前一天 08:15 到當天 08:15 的那筆每日紀錄；漏抓的日子會併進下一筆，天數照實際算；資金費沒記到的那天，會併進下一天的資金費。帳本第一天（基準日）和關倉配對待補的日子不算。切換月份會跟著變。";
+const RECENT_TIP = "最新一筆每日紀錄往回 30 天（含當天）的每日淨利加總 ÷ 天數，規則和當月效率一樣。固定看最近 30 天，不跟著月份切換。";
+
+// 和月曆同一套平均（v2/averages.py），大字是淨利日均，小字拆成配對和資金費。
+function fundAverages(mon, recent) {
+  const parts = (b) => `${dayRange(b)} · ${b.days} 天 · 配對 ${signed(moneyNum(b.grid_profit.avg))} · 資金費 ${signed(moneyNum(b.funding.avg))}${skippedNote(b)}`;
+  return `<div class="stats cal-avg">`
+    + avgStat("當月效率（含資金費）", MONTH_TIP, mon && mon.net.avg, mon && mon.days ? parts(mon) : `這個月還沒有完整紀錄${skippedNote(mon)}`)
+    + avgStat("近 30 天日均（含資金費）", RECENT_TIP, recent && recent.net.avg, recent && recent.days ? parts(recent) : "還沒有完整紀錄")
+    + `</div>`;
+}
 
 function fundCalendar(days) {
   const byDate = {};
@@ -52,9 +63,11 @@ function fundCalendar(days) {
       + line("淨利", net == null ? "—" : signed(net), cls(net) + " net")
       + `</button>`;
   }
-  const mon = (fundingData.months || {})[prefix.slice(0, 7)];
-  const sum = mon
-    ? `本月配對 <b class="${cls(moneyNum(mon.grid_profit))}">${signed(moneyNum(mon.grid_profit))}</b> U · 資金費 <b class="${cls(moneyNum(mon.funding))}">${signed(moneyNum(mon.funding))}</b> U（吃掉配對 ${mon.pct_of_grid == null ? "—" : n(Math.abs(mon.pct_of_grid), 1) + "%"}）· 淨利 <b class="${cls(moneyNum(mon.net))}">${signed(moneyNum(mon.net))}</b> U · 日均淨利 ${mon.days ? signed(moneyNum(mon.net) / mon.days) : "—"} U（${mon.days} 天）`
+  const averages = fundingData.averages || {};
+  const mon = (averages.months || {})[prefix.slice(0, 7)];
+  const total = (key) => moneyNum(mon[key].total);
+  const sum = mon && mon.days
+    ? `本月配對 <b class="${cls(total("grid_profit"))}">${signed(total("grid_profit"))}</b> U · 資金費 <b class="${cls(total("funding"))}">${signed(total("funding"))}</b> U（吃掉配對 ${mon.pct_of_grid == null ? "—" : n(Math.abs(mon.pct_of_grid), 1) + "%"}）· 淨利 <b class="${cls(total("net"))}">${signed(total("net"))}</b> U`
     : "本月尚無紀錄";
   return `<div class="card fund-cal">
       <div class="cal-head">
@@ -62,6 +75,7 @@ function fundCalendar(days) {
         <strong>${y} 年 ${m} 月</strong>
         <button type="button" id="fundNext" aria-label="下個月">›</button>
       </div>
+      ${fundAverages(mon, averages.recent)}
       <p class="cal-sum">${sum}</p>
       <div class="cal">${cells}</div>
       <div class="legend">
@@ -84,11 +98,10 @@ function paintFunding() {
   }
   const latest = days.find((d) => moneyNum(d.funding) != null) || days[0];
   if (!fundSelected || !byDate[fundSelected]) fundSelected = latest.date;
-  const month = (data.months || {})[latest.date.slice(0, 7)];
-  const since = new Date(Date.parse(latest.date + "T00:00:00Z") - 30 * 86400000).toISOString().slice(0, 10);
-  const recent = days.filter((d) => d.date > since && moneyNum(d.funding) != null);
-  const sum30 = recent.reduce((a, d) => a + moneyNum(d.funding), 0);
-  const span30 = recent.reduce((a, d) => a + (d.span_days || 1), 0);
+  const averages = data.averages || {};
+  const month = (averages.months || {})[latest.date.slice(0, 7)];
+  const recent = averages.recent || {};
+  const fund30 = recent.days ? moneyNum(recent.funding.avg) : null;
   const eaten = (pct) => (pct == null ? "—" : n(Math.abs(pct), 1) + "%");
   const stat = (label, note, value, sub) => `<div class="stat">${tip(label, note)}`
     + `<strong class="${cls(moneyNum(value))}">${bothSigned(value)}<span class="twd" style="white-space:normal">${sub}</span></strong></div>`;
@@ -127,10 +140,10 @@ function paintFunding() {
     <div class="stats">
       ${stat("最近一天淨利", NET_TIP, latest.net,
         `${esc(latest.date)} · 配對 ${signed(moneyNum(latest.grid_profit))} · 資金費 ${signed(moneyNum(latest.funding))}（吃掉 ${eaten(latest.pct_of_grid)}）`)}
-      ${stat("本月淨利", "本月每日配對＋資金費加總。和月曆的月合計同一規則，關倉待補的日子不計。", month ? month.net : null,
-        month ? `配對 ${signed(moneyNum(month.grid_profit))} · 資金費 ${signed(moneyNum(month.funding))}（吃掉 ${eaten(month.pct_of_grid)}）` : "")}
-      ${stat("近 30 天資金費", "最近 30 天的每日資金費加總與日均；年化＝日均 ÷ 最近一天的等效倉位 × 365。", { usdt: String(sum30) },
-        span30 ? `日均 ${signed(sum30 / span30)} U · 年化 ${moneyNum(latest.equivalent) ? pctText(sum30 / span30 * 365 / moneyNum(latest.equivalent) * 100) : "—"}` : "")}
+      ${stat("本月淨利", "本月每日配對＋資金費加總。和月曆的月合計同一規則，基準日和關倉待補的日子不計。", month && month.days ? month.net.total : null,
+        month && month.days ? `配對 ${signed(moneyNum(month.grid_profit.total))} · 資金費 ${signed(moneyNum(month.funding.total))}（吃掉 ${eaten(month.pct_of_grid)}）` : "")}
+      ${stat("近 30 天資金費", "最近 30 天的每日資金費加總與日均；年化＝日均 ÷ 最近一天的等效倉位 × 365。", recent.days ? recent.funding.total : null,
+        fund30 != null ? `日均 ${signed(fund30)} U · 年化 ${moneyNum(latest.equivalent) ? pctText(fund30 * 365 / moneyNum(latest.equivalent) * 100) : "—"}` : "")}
       ${stat("歷史累計資金費", "所有出現過的倉（含已關倉）從建倉起的累計資金費加總，USDT 用最近一次的換算。％＝佔歷史累計配對利潤。", latest.total,
         `佔歷史累計配對 ${eaten(latest.total_pct_of_grid)}`)}
     </div>

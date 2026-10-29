@@ -1,6 +1,6 @@
 import { state } from "../state.js";
 
-import { app, bindHistoryClicks, both, bothSigned, cls, esc, eventCell, get, moneyNum, n, postJson, publishText, showFlash, signed, tip, usdt } from "../common.js";
+import { app, avgStat, bindHistoryClicks, both, bothSigned, cls, dayRange, esc, eventCell, get, moneyNum, n, postJson, publishText, showFlash, signed, skippedNote, tip, usdt } from "../common.js";
 
 import { isCurrent } from "../router.js";
 
@@ -10,6 +10,23 @@ let calendarData = null;
 let calMonth = null;
 let calSelected = "";
 let calLine = "total";
+
+const MONTH_TIP = "所選月份的每日配對利潤加總 ÷ 天數。一天＝前一天 08:15 到當天 08:15 的那筆每日紀錄；漏抓的日子會併進下一筆，天數照實際算。帳本第一天（基準日）和關倉配對待補的日子不算。切換月份會跟著變。";
+const RECENT_TIP = "最新一筆每日紀錄往回 30 天（含當天）的每日配對利潤加總 ÷ 天數，規則和當月效率一樣。固定看最近 30 天，不跟著月份切換。";
+
+// 當月效率跟著所選月份，近 30 天固定看最新一筆紀錄；平均由伺服器算（v2/averages.py）。
+function calAverages(mon, recent) {
+  const monSub = mon && mon.days
+    ? `${dayRange(mon)} · ${mon.days} 天 · 本月合計 ${signed(moneyNum(mon.daily_profit.total))} U${skippedNote(mon)}`
+    : `這個月還沒有完整紀錄${skippedNote(mon)}`;
+  const recentSub = recent && recent.days
+    ? `${dayRange(recent)} · ${recent.days} 天 · 合計 ${signed(moneyNum(recent.daily_profit.total))} U${skippedNote(recent)}`
+    : "還沒有完整紀錄";
+  return `<div class="stats cal-avg">`
+    + avgStat("當月效率", MONTH_TIP, mon && mon.daily_profit.avg, monSub)
+    + avgStat("近 30 天日均", RECENT_TIP, recent && recent.daily_profit.avg, recentSub)
+    + `</div>`;
+}
 
 function paintCalendar() {
   const days = (calendarData && calendarData.days) || [];
@@ -58,19 +75,8 @@ function paintCalendar() {
       cells += `<div class="cal-cell is-empty${sel}"><span class="cal-num">${d}</span></div>`;
     }
   }
-  // 與 Portfolio 月平均同一規則：有關倉配對待補的日子先不計入。
-  const prefix = `${y}-${String(m).padStart(2, "0")}-`;
-  let monthTotal = 0, monthDays = 0, monthSkipped = 0;
-  days.forEach((d) => {
-    if (!String(d.capture_date || "").startsWith(prefix)) return;
-    const v = moneyNum(d.daily_profit);
-    if (Number(d.unresolved_count) > 0 || v == null) { monthSkipped += 1; return; }
-    monthTotal += v;
-    monthDays += 1;
-  });
-  const monthSum = monthDays
-    ? `本月合計 <b class="${cls(monthTotal)}">${signed(monthTotal)}</b> U · 日均 <b class="${cls(monthTotal)}">${signed(monthTotal / monthDays)}</b> U（${monthDays} 天${monthSkipped ? `，${monthSkipped} 天待補未計` : ""}）`
-    : "本月尚無完整紀錄";
+  const averages = (calendarData && calendarData.averages) || {};
+  const monthAvg = (averages.months || {})[monthKey.slice(0, 7)];
   const selected = byDate[calSelected] || {};
   const rows = selected.rows || [];
   const rowHtml = rows.length ? rows.map((r) => {
@@ -90,7 +96,7 @@ function paintCalendar() {
         <strong>${y} 年 ${m} 月</strong>
         <button type="button" id="calNext" aria-label="下個月">›</button>
       </div>
-      <p class="cal-sum">${monthSum}</p>
+      ${calAverages(monthAvg, averages.recent)}
       <div class="card-head" style="margin-top:14px"><h3>${calLine === "running"
           ? tip("每日利潤與運行中配對利潤", "線只算當天還開著的倉（派網畫面上的網格利潤加總）。關倉、複投時會往下掉，不代表虧錢。點長條可切換到那一天。")
           : tip("每日利潤與歷史累計配對利潤", "已扣除關倉、複投、提領造成的跳動，只反映實際賺到的配對收益。點長條可切換到那一天。")}</h3>

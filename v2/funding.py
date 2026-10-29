@@ -10,6 +10,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
 
+from .averages import averages_view, profit_averages
 from .fx import attach_twd, usdt_twd
 from .store import _equivalent_by_run, _fx_view, connect, equivalent_i, money, to_fixed
 
@@ -181,25 +182,26 @@ def funding_payload(db_path: Path | None = None) -> dict:
         })
     grids.sort(key=lambda g: g["funding_cum"]["int"] or 0)
 
-    # Same rule as the calendar's month total: days with a pending closure are left out.
-    months: dict[str, dict] = {}
-    for item, s in zip(days, summaries):
-        if item["unresolved"]:
-            continue
-        mon = months.setdefault(item["date"][:7], {"funding_i": 0, "grid_i": 0, "days": 0})
-        if item["funding"]["int"] is not None:
-            mon["funding_i"] += item["funding"]["int"]
-        mon["grid_i"] += s["daily_profit_i"] or 0
-        mon["days"] += 1
-    month_view = {key: {"funding": m(v["funding_i"]), "grid_profit": m(v["grid_i"]),
-                        "net": m(v["grid_i"] + v["funding_i"]),
-                        "pct_of_grid": _ratio_pct(v["funding_i"], v["grid_i"]), "days": v["days"]}
-                  for key, v in months.items()}
+    # 當月效率 and 近 30 天日均 including funding, by the calendar's rules (v2/averages.py).
+    # A day without funding adds only its grid profit; the next day's funding covers it.
+    entries = []
+    for i, (item, s) in enumerate(zip(days, summaries)):
+        grid, fund = s["daily_profit_i"], item["funding"]["int"]
+        entries.append({"date": item["date"], "covered": 1 + (s["gap_days"] or 0), "baseline": i == 0,
+                        "pending": item["unresolved"] or grid is None,
+                        "grid_profit": grid, "funding": fund, "net": None if grid is None else grid + (fund or 0)})
+    sums = profit_averages(entries, ("grid_profit", "funding", "net"))
+    averages = averages_view(sums, m)
+    pairs = [(averages["months"][key], bucket) for key, bucket in sums["months"].items()]
+    pairs.append((averages["recent"], sums["recent"]))
+    for view, bucket in pairs:
+        view["pct_of_grid"] = (_ratio_pct(bucket["sums"]["funding"], bucket["sums"]["grid_profit"])
+                               if bucket["days"] else None)
 
     return {
         "days": days[::-1],
         "rows_by_date": rows_by_date,
         "grids": grids,
-        "months": month_view,
+        "averages": averages,
         "fx": _fx_view(usdt_twd()),
     }
