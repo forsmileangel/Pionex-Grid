@@ -77,7 +77,7 @@ class LiveTests(unittest.TestCase):
         self.assertEqual(live_publish_payload(board)['rows'][0]['leverage'], '4x long')
 
         ingest(snap('2026-08-26', [record]), self.db)
-        historical = store.days_payload(self.db)['days'][0]['rows'][0]
+        historical = store.day_rows_payload('2026-08-26', self.db)['rows'][0]
         self.assertEqual((historical['trend'], historical['leverage']), ('long', '4x long'))
         con = connect(self.db)
         try:

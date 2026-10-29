@@ -7,6 +7,22 @@ import { isCurrent } from "../router.js";
 import { effSeg } from "./efficiency.js";
 
 let calendarData = null;
+// 每一天的倉位明細點到那天才抓（/api/v1/days 只有每日總計）；null＝讀取中。重新進頁面就清掉。
+const dayRows = new Map();
+
+async function loadDayRows(date) {
+  if (dayRows.has(date)) return;
+  dayRows.set(date, null);
+  try {
+    const data = await get("/api/v1/days/" + encodeURIComponent(date));
+    dayRows.set(date, data.rows || []);
+  } catch (err) {
+    dayRows.delete(date);
+    if (state.page === "calendar") showFlash(`讀取 ${date} 明細失敗：${err.message}`, "error");
+    return;
+  }
+  if (state.page === "calendar" && calSelected === date) paintCalendar();
+}
 let calMonth = null;
 let calSelected = "";
 let calLine = "total";
@@ -78,7 +94,9 @@ function paintCalendar() {
   const averages = (calendarData && calendarData.averages) || {};
   const monthAvg = (averages.months || {})[monthKey.slice(0, 7)];
   const selected = byDate[calSelected] || {};
-  const rows = selected.rows || [];
+  const loaded = dayRows.get(calSelected);
+  if (loaded === undefined) loadDayRows(calSelected);
+  const rows = loaded || [];
   const rowHtml = rows.length ? rows.map((r) => {
     const day = r.daily_profit && r.daily_profit.usdt;
     return `<tr class="clickable" data-id="${esc(r.bu_order_id || "")}">
@@ -88,7 +106,7 @@ function paintCalendar() {
       <td class="n ${cls(day)}">${signed(day)}</td>
       <td class="n">${usdt(r.grid_profit)}</td>
     </tr>`;
-  }).join("") : `<tr><td colspan="5" class="muted">當日無倉位明細</td></tr>`;
+  }).join("") : `<tr><td colspan="5" class="muted">${loaded ? "當日無倉位明細" : "載入中…"}</td></tr>`;
   app.innerHTML = `
     <div class="card">
       <div class="cal-head">
@@ -186,6 +204,7 @@ export async function renderCalendar(seq) {
   const data = await get("/api/v1/days");
   if (!isCurrent(seq, "calendar")) return;
   calendarData = data;
+  dayRows.clear();
   paintCalendar();
 }
 
@@ -202,6 +221,7 @@ function bindEventDecisions() {
           decision: btn.dataset.decide,
         });
         calendarData = await get("/api/v1/days");
+        dayRows.clear();
         state.dailyData = calendarData;
         if (state.page === "calendar") paintCalendar();
         showFlash("已記錄判定並重算歷史。" + publishText(result.publish));

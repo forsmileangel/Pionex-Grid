@@ -190,8 +190,25 @@ def _facts(row, pos):
                 funding_fee_usdt=usd(funding), fee_usdt=usd(fee))
 
 
-def apply_to_daily(con):
-    """Update the ORIGINAL closing interval; never add catch-up income to today."""
+def _rebuild_inputs(con, target):
+    """What rebuild_daily_profits reads for a closing row: the row, and the figures it derives
+    from that run's snapshot. Not the raw JSON itself, which changes with every capture."""
+    row = con.execute('SELECT * FROM daily_grid_profit WHERE id=?', (target['id'],)).fetchone()
+    snap = con.execute('SELECT * FROM grid_snapshots WHERE run_id=? AND bu_order_id=?',
+                       (target['run_id'], target['bu_order_id'])).fetchone()
+    derived = None if snap is None else (
+        snap['grid_profit_i'], snap['investment_i'], snap['created_at'], snap['product'],
+        store._stocks_from_snapshot(snap), store._coin_from_snapshot(snap))
+    return (None if row is None else tuple(row), derived)
+
+
+def apply_to_daily(con, changed_since=None, full=True):
+    """Update the ORIGINAL closing interval; never add catch-up income to today.
+
+    full recomputes every date afterwards. Otherwise only from the earliest of changed_since (a
+    date the caller already changed) and the closing days whose figures this call changed.
+    """
+    changed = []
     for row in con.execute('SELECT * FROM grid_settlements').fetchall():
         pos = con.execute('SELECT * FROM grid_positions WHERE bu_order_id=?', (row['bu_order_id'],)).fetchone()
         facts = _facts(row, pos)
@@ -200,59 +217,71 @@ def apply_to_daily(con):
             (row['bu_order_id'],)).fetchone()
         if not target:
             continue
-        if facts['grid_profit_usdt'] is None:
-            # Clearing a manual override must also remove its derived daily value.
-            con.execute("DELETE FROM grid_snapshots WHERE run_id=? AND bu_order_id=? AND list_status='finished'",
-                        (target['run_id'], row['bu_order_id']))
-            con.execute("UPDATE daily_grid_profit SET status='closed_unresolved',event='closed_unresolved' WHERE id=?", (target['id'],))
-            con.execute("UPDATE grid_positions SET lifecycle='closed_unresolved',closed_at=? WHERE bu_order_id=?",
-                        (facts['closed_at'],row['bu_order_id']))
-            continue
-        prev = con.execute("""SELECT * FROM daily_grid_profit WHERE bu_order_id=? AND capture_date<?
-            AND status IN ('baseline','new','continue') ORDER BY capture_date DESC LIMIT 1""",
-            (row['bu_order_id'], target['capture_date'])).fetchone()
-        if not prev:
-            continue
-        rec = facts['rec']
-        grid_i = store.to_fixed(facts['grid_profit_usdt'])
-        inv_i = store.to_fixed(rec.get('Investment'))
-        if inv_i is None:
-            inv_i = prev['investment_i']
-        stocks = []
-        for key, column in [('ProfitWithdrawn', 'withdrawn_i'), ('ProfitReinvest', 'reinvest_i'), ('ProfitReduce', 'reduce_i')]:
-            if facts['coin']:
-                raw_key = 'Raw' + key
-                stocks.append(store._mul_fixed(store.to_fixed(rec[raw_key]), store.to_fixed(facts['settlement_usdt_rate']))
-                              if rec.get(raw_key) is not None else prev[column])
-            else:
-                stocks.append(store.to_fixed(rec[key]) if rec.get(key) is not None else prev[column])
-        coin_i = store.to_fixed(facts['grid_profit']) if facts['coin'] else None
-        px_i = store.to_fixed(facts['settlement_usdt_rate']) if facts['coin'] else None
-        # Snapshot belongs to the original interval even when the API arrived later.
-        con.execute("""INSERT INTO grid_snapshots(run_id,bu_order_id,list_status,symbol,created_at,
-            closed_at,product,investment_i,grid_profit_i,grid_profit_coin_i,conversion_price_i,
-            profit_withdrawn_i,profit_reinvest_i,profit_reduce_i,total_profit_i,funding_fee_i,fee_i,complete,raw_json)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-            ON CONFLICT(run_id,bu_order_id) DO UPDATE SET
-              closed_at=excluded.closed_at,investment_i=excluded.investment_i,grid_profit_i=excluded.grid_profit_i,
-              grid_profit_coin_i=excluded.grid_profit_coin_i,conversion_price_i=excluded.conversion_price_i,
-              profit_withdrawn_i=excluded.profit_withdrawn_i,profit_reinvest_i=excluded.profit_reinvest_i,
-              profit_reduce_i=excluded.profit_reduce_i,funding_fee_i=excluded.funding_fee_i,
-              fee_i=excluded.fee_i,total_profit_i=excluded.total_profit_i,
-              complete=excluded.complete,raw_json=excluded.raw_json""",
-            (target['run_id'],row['bu_order_id'],'finished',pos['symbol'],pos['created_at'],
-             facts['closed_at'],pos['product'],inv_i,grid_i,coin_i,px_i,*stocks,
-             store.to_fixed(facts['reported_total_profit']) if not facts['coin'] else None,
-             store.to_fixed(facts['funding_fee_usdt']),store.to_fixed(facts['fee_usdt']),1,
-             json.dumps(rec.get('RawJson') or {},ensure_ascii=False)))
-        con.execute("UPDATE daily_grid_profit SET status='closed',prev_grid_profit_i=? WHERE id=?",
-                    (prev['grid_profit_i'],target['id']))
-        con.execute("UPDATE grid_positions SET lifecycle='closed',closed_at=? WHERE bu_order_id=?",
-                    (facts['closed_at'],row['bu_order_id']))
-    store.rebuild_daily_profits(con)
+        before = None if full else _rebuild_inputs(con, target)
+        _apply_one(con, row, pos, facts, target)
+        if not full and _rebuild_inputs(con, target) != before:
+            changed.append(target['capture_date'])
+    starts = [day for day in (changed_since, *changed) if day]
+    if full:
+        store.rebuild_daily_profits(con)
+    elif starts:
+        store.rebuild_daily_profits(con, since=min(starts))
     con.execute("""UPDATE daily_summary SET
         closed_count=(SELECT count(*) FROM daily_grid_profit d WHERE d.capture_date=daily_summary.capture_date AND d.status='closed'),
         unresolved_count=(SELECT count(*) FROM daily_grid_profit d WHERE d.capture_date=daily_summary.capture_date AND d.status='closed_unresolved')""")
+
+
+def _apply_one(con, row, pos, facts, target):
+    """Write one settlement into its closing row and that run's snapshot."""
+    if facts['grid_profit_usdt'] is None:
+        # Clearing a manual override must also remove its derived daily value.
+        con.execute("DELETE FROM grid_snapshots WHERE run_id=? AND bu_order_id=? AND list_status='finished'",
+                    (target['run_id'], row['bu_order_id']))
+        con.execute("UPDATE daily_grid_profit SET status='closed_unresolved',event='closed_unresolved' WHERE id=?", (target['id'],))
+        con.execute("UPDATE grid_positions SET lifecycle='closed_unresolved',closed_at=? WHERE bu_order_id=?",
+                    (facts['closed_at'],row['bu_order_id']))
+        return
+    prev = con.execute("""SELECT * FROM daily_grid_profit WHERE bu_order_id=? AND capture_date<?
+        AND status IN ('baseline','new','continue') ORDER BY capture_date DESC LIMIT 1""",
+        (row['bu_order_id'], target['capture_date'])).fetchone()
+    if not prev:
+        return
+    rec = facts['rec']
+    grid_i = store.to_fixed(facts['grid_profit_usdt'])
+    inv_i = store.to_fixed(rec.get('Investment'))
+    if inv_i is None:
+        inv_i = prev['investment_i']
+    stocks = []
+    for key, column in [('ProfitWithdrawn', 'withdrawn_i'), ('ProfitReinvest', 'reinvest_i'), ('ProfitReduce', 'reduce_i')]:
+        if facts['coin']:
+            raw_key = 'Raw' + key
+            stocks.append(store._mul_fixed(store.to_fixed(rec[raw_key]), store.to_fixed(facts['settlement_usdt_rate']))
+                          if rec.get(raw_key) is not None else prev[column])
+        else:
+            stocks.append(store.to_fixed(rec[key]) if rec.get(key) is not None else prev[column])
+    coin_i = store.to_fixed(facts['grid_profit']) if facts['coin'] else None
+    px_i = store.to_fixed(facts['settlement_usdt_rate']) if facts['coin'] else None
+    # Snapshot belongs to the original interval even when the API arrived later.
+    con.execute("""INSERT INTO grid_snapshots(run_id,bu_order_id,list_status,symbol,created_at,
+        closed_at,product,investment_i,grid_profit_i,grid_profit_coin_i,conversion_price_i,
+        profit_withdrawn_i,profit_reinvest_i,profit_reduce_i,total_profit_i,funding_fee_i,fee_i,complete,raw_json)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(run_id,bu_order_id) DO UPDATE SET
+          closed_at=excluded.closed_at,investment_i=excluded.investment_i,grid_profit_i=excluded.grid_profit_i,
+          grid_profit_coin_i=excluded.grid_profit_coin_i,conversion_price_i=excluded.conversion_price_i,
+          profit_withdrawn_i=excluded.profit_withdrawn_i,profit_reinvest_i=excluded.profit_reinvest_i,
+          profit_reduce_i=excluded.profit_reduce_i,funding_fee_i=excluded.funding_fee_i,
+          fee_i=excluded.fee_i,total_profit_i=excluded.total_profit_i,
+          complete=excluded.complete,raw_json=excluded.raw_json""",
+        (target['run_id'],row['bu_order_id'],'finished',pos['symbol'],pos['created_at'],
+         facts['closed_at'],pos['product'],inv_i,grid_i,coin_i,px_i,*stocks,
+         store.to_fixed(facts['reported_total_profit']) if not facts['coin'] else None,
+         store.to_fixed(facts['funding_fee_usdt']),store.to_fixed(facts['fee_usdt']),1,
+         json.dumps(rec.get('RawJson') or {},ensure_ascii=False)))
+    con.execute("UPDATE daily_grid_profit SET status='closed',prev_grid_profit_i=? WHERE id=?",
+                (prev['grid_profit_i'],target['id']))
+    con.execute("UPDATE grid_positions SET lifecycle='closed',closed_at=? WHERE bu_order_id=?",
+                (facts['closed_at'],row['bu_order_id']))
 
 
 def payload(con):
@@ -356,7 +385,7 @@ def refresh(snapshot, db_path=None):
     try:
         before = store.summary_values(con)
         observe(con, snapshot)
-        apply_to_daily(con)
+        apply_to_daily(con, full=False)
         store.record_corrections(con, before, '補抓關倉資料')
         con.commit()
         store.backup_after_commit(store.Path(db_path or store.DEFAULT_DB))
@@ -410,7 +439,7 @@ def save_manual(oid, body, db_path=None):
                         (oid,stamp,row['manual_json'],encoded))
             con.execute('UPDATE grid_settlements SET manual_json=?,updated_at=? WHERE bu_order_id=?', (encoded,stamp,oid))
             before = store.summary_values(con)
-            apply_to_daily(con)
+            apply_to_daily(con, full=False)
             pos = con.execute('SELECT symbol FROM grid_positions WHERE bu_order_id=?', (oid,)).fetchone()
             store.record_corrections(con, before, f"人工補登：{pos['symbol'] if pos else oid}")
             con.commit()

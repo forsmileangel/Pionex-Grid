@@ -65,7 +65,8 @@ class SettlementTests(unittest.TestCase):
         self.capture('2026-09-18', [rec(GridProfit=1500, ProfitWithdrawn=0)])
         self.capture('2026-09-19', [rec(GridProfit=1505, ProfitWithdrawn=1000)])
         self.capture('2026-09-20', [])
-        pending = store.days_payload(self.db)['days'][0]['rows'][0]
+        self.assertNotIn('rows', store.days_payload(self.db)['days'][0])
+        pending = store.day_rows_payload('2026-09-20', self.db)['rows'][0]
         self.assertEqual(pending['bu_order_id'], 'g1')
         self.assertEqual(pending['symbol'], 'BTC/USDT')
         self.assertIsNone(pending['daily_profit']['usdt'])
@@ -103,7 +104,7 @@ class SettlementTests(unittest.TestCase):
                 self.assertEqual(excel[date][1], profit)
                 self.assertEqual(excel[date][7], history)
         self.assertEqual(calendar['2026-09-20']['unresolved_count'], 0)
-        self.assertEqual(calendar['2026-09-20']['rows'][0]['bu_order_id'], 'g1')
+        self.assertEqual(store.day_rows_payload('2026-09-20', self.db)['rows'][0]['bu_order_id'], 'g1')
         self.assertEqual(self.row()['reported_total_profit'], -195)
         self.assertIsNone(self.row()['net_profit'])
 

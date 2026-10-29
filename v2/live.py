@@ -163,7 +163,8 @@ def commit_live_to_daily(confirm_date: str, db_path: Path, live_file: Path | Non
     missing = vanished_positions(snapshot, db_path)
     if missing:
         raise CaptureError(f"即時快照少了 {len(missing)} 個進行中的倉位（{', '.join(missing)}），請先更新即時資料")
-    result = ingest(snapshot, db_path=db_path, replace_date=True)
+    # Recompute only today (and any closing day a settlement changed); 08:15 rebuilds everything.
+    result = ingest(snapshot, db_path=db_path, replace_date=True, full_rebuild=False)
     try:
         from .gist_publish import publish_ledger
         result["publish"] = publish_ledger(db_path)

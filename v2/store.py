@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import functools
 import json
+import os
 import shutil
 import sqlite3
 import sys
@@ -190,12 +192,19 @@ def _number_from(data: dict, *keys) -> float:
     return 0.0
 
 
+@functools.lru_cache(maxsize=16)
+def _loads_raw(text):
+    """Parsed raw_json. The helpers below read one snapshot's JSON several times in a row, so a
+    tiny cache saves most of a rebuild's parsing. Callers only read the result, never change it."""
+    return json.loads(text)
+
+
 def _raw_bu_data(raw_json) -> dict:
     if isinstance(raw_json, dict):
         raw = raw_json
     else:
         try:
-            raw = json.loads(raw_json or "{}")
+            raw = _loads_raw(raw_json or "{}")
         except (TypeError, json.JSONDecodeError):
             return {}
     if not isinstance(raw, dict):
@@ -313,7 +322,7 @@ def _coin_from_snapshot(snap) -> tuple[int | None, int | None, str | None]:
         # quote lives on order, not buOrderData
         raw_blob = _rowget(snap, "raw_json")
         try:
-            blob = json.loads(raw_blob) if isinstance(raw_blob, str) else (raw_blob or {})
+            blob = _loads_raw(raw_blob) if isinstance(raw_blob, str) else (raw_blob or {})
         except (TypeError, json.JSONDecodeError):
             blob = {}
         order_obj = blob.get("order") if isinstance(blob, dict) else {}
@@ -483,8 +492,19 @@ def _true_grid_profit_i(con: sqlite3.Connection, capture_date: str) -> int:
     return total
 
 
-def rebuild_daily_profits(con: sqlite3.Connection) -> None:
-    """Recompute daily/lifetime from snapshots. Backfills profitReinvest stocks from raw JSON."""
+# What rebuild_daily_profits carries from one day to the next; each is also a daily_grid_profit column.
+_CARRIED = ("grid_profit_i", "investment_i", "withdrawn_i", "reinvest_i", "reduce_i", "lifetime_i",
+            "cumulative_i", "status", "grid_profit_coin_i", "conversion_price_i")
+
+
+def rebuild_daily_profits(con: sqlite3.Connection, since: str | None = None) -> None:
+    """Recompute daily/lifetime from snapshots. Backfills profitReinvest stocks from raw JSON.
+
+    With since, only that date and later are recomputed. What a day carries into the next is
+    stored in its rows, so the rows before since give the same starting point a full pass would
+    reach. Those rows were written by an earlier rebuild under the same rules: a change to the
+    rules must bump SCHEMA_VERSION, whose migration rebuilds every date.
+    """
     runs = list(con.execute("SELECT * FROM capture_runs WHERE status='success' ORDER BY capture_date, id"))
     if not runs:
         return
@@ -492,6 +512,18 @@ def rebuild_daily_profits(con: sqlite3.Connection) -> None:
     opened = {row["bu_order_id"]: row["created_at"] for row in con.execute("SELECT bu_order_id, created_at FROM grid_positions")}
     prev_by_id: dict[str, dict] = {}
     prev_captured = None
+    # Each bot's latest lifetime (a closed bot keeps its last one); their sum is the day's
+    # 歷史累計, kept running instead of rescanning every earlier row for each day.
+    lifetimes: dict[str, int] = {}
+    if since:
+        earlier = [run for run in runs if run["capture_date"] < since]
+        runs = [run for run in runs if run["capture_date"] >= since]
+        if earlier:
+            prev_captured = earlier[-1]["captured_at"]
+        for row in con.execute("SELECT * FROM daily_grid_profit WHERE capture_date<? ORDER BY capture_date, id", (since,)):
+            prev_by_id[row["bu_order_id"]] = {key: row[key] for key in _CARRIED}
+            if row["lifetime_i"] is not None:
+                lifetimes[row["bu_order_id"]] = row["lifetime_i"]
     for run in runs:
         date = run["capture_date"]
         snaps = {
@@ -576,8 +608,10 @@ def rebuild_daily_profits(con: sqlite3.Connection) -> None:
                 "grid_profit_coin_i": coin_i,
                 "conversion_price_i": px_i,
             }
+            if life_i is not None:
+                lifetimes[oid] = life_i
         prev_captured = run["captured_at"]
-        true_i = _true_grid_profit_i(con, date)
+        true_i = sum(lifetimes.values())
         con.execute(
             "UPDATE daily_summary SET daily_profit_i=?, cumulative_i=?, true_profit_i=?, fx_gap_i=? WHERE capture_date=?",
             (daily_total, new_cum, true_i, fx_gap_total, date),
@@ -696,7 +730,7 @@ def insert_missing_day(captured_at: str, rows: list[dict], source: str, db_path:
                     (next_gap, captured.isoformat(), nxt["id"]))
         con.execute("UPDATE daily_summary SET gap_days=? WHERE capture_date=?", (next_gap, nxt["capture_date"]))
         con.execute("UPDATE daily_grid_profit SET gap_days=? WHERE capture_date=?", (next_gap, nxt["capture_date"]))
-        rebuild_daily_profits(con)
+        rebuild_daily_profits(con, since=date)
         reason = f"補登漏抓日 {date}（{source}）"
         record_corrections(con, before, reason)
         added = summary_values(con)[date]
@@ -742,7 +776,7 @@ def apply_event_decision(capture_date: str, bu_order_id: str, decision: str, db_
             (capture_date, bu_order_id, decision, datetime.now(TAIPEI).isoformat()),
         )
         before = summary_values(con)
-        rebuild_daily_profits(con)
+        rebuild_daily_profits(con, since=capture_date)
         record_corrections(con, before, "加倉／複投判定" if decision == "add" else "複投判定")
         con.commit()
         updated = con.execute(
@@ -770,6 +804,23 @@ def taipei_now(captured_at: str | None = None) -> datetime:
     return datetime.now(TAIPEI)
 
 
+# Ledger files whose schema this process has already brought up to date, by file identity.
+_SCHEMA_READY: dict[str, tuple] = {}
+
+
+def _file_identity(path: Path) -> tuple:
+    st = os.stat(path)
+    return (st.st_dev, st.st_ino, st.st_ctime_ns)
+
+
+def _schema_version(con: sqlite3.Connection) -> int | None:
+    try:
+        row = con.execute("SELECT MAX(version) FROM schema_meta").fetchone()
+    except sqlite3.OperationalError:
+        return None
+    return row[0] if row else None
+
+
 def connect(db_path: Path | None = None) -> sqlite3.Connection:
     path = Path(db_path or DEFAULT_DB)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -778,12 +829,18 @@ def connect(db_path: Path | None = None) -> sqlite3.Connection:
     con.execute("PRAGMA busy_timeout = 30000")
     con.execute("PRAGMA foreign_keys = ON")
     con.execute("PRAGMA journal_mode = WAL")
-    con.executescript(SCHEMA)
-    row = con.execute("SELECT version FROM schema_meta ORDER BY version DESC LIMIT 1").fetchone()
-    if row is None:
-        con.execute("INSERT INTO schema_meta(version, applied_at) VALUES (?, ?)", (SCHEMA_VERSION, datetime.now(TAIPEI).isoformat()))
-        con.commit()
-    _migrate(con)
+    # The schema script and migrations run on a process's first connection to a file; the server
+    # opens a connection per request. A restored or recreated file is a new identity, and a file
+    # whose recorded version is not this code's, both checked again.
+    key = str(path.resolve())
+    if _SCHEMA_READY.get(key) != _file_identity(path) or _schema_version(con) != SCHEMA_VERSION:
+        con.executescript(SCHEMA)
+        row = con.execute("SELECT version FROM schema_meta ORDER BY version DESC LIMIT 1").fetchone()
+        if row is None:
+            con.execute("INSERT INTO schema_meta(version, applied_at) VALUES (?, ?)", (SCHEMA_VERSION, datetime.now(TAIPEI).isoformat()))
+            con.commit()
+        _migrate(con)
+        _SCHEMA_READY[key] = _file_identity(path)
     return con
 
 
@@ -1003,7 +1060,9 @@ def vanished_positions(snapshot: dict, db_path: Path | None = None) -> list[str]
     return [oid for oid in active if oid not in listed]
 
 
-def ingest(snapshot: dict, db_path: Path | None = None, replace_date: bool = False) -> dict:
+def ingest(snapshot: dict, db_path: Path | None = None, replace_date: bool = False, full_rebuild: bool = True) -> dict:
+    """Write one capture. full_rebuild recomputes every date afterwards, as the 08:15 capture does
+    once a day; otherwise only this date and any earlier closing day a settlement changed."""
     records = list(snapshot.get("Records") or [])
     captured = taipei_now(snapshot.get("CapturedAt"))
     capture_date = captured.date().isoformat()
@@ -1213,7 +1272,7 @@ def ingest(snapshot: dict, db_path: Path | None = None, replace_date: bool = Fal
         con.execute("UPDATE capture_runs SET status='success' WHERE id=?", (run_id,))
         from .settlements import observe, apply_to_daily
         observe(con, snapshot)
-        apply_to_daily(con)
+        apply_to_daily(con, changed_since=capture_date, full=full_rebuild)
         record_corrections(con, summary_before, "每日擷取：關倉資料回補", skip_dates=(capture_date,))
         updated = con.execute("SELECT * FROM daily_summary WHERE capture_date=?", (capture_date,)).fetchone()
         daily_total, closed_count, unresolved = updated["daily_profit_i"], updated["closed_count"], updated["unresolved_count"]
@@ -1707,32 +1766,50 @@ def board_payload(db_path: Path | None = None) -> dict:
         con.close()
 
 
+def _day_rows(con: sqlite3.Connection, capture_date: str) -> list[dict]:
+    """Every position's row on one day, as the calendar and 每日詳情 tables show it."""
+    snaps = _rows(
+        con,
+        """SELECT s.*, p.bu_order_id AS position_id, p.symbol AS position_symbol,
+                  p.lifecycle, p.created_at AS position_created, d.status, d.event, d.daily_profit_i, d.prev_grid_profit_i, d.cumulative_i
+           FROM daily_grid_profit d
+           JOIN grid_positions p ON p.bu_order_id=d.bu_order_id
+           LEFT JOIN grid_snapshots s ON s.run_id=d.run_id AND s.bu_order_id=d.bu_order_id
+           WHERE d.capture_date=?
+           ORDER BY p.symbol, p.created_at""",
+        (capture_date,),
+    )
+    rows = []
+    for snap in snaps:
+        merged = dict(snap)
+        # A pending close has no final snapshot yet; its identity still
+        # comes from the position so the calendar can open its history.
+        merged['bu_order_id'] = snap['position_id']
+        merged['symbol'] = snap['position_symbol']
+        rows.append(_board_row(merged, merged.get("grid_profit_24h_i"), merged.get("daily_profit_i"), merged.get("investment_i")))
+    return rows
+
+
+def day_rows_payload(capture_date: str, db_path: Path | None = None) -> dict:
+    """One day's position rows; the pages ask for them when that day is opened."""
+    con = connect(db_path)
+    try:
+        rows = _day_rows(con, capture_date)
+    finally:
+        con.close()
+    rate = usdt_twd().get("usdt_twd")
+    return {"date": capture_date, "rows": [attach_twd_tree(row, rate) for row in rows]}
+
+
 def days_payload(db_path: Path | None = None) -> dict:
+    """Every day's totals for the calendar and 每日詳情. The position rows are left out (they were
+    most of the payload and grow every day); day_rows_payload gives them one day at a time."""
     con = connect(db_path)
     try:
         days = []
         summaries = list(con.execute("SELECT * FROM daily_summary ORDER BY capture_date DESC"))
         equivalent = _equivalent_by_run(con)
         for summary in summaries:
-            snaps = _rows(
-                con,
-                """SELECT s.*, p.bu_order_id AS position_id, p.symbol AS position_symbol,
-                          p.lifecycle, p.created_at AS position_created, d.status, d.event, d.daily_profit_i, d.prev_grid_profit_i, d.cumulative_i
-                   FROM daily_grid_profit d
-                   JOIN grid_positions p ON p.bu_order_id=d.bu_order_id
-                   LEFT JOIN grid_snapshots s ON s.run_id=d.run_id AND s.bu_order_id=d.bu_order_id
-                   WHERE d.capture_date=?
-                   ORDER BY p.symbol, p.created_at""",
-                (summary["capture_date"],),
-            )
-            rows = []
-            for snap in snaps:
-                merged = dict(snap)
-                # A pending close has no final snapshot yet; its identity still
-                # comes from the position so the calendar can open its history.
-                merged['bu_order_id'] = snap['position_id']
-                merged['symbol'] = snap['position_symbol']
-                rows.append(_board_row(merged, merged.get("grid_profit_24h_i"), merged.get("daily_profit_i"), merged.get("investment_i")))
             item = dict(summary)
             item["daily_profit"] = money(summary["daily_profit_i"])
             item["cumulative"] = money(summary["cumulative_i"])
@@ -1740,7 +1817,6 @@ def days_payload(db_path: Path | None = None) -> dict:
             item["investment"] = money(summary["investment_i"])
             item["equivalent"] = money(equivalent.get(summary["run_id"]))
             item["closed_count"] = summary["closed_count"]
-            item["rows"] = rows
             days.append(item)
         fx = usdt_twd()
         rate = fx.get("usdt_twd")
@@ -1750,7 +1826,6 @@ def days_payload(db_path: Path | None = None) -> dict:
             item["true_profit"] = attach_twd(item["true_profit"], rate)
             item["investment"] = attach_twd(item["investment"], rate)
             item["equivalent"] = attach_twd(item["equivalent"], rate)
-            item["rows"] = [attach_twd_tree(row, rate) for row in item["rows"]]
         # 當月效率 and 近 30 天日均 for the calendar; the rules are in v2/averages.py.
         entries = [{"date": s["capture_date"], "covered": 1 + (s["gap_days"] or 0), "baseline": i == 0,
                     "pending": bool(s["unresolved_count"]) or s["daily_profit_i"] is None,

@@ -6,6 +6,7 @@ import argparse
 import atexit
 import json
 import os
+import re
 import threading
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -32,6 +33,7 @@ from .store import (
     board_payload,
     daily_date_payload,
     daily_payload,
+    day_rows_payload,
     days_payload,
     export_sheets,
     grid_history_payload,
@@ -54,6 +56,7 @@ _STATIC_TYPES = {
 }
 HOST = "127.0.0.1"
 PORT = 8787
+DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 SERVER_LOG = ROOT.parent / "v2-data" / "dashboard-server.log"
 # Every request is logged; about 0.2 MB a month, so this keeps well over a year.
 SERVER_LOG_MAX_BYTES = 2_000_000
@@ -312,6 +315,13 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/v1/days":
             self._json(days_payload(self.db_path))
+            return
+        if path.startswith("/api/v1/days/"):
+            date = path[len("/api/v1/days/"):]
+            if not DATE_RE.fullmatch(date):
+                self._json({"error": "date must be YYYY-MM-DD"}, 400)
+                return
+            self._json(day_rows_payload(date, self.db_path))
             return
         if path == "/api/v1/funding":
             from .funding import funding_payload
