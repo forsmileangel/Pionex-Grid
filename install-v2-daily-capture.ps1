@@ -35,7 +35,7 @@ $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatt
     -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 10)
 $principal = New-ScheduledTaskPrincipal -UserId ("{0}\{1}" -f $env:USERDOMAIN, $env:USERNAME) -LogonType Interactive -RunLevel Limited
 
-Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Description "08:15 Taipei: capture into SQLite, publish the ledger, then export both Excel workbooks. Does not disable the old 08:10 and 08:12 tasks." -Force | Out-Null
+Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Description "08:15 Taipei: capture into SQLite, publish the ledger, then export both Excel workbooks." -Force | Out-Null
 
 # Interactive tasks skip 08:15 while the PC sits at the login screen (e.g. after a
 # Windows Update restart), and StartWhenAvailable does not retry that case.

@@ -54,7 +54,6 @@
     <tr><td><code>D:\My-project\pionex grid record\PIONEX API.txt</code></td><td>第一行 API key、第二行 API secret。只在本機讀取，禁止上傳、貼到 Notion 或提交 Git。</td></tr>
     <tr><td><code>pionex-grid-api.mjs</code></td><td>分頁取得所有 running futures_grid，逐筆取得詳情；幣本位利潤用公開行情換算 USDT。</td></tr>
     <tr><td><code>pionex-grid-daily.ps1</code></td><td>完整性檢查、日差計算、累計、關倉辨識、Excel 寫入與備份還原。</td></tr>
-    <tr><td><code>pionex-grid-backfill.ps1</code></td><td>使用已保存的 JSON 快照手動補讀歷史日期。</td></tr>
     <tr><td><code>data\pionex-grid-history.xlsx</code></td><td>長期帳本；包含「每日網格差額」與獨立「屯幣寶記錄」兩頁。</td></tr>
     <tr><td><code>data\pionex-grid-daily.log</code></td><td>只記錄執行狀態、筆數與錯誤，不寫入 key/secret。</td></tr>
   </table>
@@ -88,9 +87,9 @@
   <p>官方參考：<a href="https://www.pionex.com/docs/api-docs/bot-api/general-info/authentication">Bot API 認證</a>、<a href="https://raw.githubusercontent.com/pionex-official/pionex-open-api/main/openapi_bot.yaml">Bot API 規格</a>、<a href="https://www.pionex.com/docs/api-docs/references/api-key-permissions">API key 權限</a>。</p>
 
   <h2>手動補讀</h2>
-  <p>若 08:00 失敗，先保存當下 API 快照，再以指定日期寫入：</p>
-  <pre><code>node pionex-grid-api.mjs --output data\snapshot-2026-08-25.json
-powershell -ExecutionPolicy Bypass -File pionex-grid-backfill.ps1 -SnapshotJson data\snapshot-2026-08-25.json -CaptureAt 2026-08-25T08:00:00+08:00</code></pre>
+  <p>v1 的補讀腳本已在 1.0.2 移除。漏抓的日子改用 v2，從當天的盤中紀錄補一筆（預設只試跑，加 <code>--apply</code> 才寫入）：</p>
+  <pre><code>python -m v2.backfill --date 2026-08-25
+python -m v2.backfill --date 2026-08-25 --apply</code></pre>
   <p class="small">沒有保存的歷史快照，就無法事後重建當天的網格利潤差；腳本會拒絕偽造資料。補讀同一日期前，請確認該日期沒有成功紀錄，或明確使用基準替換流程。</p>
 
   <h2>維護規則</h2>

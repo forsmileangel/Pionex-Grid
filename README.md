@@ -8,7 +8,7 @@ This public repository contains **program files only**. Live Excel ledgers, SQLi
 
 Two views, one shared SQLite ledger:
 
-- **Excel 每日紀錄** (08:12 production): `D:\My-project\pionex grid record`
+- **Excel 每日紀錄** (written at 08:15 by `python -m v2.pipeline`): `D:\My-project\pionex grid record\data`
 - **SQLite 本機儀表板** (HTML at 127.0.0.1:8787): `D:\My-project\pionex grid record-v2`
 
 The folder name still has `-v2` because it is a git worktree. On screen it is the SQLite dashboard, not “v2”.
@@ -35,8 +35,8 @@ the 16-column file through `pionex-grid-daily.ps1`, and the daily report through
 Export runs only when the ledger date is newer than `v2-data/pipeline-state.json`.
 An Excel failure is written to `v2-data/pipeline.log` and does not fail the capture.
 
-Until deploy, the old 08:10 and 08:12 tasks still update those files. After
-`install-v2-daily-capture.ps1` is run again, disable those two tasks. Do not delete them.
+The old 08:10 and 08:12 tasks and their v1 scripts were removed in 1.0.2; the
+16-column file is written by this checkout's own `pionex-grid-daily.ps1`.
 
 Every export rebuilds ledger dates, including late settlement corrections. Withdrawn
 profit is already included in API gridProfit, closing paired increments appear once,
