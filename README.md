@@ -4,6 +4,10 @@ Read-only recorder for Pionex **contract grid** (futures grid) profits.
 
 This public repository contains **program files only**. Live Excel ledgers, SQLite databases, API keys, logs, and exports stay on the local machine.
 
+> **2026-11-03:** the v1 scripts (`pionex-grid-api.mjs`, `pionex-grid-daily.ps1` and its helpers) were removed.
+> The recorder, the 08:15 capture and both Excel exports run from branch `v2/sqlite-dashboard`
+> (see its README and CHANGELOG). This folder still holds the local key file and the Excel workbooks.
+
 ## Local paths
 
 - Excel (Windows 08:12 task): `D:\My-project\pionex grid record`
