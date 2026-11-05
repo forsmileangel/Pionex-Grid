@@ -398,9 +398,10 @@ def _classify_event(status: str, prev, grid_i, inv_i, withdrawn_i, reinvest_i, r
     lifetime is running true profit from our snapshots, not Pionex lifetime stocks.
     """
     if status in ("baseline", "new") or prev is None:
-        # A bot opened inside this interval earned all of its grid profit here. Baseline
-        # bots and bots first seen late carry profit from before the ledger, so they add 0.
-        daily = _nz(grid_i) if status == "new" and first_day else 0
+        # A bot opened inside this interval earned all of its grid profit here (first_day:
+        # new, or opened and closed between two captures). Baseline bots and bots first seen
+        # late carry profit from before the ledger, so they add 0.
+        daily = _nz(grid_i) if first_day else 0
         return status, daily, _nz(grid_i)
     prev_grid = _rowget(prev, "grid_profit_i")
     prev_inv = _rowget(prev, "investment_i")
@@ -572,7 +573,8 @@ def rebuild_daily_profits(con: sqlite3.Connection, since: str | None = None) -> 
                 class_grid = _mul_fixed(coin_i, px_i) if coin_i is not None and px_i else grid_i
                 class_prev = _prev_revalued(prev, px_i) if coin_i is not None else prev
                 created = (snap["created_at"] if snap is not None else None) or opened.get(oid)
-                first_day = status == "new" and _opened_since(created, prev_captured)
+                # A closing row with nothing before it is a bot opened and closed between captures.
+                first_day = (status == "new" or (status == "closed" and prev is None)) and _opened_since(created, prev_captured)
                 event, daily_i, life_i = _classify_event(
                     status, class_prev, class_grid, inv_i, withdrawn_i, reinvest_i, reduce_i,
                     override=overrides.get((date, oid)), first_day=first_day,
@@ -1060,6 +1062,47 @@ def vanished_positions(snapshot: dict, db_path: Path | None = None) -> list[str]
     return [oid for oid in active if oid not in listed]
 
 
+def record_unseen_closures(con: sqlite3.Connection, records: list[dict]) -> list[str]:
+    """Bots opened and closed between two captures are never seen running, so the daily loop
+    skips them. Give each one a closing row on the capture whose interval holds both its open
+    and its close; the settlement then fills in its final grid profit, all of which belongs to
+    that day. Found later (say, after a deploy), it still lands on the original day. Returns
+    the dates that gained a row."""
+    runs = list(con.execute("SELECT id, capture_date, captured_at, gap_days FROM capture_runs "
+                            "WHERE status='success' ORDER BY capture_date, id"))
+    seen = {row["bu_order_id"] for row in con.execute("SELECT DISTINCT bu_order_id FROM daily_grid_profit")}
+    dates = []
+    for rec in records:
+        oid = str(rec.get("ApiOrderId") or "")
+        if rec.get("ListStatus") != "finished" or not oid or oid in seen:
+            continue
+        try:
+            opened = taipei_now(str(rec.get("Created")).replace(" ", "T"))
+            closed = taipei_now(str(rec.get("Closed")).replace(" ", "T"))
+        except (TypeError, ValueError):
+            continue
+        # Opened before the first capture: it was closed before the ledger began.
+        run = next((r for p, r in zip(runs, runs[1:])
+                    if taipei_now(p["captured_at"]) < opened and closed <= taipei_now(r["captured_at"])), None)
+        if run is None:
+            continue
+        con.execute(
+            """INSERT INTO grid_positions(bu_order_id, symbol, created_at, closed_at, lifecycle, product)
+               VALUES (?,?,?,?,?,?)
+               ON CONFLICT(bu_order_id) DO UPDATE SET closed_at=excluded.closed_at, lifecycle=excluded.lifecycle""",
+            (oid, rec.get("Symbol"), rec.get("Created"), rec.get("Closed"), "closed_unresolved", rec.get("Product")),
+        )
+        con.execute(
+            """INSERT INTO daily_grid_profit(run_id, capture_date, bu_order_id, status, prev_grid_profit_i,
+                 withdrawn_i, reinvest_i, reduce_i, event, gap_days)
+               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            (run["id"], run["capture_date"], oid, "closed_unresolved", 0, 0, 0, 0, "closed_unresolved", run["gap_days"] or 0),
+        )
+        seen.add(oid)
+        dates.append(run["capture_date"])
+    return dates
+
+
 def ingest(snapshot: dict, db_path: Path | None = None, replace_date: bool = False, full_rebuild: bool = True) -> dict:
     """Write one capture. full_rebuild recomputes every date afterwards, as the 08:15 capture does
     once a day; otherwise only this date and any earlier closing day a settlement changed."""
@@ -1271,6 +1314,7 @@ def ingest(snapshot: dict, db_path: Path | None = None, replace_date: bool = Fal
         )
         con.execute("UPDATE capture_runs SET status='success' WHERE id=?", (run_id,))
         from .settlements import observe, apply_to_daily
+        record_unseen_closures(con, finished)
         observe(con, snapshot)
         apply_to_daily(con, changed_since=capture_date, full=full_rebuild)
         record_corrections(con, summary_before, "每日擷取：關倉資料回補", skip_dates=(capture_date,))

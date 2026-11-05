@@ -39,6 +39,8 @@ def funding_by_day(con) -> tuple[dict, dict]:
     """
     status = {(r["capture_date"], r["bu_order_id"]): r["status"]
               for r in con.execute("SELECT capture_date, bu_order_id, status FROM daily_grid_profit")}
+    first = {r["bu_order_id"]: r["day"] for r in con.execute(
+        "SELECT bu_order_id, MIN(capture_date) AS day FROM daily_grid_profit GROUP BY bu_order_id")}
     rows: dict = {}
     totals: dict = {}
     last: dict = {}
@@ -53,9 +55,11 @@ def funding_by_day(con) -> tuple[dict, dict]:
         coin = Decimal(cum) / Decimal(price) if price else None
         prev = last.get(oid)
         if prev is None:
-            # A grid opened since the last capture starts from 0; the ledger's first day has no
-            # earlier snapshot, so that day's funding is unknown.
-            delta = cum if status.get((day, oid)) == "new" else None
+            # A grid opened since the last capture starts from 0, and so does one whose first
+            # row is its closing row (opened and closed between captures); the ledger's first
+            # day has no earlier snapshot, so that day's funding is unknown.
+            unseen = status.get((day, oid)) == "closed" and first.get(oid) == day
+            delta = cum if status.get((day, oid)) == "new" or unseen else None
             span = None
         else:
             if coin is not None and prev["coin"] is not None:

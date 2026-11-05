@@ -101,12 +101,14 @@ def _auto_rate(order, data):
     return Decimal(1) / price if base.startswith('USDT') else price
 
 
-def _wallet_net(data, manual, currency):
+def _wallet_net(data, manual, currency, liquidated=False):
     """Net result in the settlement currency: what came back to the wallet minus own money in.
 
     Reinvested profit is already inside the returned amount, so it is removed from
     quoteInvestment instead of being counted again. Bonus (trial) principal is not
-    the user's money: only the unlocked amount counts.
+    the user's money: only the unlocked amount counts. A liquidation that returned nothing
+    can lose no more than the margin: Pionex's realized figures may show more, and the
+    platform bears that part, so the wallet amount stands.
     """
     received = _num(data.get('unlockQuoteAmount'))
     if received is None:
@@ -137,10 +139,14 @@ def _wallet_net(data, manual, currency):
     base = (invested or Decimal(0)) + extra
     floor = Decimal('0.05') if currency == 'USDT' else Decimal('0.00002')
     tolerance = max(base * Decimal('0.001'), floor)
+    check_ok = None if diff is None else abs(diff) <= tolerance
+    absorbed = None
+    if liquidated and not check_ok and received is not None and received <= floor and diff is not None and diff > 0:
+        absorbed, check_ok = diff, True
     return dict(received=received, withdrawn=withdrawn, own=own, own_source=own_source,
                 investment=None if invested is None else invested + extra,
                 reinvest=reinvest, bonus=bonus, net=net, check=check, diff=diff,
-                check_ok=None if diff is None else abs(diff) <= tolerance)
+                check_ok=check_ok, absorbed=absorbed)
 
 
 def _facts(row, pos):
@@ -163,7 +169,8 @@ def _facts(row, pos):
     realized = rec.get('RawRealizedProfit')
     if realized is None:
         realized = data.get('totalRealizedProfit')
-    wallet = _wallet_net(data, manual, currency)
+    reason = str(data.get('reasonBy') or rec.get('ReasonBy') or '')
+    wallet = _wallet_net(data, manual, currency, liquidated='liquidat' in reason.lower())
     if 'net_profit' in manual:
         net, net_method = manual['net_profit'], 'manual'
     elif wallet['net'] is not None:
@@ -245,7 +252,11 @@ def _apply_one(con, row, pos, facts, target):
         AND status IN ('baseline','new','continue') ORDER BY capture_date DESC LIMIT 1""",
         (row['bu_order_id'], target['capture_date'])).fetchone()
     if not prev:
-        return
+        if con.execute('SELECT 1 FROM daily_grid_profit WHERE bu_order_id=? AND capture_date<? LIMIT 1',
+                       (row['bu_order_id'], target['capture_date'])).fetchone():
+            return
+        # Opened and closed between two captures: it starts from nothing.
+        prev = {'grid_profit_i': 0, 'investment_i': None, 'withdrawn_i': 0, 'reinvest_i': 0, 'reduce_i': 0}
     rec = facts['rec']
     grid_i = store.to_fixed(facts['grid_profit_usdt'])
     inv_i = store.to_fixed(rec.get('Investment'))
@@ -352,6 +363,7 @@ def _wallet_fields(f, pos):
         'net_check': _text(w['check']),
         'net_check_diff': _text(w['diff']),
         'net_check_ok': w['check_ok'],
+        'liquidation_absorbed': _text(w['absorbed']),
         # A confirmed own-money amount or a manual net closes the review, even if Pionex's realized figure differs.
         'needs_review': w['check_ok'] is False and f['net_method'] != 'manual' and w['own_source'] != 'manual',
         'roi_pct': roi,
@@ -384,6 +396,7 @@ def refresh(snapshot, db_path=None):
     con = store.connect(db_path)
     try:
         before = store.summary_values(con)
+        store.record_unseen_closures(con, snapshot.get('Records', []))
         observe(con, snapshot)
         apply_to_daily(con, full=False)
         store.record_corrections(con, before, '補抓關倉資料')

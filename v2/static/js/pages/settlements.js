@@ -6,7 +6,8 @@ import { isCurrent } from "../router.js";
 
 let settlementData = null;
 let settlementEditId = "";
-const CLOSE_REASON = { profit_stop: "止盈", loss_stop: "止損", user_cancel: "手動關倉", liquidation: "強平", liquidate: "強平", expired: "到期" };
+const CLOSE_REASON = { profit_stop: "止盈", loss_stop: "止損", user_cancel: "手動關倉", liquidation: "強平", liquidate: "強平",
+  force_liquidation: "強平", expired: "到期" };
 const AUDIT_LABELS = { closed_at: "關倉時間", grid_profit: "最終配對", lifetime_grid_profit: "完整配對", net_profit: "淨損益",
   own_cash_in: "自己投入", funding_fee: "資金費", fee: "手續費", settlement_usdt_rate: "換算價", note: "備註" };
 const reasonLabel = (r) => r ? (CLOSE_REASON[r] || r) : "—";
@@ -25,6 +26,7 @@ function settlementState(r) {
   if (r.net_method === "manual") return `<span class="badge">人工補登</span>`;
   if (r.needs_review) return `<span class="badge warn">需核對 · 兩法差 ${amtP(Math.abs(Number(r.net_check_diff)), r.currency)}</span>`;
   if (r.own_cash_in_source === "manual") return `<span class="badge ok">投入已人工確認</span>`;
+  if (r.liquidation_absorbed) return `<span class="badge ok" title="強制平倉賠光保證金，超出的部分由平台承擔">自動確認 · 穿倉 ${amtP(r.liquidation_absorbed, r.currency)}</span>`;
   if (r.net_check_ok) return `<span class="badge ok">自動確認 · 兩法一致</span>`;
   return `<span class="badge ok">自動確認</span>`;
 }
@@ -197,7 +199,7 @@ function settlementForm(row) {
     <div class="formula">
       實際拿回 <b>${amtP(row.received, cur)}</b> ＋ 期間已提領 <b>${amtP(row.withdrawn_total, cur)}</b> − 自己投入 <b>${amtP(row.own_cash_in, cur)}</b>
       ＝ 淨損益 <b class="${cls(row.net_profit)}">${amtS(row.net_profit, cur)}</b> ${esc(cur)}${row.net_method === "manual" ? "（目前採用人工填寫的淨損益）" : ""}
-      <br><span class="muted">交叉核對：派網已實現損益＋手續費＋資金費${row.bonus ? "−體驗金分潤（虧損由體驗金承擔）" : ""}＝${amtS(row.net_check, cur)}；${row.net_check_diff == null ? "資料不足，無法比對" : row.net_check_ok ? "兩法一致" : row.needs_review ? `<span class="warn">相差 ${amtS(row.net_check_diff, cur)}，請確認自己投入的金額</span>` : `相差 ${amtS(row.net_check_diff, cur)}，已採用人工確認的投入金額`}</span>
+      <br><span class="muted">交叉核對：派網已實現損益＋手續費＋資金費${row.bonus ? "−體驗金分潤（虧損由體驗金承擔）" : ""}＝${amtS(row.net_check, cur)}；${row.net_check_diff == null ? "資料不足，無法比對" : row.liquidation_absorbed ? `強制平倉賠光保證金，超出的 ${amtP(row.liquidation_absorbed, cur)} 由平台承擔，以實際拿回為準` : row.net_check_ok ? "兩法一致" : row.needs_review ? `<span class="warn">相差 ${amtS(row.net_check_diff, cur)}，請確認自己投入的金額</span>` : `相差 ${amtS(row.net_check_diff, cur)}，已採用人工確認的投入金額`}</span>
       ${Number(row.reinvest_total) ? `<br><span class="muted">期間複投 ${amtP(row.reinvest_total, cur)} 已包含在拿回的金額裡，所以從投入扣除，不重複計算。</span>` : ""}
       ${coin ? `<br><span class="muted">換算價 ${row.settlement_usdt_rate ? n(row.settlement_usdt_rate, 2) + " USDT／" + esc(cur) : "—"}（${rateSource}）${row.net_profit_usdt != null ? `，淨損益約 ${signed(row.net_profit_usdt)} USDT` : ""}</span>` : ""}
     </div>
