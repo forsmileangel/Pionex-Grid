@@ -1,16 +1,13 @@
 import { state } from "../state.js";
 
-import { app, cls, esc, fmtTaipei, get, n, postJson, publishText, showFlash, signed, tip } from "../common.js";
+import { app, cls, esc, fmtTaipei, get, n, postJson, publishText, reasonLabel, showFlash, signed, tip } from "../common.js";
 
 import { isCurrent } from "../router.js";
 
 let settlementData = null;
 let settlementEditId = "";
-const CLOSE_REASON = { profit_stop: "止盈", loss_stop: "止損", user_cancel: "手動關倉", liquidation: "強平", liquidate: "強平",
-  force_liquidation: "強平", expired: "到期" };
 const AUDIT_LABELS = { closed_at: "關倉時間", grid_profit: "最終配對", lifetime_grid_profit: "完整配對", net_profit: "淨損益",
   own_cash_in: "自己投入", funding_fee: "資金費", fee: "手續費", settlement_usdt_rate: "換算價", note: "備註" };
-const reasonLabel = (r) => r ? (CLOSE_REASON[r] || r) : "—";
 const curDigits = (cur) => (cur || "USDT") === "USDT" ? 2 : 6;
 const amtS = (v, cur) => v == null || v === "" ? "—" : signed(v, curDigits(cur));
 const amtP = (v, cur) => v == null || v === "" ? "—" : n(v, curDigits(cur));

@@ -174,6 +174,13 @@ class LiquidationTests(Ledger):
         self.assertFalse(row["needs_review"])
         self.assertEqual(self.day("2026-09-19")["daily_profit_i"], store.to_fixed(4))
         self.assertEqual(store.status_payload(self.db)["settlement_check_flags"], 0)
+        for page in (store.days_payload(self.db), funding.funding_payload(self.db)):
+            closed = page["closures"]
+            self.assertEqual(closed["days"]["2026-09-19"]["net"]["usdt"], "-3000")
+            self.assertEqual(closed["days"]["2026-09-19"]["items"][0]["reason"], "force_liquidation")
+            self.assertEqual((closed["months"]["2026-09"]["count"], closed["recent"]["count"]), (1, 1))
+            self.assertIn("twd", closed["recent"]["net"])
+        self.assertEqual(store.days_payload(self.db)["averages"]["recent"]["daily_profit"]["total"]["usdt"], "4")
 
     def test_the_same_gap_without_a_liquidation_is_still_flagged(self):
         row = self.closed(reasonBy="user_cancel")

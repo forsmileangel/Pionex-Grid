@@ -1,4 +1,4 @@
-import { app, avgStat, bindHistoryClicks, bothSigned, cls, dayRange, esc, eventLabel, get, moneyNum, n, signed, skippedNote, tip, usdt } from "../common.js";
+import { app, avgStat, bindHistoryClicks, bothSigned, closureCell, closureLine, closureNote, cls, dayRange, esc, eventLabel, get, moneyNum, n, signed, skippedNote, tip, usdt } from "../common.js";
 
 import { isCurrent } from "../router.js";
 
@@ -47,6 +47,8 @@ function fundCalendar(days) {
   };
   const line = (label, value, klass = "", opt = false) =>
     `<span class="cal-amt${opt ? " opt" : ""}"><span>${label}</span><b class="${klass}">${value}</b></span>`;
+  const closures = fundingData.closures || {};
+  const closedOn = closures.days || {};
   let cells = ["日", "一", "二", "三", "四", "五", "六"].map((w) => `<div class="cal-dow">${w}</div>`).join("");
   for (let i = 0; i < startPad; i++) cells += `<div class="cal-cell is-pad"></div>`;
   for (let day = 1; day <= dim; day++) {
@@ -61,6 +63,7 @@ function fundCalendar(days) {
       + line("配對/單日", `${n(moneyNum(d.running_grid), 0)} / ${signed(grid)}`, "", true)
       + line("資金費", fund == null ? "—" : signed(fund), cls(fund))
       + line("淨利", net == null ? "—" : signed(net), cls(net) + " net")
+      + (closedOn[date] ? line("關倉", ...closureCell(closedOn[date])) : "")
       + `</button>`;
   }
   const averages = fundingData.averages || {};
@@ -77,6 +80,7 @@ function fundCalendar(days) {
       </div>
       ${fundAverages(mon, averages.recent)}
       <p class="cal-sum">${sum}</p>
+      ${closureLine((closures.months || {})[prefix.slice(0, 7)], closures.recent)}
       <div class="cal">${cells}</div>
       <div class="legend">
         <span><b>錢包</b> 08:15 派網錢包總值（USDT）</span>
@@ -159,6 +163,7 @@ function paintFunding() {
         <label class="note">日期 <select id="fundDate">${days.filter((d) => byDate[d.date]).map((d) =>
           `<option value="${esc(d.date)}"${d.date === fundSelected ? " selected" : ""}>${esc(d.date)}</option>`).join("")}</select></label></div>
       <p class="note">當天配對 <b class="${cls(moneyNum(sel.grid_profit))}">${signed(moneyNum(sel.grid_profit))}</b> U · 資金費 <b class="${cls(moneyNum(sel.funding))}">${signed(moneyNum(sel.funding))}</b> U · 淨利 <b class="${cls(moneyNum(sel.net))}">${signed(moneyNum(sel.net))}</b> U · 資金費年化 ${pctText(sel.annual_pct)}${sel.span_days > 1 ? ` · 資金費含前 ${sel.span_days - 1} 天沒記到的部分` : ""}${moneyNum(sel.funding) == null ? " · 這天沒有可比較的前一筆資金費" : ""}</p>
+      ${closureNote(((data.closures || {}).days || {})[fundSelected])}
       <table class="plain"><thead><tr><th>標的</th><th>事件</th><th>倉位</th><th>當日配對</th>
         <th>${tip("當日資金費", FUND_TIP)}</th><th>${tip("淨利", NET_TIP)}</th>
         <th>${tip("資金費／配對", "當日資金費 ÷ 當日配對利潤；配對為 0 或負時不算。")}</th>

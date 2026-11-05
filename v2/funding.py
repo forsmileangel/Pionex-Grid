@@ -10,9 +10,9 @@ from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
 
-from .averages import averages_view, profit_averages
+from .averages import averages_view, closure_totals, profit_averages
 from .fx import attach_twd, usdt_twd
-from .store import _equivalent_by_run, _fx_view, connect, equivalent_i, money, to_fixed
+from .store import _equivalent_by_run, _fx_view, closure_entries, connect, equivalent_i, money, to_fixed
 
 COIN_PRODUCT = "coin_margined_contract_grid"
 
@@ -97,6 +97,7 @@ def funding_payload(db_path: Path | None = None) -> dict:
         detail = list(con.execute(
             """SELECT capture_date, bu_order_id, status, event, daily_profit_i, investment_i, lifetime_i
                FROM daily_grid_profit ORDER BY capture_date, id"""))
+        closures = closure_entries(con)
     finally:
         con.close()
 
@@ -207,5 +208,6 @@ def funding_payload(db_path: Path | None = None) -> dict:
         "rows_by_date": rows_by_date,
         "grids": grids,
         "averages": averages,
+        "closures": closure_totals(closures, summaries[-1]["capture_date"] if summaries else None, m),
         "fx": _fx_view(usdt_twd()),
     }

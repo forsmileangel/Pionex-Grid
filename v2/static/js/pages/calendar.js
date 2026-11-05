@@ -1,6 +1,6 @@
 import { state } from "../state.js";
 
-import { app, avgStat, bindHistoryClicks, both, bothSigned, cls, dayRange, esc, eventCell, get, moneyNum, n, postJson, publishText, showFlash, signed, skippedNote, tip, usdt } from "../common.js";
+import { app, avgStat, bindHistoryClicks, both, bothSigned, closureCell, closureLine, closureNote, cls, dayRange, esc, eventCell, get, moneyNum, n, postJson, publishText, showFlash, signed, skippedNote, tip, usdt } from "../common.js";
 
 import { isCurrent } from "../router.js";
 
@@ -75,6 +75,8 @@ function paintCalendar() {
     const a = (0.05 + 0.3 * Math.min(1, Math.abs(v) / heatMax)).toFixed(3);
     return ` style="--cell-bg:rgba(var(${v > 0 ? "--heat-pos" : "--heat-neg"}),${a})"`;
   };
+  const closures = (calendarData && calendarData.closures) || {};
+  const closedOn = closures.days || {};
   let cells = dows.map((d) => `<div class="cal-dow">${d}</div>`).join("");
   for (let i = 0; i < startPad; i++) cells += `<div class="cal-cell is-pad"></div>`;
   for (let d = 1; d <= dim; d++) {
@@ -86,7 +88,9 @@ function paintCalendar() {
       const cumV = rec.cumulative && rec.cumulative.usdt;
       cells += `<button type="button" class="cal-cell${sel}" data-date="${dateStr}"${cellHeat(rec)}><span class="cal-num">${d}</span>`
         + `<span class="cal-amt"><span>單日</span><b class="${cls(dayV)}">${dayV == null || dayV === "" ? "—" : signed(dayV) + "U"}</b></span>`
-        + `<span class="cal-amt"><span>運行中</span><b>${cumV == null || cumV === "" ? "—" : n(cumV, 2) + "U"}</b></span></button>`;
+        + `<span class="cal-amt"><span>運行中</span><b>${cumV == null || cumV === "" ? "—" : n(cumV, 2) + "U"}</b></span>`
+        + (closedOn[dateStr] ? (([t, c]) => `<span class="cal-amt"><span>關倉</span><b class="${c}">${t}</b></span>`)(closureCell(closedOn[dateStr])) : "")
+        + `</button>`;
     } else {
       cells += `<div class="cal-cell is-empty${sel}"><span class="cal-num">${d}</span></div>`;
     }
@@ -115,6 +119,7 @@ function paintCalendar() {
         <button type="button" id="calNext" aria-label="下個月">›</button>
       </div>
       ${calAverages(monthAvg, averages.recent)}
+      ${closureLine((closures.months || {})[monthKey.slice(0, 7)], closures.recent)}
       <div class="card-head" style="margin-top:14px"><h3>${calLine === "running"
           ? tip("每日利潤與運行中配對利潤", "線只算當天還開著的倉（派網畫面上的網格利潤加總）。關倉、複投時會往下掉，不代表虧錢。點長條可切換到那一天。")
           : tip("每日利潤與歷史累計配對利潤", "已扣除關倉、複投、提領造成的跳動，只反映實際賺到的配對收益。點長條可切換到那一天。")}</h3>
@@ -141,6 +146,7 @@ function paintCalendar() {
     <div class="card">
       <h3>${esc(calSelected)} 明細</h3>
       ${Number(selected.unresolved_count) > 0 ? '<p class="warn">有關倉配對資料待補，單日與歷史合計為暫計，補齊後重算。</p>' : ''}
+      ${closureNote(closedOn[calSelected])}
       <table class="plain"><thead><tr><th>標的</th><th>${tip("事件", "續存＝照常；加倉＝只是本金變多、網格利潤沒被重置；複投＝網格利潤打進倉位後從接近 0 再算。對不上才會出現待確認。")}</th><th>倉位</th><th>單日利潤</th><th>當時網格利潤</th></tr></thead>
       <tbody>${rowHtml}</tbody></table>
     </div>`;

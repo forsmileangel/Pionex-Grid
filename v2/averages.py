@@ -69,3 +69,29 @@ def averages_view(result: dict, money_view) -> dict:
         "months": {key: bucket_view(bucket, money_view) for key, bucket in result["months"].items()},
         "recent": bucket_view(result["recent"], money_view),
     }
+
+
+def closure_totals(closures: list[dict], latest: str | None, money_view, recent_days: int = RECENT_DAYS) -> dict:
+    """關倉損益 per day, per month and over the same recent window as the averages.
+
+    closures: {"date" (the closing row's daily record), "id", "symbol", "reason", "net" (integer
+    units of USDT, None while the settlement is incomplete)}. Kept apart from the averages: a
+    closure's result is the money lost or won on the position, not grid profit.
+    """
+    since = (date.fromisoformat(latest) - timedelta(days=recent_days)).isoformat() if latest else None
+    blank = lambda: {"count": 0, "pending": 0, "net": 0}  # noqa: E731
+    days: dict[str, dict] = {}
+    months: dict[str, dict] = {}
+    recent = blank()
+    for c in sorted(closures, key=lambda c: (c["date"], c["symbol"] or "")):
+        day = days.setdefault(c["date"], {**blank(), "items": []})
+        day["items"].append({"id": c["id"], "symbol": c["symbol"], "reason": c["reason"], "net": money_view(c["net"])})
+        for bucket in [day, months.setdefault(c["date"][:7], blank())] + ([recent] if since and c["date"] > since else []):
+            bucket["count"] += 1
+            if c["net"] is None:
+                bucket["pending"] += 1
+            else:
+                bucket["net"] += c["net"]
+    view = lambda b: {**b, "net": money_view(b["net"]) if b["count"] > b["pending"] else None}  # noqa: E731
+    return {"days": {k: view(b) for k, b in days.items()}, "months": {k: view(b) for k, b in months.items()},
+            "recent": view(recent)}

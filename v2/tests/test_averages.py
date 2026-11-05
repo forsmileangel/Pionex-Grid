@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from v2 import store
-from v2.averages import average_i, profit_averages
+from v2.averages import average_i, closure_totals, profit_averages
 from v2.funding import funding_payload
 from v2.tests.test_store import FX, rec, snap
 
@@ -58,6 +58,33 @@ class ProfitAverageTests(unittest.TestCase):
         self.assertIsNone(average_i(0, 0))
         result = profit_averages([entry("2026-09-01", 0, baseline=True)], ("p",))
         self.assertEqual((result["recent"]["days"], result["months"]["2026-09"]["days"]), (0, 0))
+
+
+class ClosureTotalTests(unittest.TestCase):
+    def closures(self):
+        return [
+            {"date": "2026-10-01", "id": "a", "symbol": "ETH/USDT", "reason": "user_cancel", "net": 500},
+            {"date": "2026-10-20", "id": "b", "symbol": "SOL/USDT", "reason": "force_liquidation", "net": -3000},
+            {"date": "2026-10-20", "id": "c", "symbol": "ADA/USDT", "reason": "loss_stop", "net": None},
+            {"date": "2026-09-15", "id": "d", "symbol": "BTC/USDT", "reason": "profit_stop", "net": 70},
+        ]
+
+    def test_days_months_and_the_recent_window(self):
+        out = closure_totals(self.closures(), "2026-10-29", lambda v: v)
+        self.assertEqual(out["days"]["2026-10-20"]["count"], 2)
+        self.assertEqual(out["days"]["2026-10-20"]["pending"], 1)
+        self.assertEqual(out["days"]["2026-10-20"]["net"], -3000)
+        self.assertEqual([i["id"] for i in out["days"]["2026-10-20"]["items"]], ["c", "b"])
+        self.assertEqual((out["months"]["2026-10"]["count"], out["months"]["2026-10"]["net"]), (3, -2500))
+        self.assertEqual(out["months"]["2026-09"]["net"], 70)
+        # 30 days back from 10/29 starts after 09/29: 10/01 and 10/20 count, 09/15 does not.
+        self.assertEqual((out["recent"]["count"], out["recent"]["net"]), (3, -2500))
+
+    def test_only_pending_closures_have_no_amount(self):
+        out = closure_totals([self.closures()[2]], "2026-10-29", lambda v: v)
+        self.assertIsNone(out["months"]["2026-10"]["net"])
+        self.assertEqual(out["months"]["2026-10"]["pending"], 1)
+        self.assertEqual(closure_totals([], None, lambda v: v)["recent"], {"count": 0, "pending": 0, "net": None})
 
 
 class PayloadAverageTests(unittest.TestCase):

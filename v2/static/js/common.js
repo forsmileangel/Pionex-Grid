@@ -42,6 +42,30 @@ export function avgStat(label, note, value, sub) {
 }
 export const dayRange = (b) => (b && b.from ? `${b.from.slice(5).replace("-", "/")}–${b.to.slice(5).replace("-", "/")}` : "");
 export const skippedNote = (b) => (b && b.skipped ? ` · ${b.skipped} 天待補未計` : "");
+// 關倉損益＝關倉紀錄頁的最終淨損益，記在關倉後第一筆每日紀錄那天；不算進配對和平均。月曆和資金費頁共用。
+const CLOSE_REASON = { profit_stop: "止盈", loss_stop: "止損", user_cancel: "手動關倉", liquidation: "強平", liquidate: "強平",
+  force_liquidation: "強平", expired: "到期" };
+export const reasonLabel = (r) => r ? (CLOSE_REASON[r] || r) : "—";
+const CLOSE_TIP = "關倉時錢包實際拿回的錢＋期間提領－自己投入，和關倉紀錄頁的「最終淨損益」是同一個數字；記在關倉後的第一筆每日紀錄那天。強平賠掉的本金算在這裡。不算進配對、淨利、平均和每日利潤，也不影響 Portfolio。";
+const closeSum = (c) => {
+  const v = c.net ? moneyNum(c.net) : null;
+  return `${v == null ? "待確認" : `<b class="${cls(v)}">${signed(v)}</b> U`}（${c.count} 筆${c.pending ? `，${c.pending} 筆待確認` : ""}）`;
+};
+export function closureLine(month, recent) {
+  const part = (c) => (c && c.count ? closeSum(c) : "沒有關倉");
+  return `<p class="cal-sum">${tip("關倉損益", CLOSE_TIP)}：本月 ${part(month)} · 近 30 天 ${part(recent)}</p>`;
+}
+// 格子裡的「關倉」一行：[文字, class]；大金額不帶小數，免得格子擠。
+export function closureCell(day) {
+  const v = day && day.net ? moneyNum(day.net) : null;
+  return v == null ? ["待確認", ""] : [signed(v, Math.abs(v) >= 100 ? 0 : 2) + "U", cls(v)];
+}
+export function closureNote(day) {
+  if (!day || !day.count) return "";
+  const items = day.items.map((i) => `${esc(i.symbol || "—")} ${esc(reasonLabel(i.reason))} `
+    + (i.net ? `<b class="${cls(moneyNum(i.net))}">${signed(moneyNum(i.net))}</b> U` : "待確認")).join(" · ");
+  return `<p class="note">當天${tip("關倉", CLOSE_TIP)}：${items}（<a href="#settlements">看關倉紀錄</a>）</p>`;
+}
 export const cls = (v) => { const x = Number(v); if (!Number.isFinite(x) || x === 0) return ""; return x > 0 ? "up" : "down"; };
 export function esc(s) {
   return String(s == null ? "" : s)

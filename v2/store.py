@@ -14,7 +14,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from .averages import averages_view, profit_averages
+from .averages import averages_view, closure_totals, profit_averages
 from .fx import attach_twd, attach_twd_tree, usdt_twd
 from .liq import normalize_liq
 
@@ -1875,11 +1875,20 @@ def days_payload(db_path: Path | None = None) -> dict:
                     "pending": bool(s["unresolved_count"]) or s["daily_profit_i"] is None,
                     "daily_profit": s["daily_profit_i"]}
                    for i, s in enumerate(reversed(summaries))]
-        averages = averages_view(profit_averages(entries, ("daily_profit",)),
-                                 lambda value: attach_twd(money(value), rate))
-        return {"days": days, "averages": averages, "fx": _fx_view(fx)}
+        money_view = lambda value: attach_twd(money(value), rate)  # noqa: E731
+        averages = averages_view(profit_averages(entries, ("daily_profit",)), money_view)
+        closures = closure_totals(closure_entries(con), summaries[0]["capture_date"] if summaries else None, money_view)
+        return {"days": days, "averages": averages, "closures": closures, "fx": _fx_view(fx)}
     finally:
         con.close()
+
+
+def closure_entries(con: sqlite3.Connection) -> list[dict]:
+    """Each settlement that has a closing row, with its wallet net in USDT (the 關倉紀錄 figure)."""
+    from .settlements import payload as settlement_payload
+    return [{"date": r["capture_date"], "id": r["id"], "symbol": r["symbol"], "reason": r.get("close_reason"),
+             "net": to_fixed(r["net_profit_usdt"]) if r.get("net_profit_usdt") is not None else None}
+            for r in settlement_payload(con)["rows"] if r.get("capture_date")]
 
 
 def sparkline_payload(days: int = 14, db_path: Path | None = None) -> dict:
