@@ -325,7 +325,16 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/v1/funding":
             from .funding import funding_payload
-            self._json(funding_payload(self.db_path))
+            rows = (parse_qs(parsed.query).get("rows") or ["1"])[0] != "0"
+            self._json(funding_payload(self.db_path, with_rows=rows))
+            return
+        if path.startswith("/api/v1/funding/"):
+            date = path[len("/api/v1/funding/"):]
+            if not DATE_RE.fullmatch(date):
+                self._json({"error": "bad date"}, 400)
+                return
+            from .funding import day_rows
+            self._json(day_rows(date, self.db_path))
             return
         if path == "/api/v1/range":
             from .range_stats import RangeError, payload as range_payload

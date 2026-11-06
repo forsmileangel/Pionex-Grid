@@ -31,7 +31,7 @@ export const bothSigned = (m) => {
   const extra = twd(m);
   return signed(m.usdt) + `<span class="unit">USDT</span>` + (extra ? `<span class="twd">${extra}</span>` : "");
 };
-// 月曆的「當月效率」「近 30 天日均」小卡，月曆和資金費頁共用。value 是日均的金額物件，sub 是小字。
+// 月曆的「當月效率」「近 30 天日均」小卡。value 是日均的金額物件，sub 是小字。
 export function avgStat(label, note, value, sub) {
   const v = moneyNum(value);
   const extra = v == null ? "" : twd(value);
@@ -42,7 +42,7 @@ export function avgStat(label, note, value, sub) {
 }
 export const dayRange = (b) => (b && b.from ? `${b.from.slice(5).replace("-", "/")}–${b.to.slice(5).replace("-", "/")}` : "");
 export const skippedNote = (b) => (b && b.skipped ? ` · ${b.skipped} 天待補未計` : "");
-// 關倉損益＝關倉紀錄頁的最終淨損益，記在關倉後第一筆每日紀錄那天；不算進配對和平均。月曆和資金費頁共用。
+// 關倉損益＝關倉紀錄頁的最終淨損益，記在關倉後第一筆每日紀錄那天；不算進配對和平均。
 const CLOSE_REASON = { profit_stop: "止盈", loss_stop: "止損", user_cancel: "手動關倉", liquidation: "強平", liquidate: "強平",
   force_liquidation: "強平", expired: "到期" };
 export const reasonLabel = (r) => r ? (CLOSE_REASON[r] || r) : "—";

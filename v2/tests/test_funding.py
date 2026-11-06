@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from v2.funding import funding_payload
+from v2.funding import day_rows, funding_payload
 from v2.store import ingest
 from v2.tests.test_store import FX, rec, snap
 
@@ -46,6 +46,20 @@ class FundingTests(unittest.TestCase):
         self.assertEqual(usdt(self.row(p, "2026-08-26")["net"]), 3)
         self.assertIsNone(usdt(self.day(p, "2026-08-25")["net"]))
         self.assertEqual(usdt(day2["total"]), -13)
+
+    def test_the_calendar_loads_days_without_rows_and_one_day_at_a_time(self):
+        ingest(snap("2026-08-25", [rec(GridProfit=10, FundingFee=-10)]), self.db)
+        ingest(snap("2026-08-26", [rec(GridProfit=16, FundingFee=-13)]), self.db)
+        slim = funding_payload(self.db, with_rows=False)
+        self.assertNotIn("rows_by_date", slim)
+        self.assertEqual(usdt(self.day(slim, "2026-08-26")["net"]), 3)
+        self.assertEqual(len(slim["grids"]), 1)
+        one = day_rows("2026-08-26", self.db)["rows"][0]
+        self.assertEqual((one["bu_order_id"], one["event"]), ("g1", "continue"))
+        self.assertEqual([usdt(one[k]) for k in ("daily_profit", "funding_day", "net", "funding_cum")], [6, -3, 3, -13])
+        self.assertEqual(one["pct_of_grid"], -50.0)
+        self.assertIn("twd", one["funding_day"])
+        self.assertEqual(day_rows("2026-01-01", self.db)["rows"], [])
 
     def test_new_grid_counts_its_funding_since_creation(self):
         ingest(snap("2026-08-25", [rec(GridProfit=10, FundingFee=-10)]), self.db)

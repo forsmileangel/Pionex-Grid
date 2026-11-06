@@ -2,14 +2,15 @@ import { state } from "./state.js";
 
 import { app, esc, clearFlash } from "./common.js";
 
-export const PAGES = ["live", "records", "daily", "calendar", "efficiency", "funding", "range", "levercmp", "history", "settlements", "status"];
+export const PAGES = ["live", "records", "daily", "calendar", "efficiency", "range", "levercmp", "history", "settlements", "status"];
+// 舊網址：資金費頁在 1.0.4 併進月曆。
+const ALIASES = { funding: "calendar" };
 export const PAGE_LABELS = {
   live: "目前倉位",
   records: "倉位紀錄",
   daily: "每日詳情",
   calendar: "月曆",
   efficiency: "效率走勢",
-  funding: "資金費",
   range: "區間統計",
   levercmp: "槓桿對照",
   settlements: "關倉紀錄",
@@ -24,7 +25,8 @@ export function parseHash() {
   } catch (_) {
     return { page: "", id: "" };
   }
-  const [name, ...rest] = raw.split("/");
+  const [given, ...rest] = raw.split("/");
+  const name = ALIASES[given] || given;
   return { page: PAGES.includes(name) ? name : "", id: rest.join("/") };
 }
 
@@ -79,7 +81,6 @@ export async function render() {
     else if (page === "daily") await renderers.daily(seq);
     else if (page === "calendar") await renderers.calendar(seq);
     else if (page === "efficiency") await renderers.efficiency(seq);
-    else if (page === "funding") await renderers.funding(seq);
     else if (page === "range") await renderers.range(seq);
     else if (page === "levercmp") await renderers.levercmp(seq);
     else if (page === "history") await renderers.history(seq);

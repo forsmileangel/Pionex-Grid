@@ -12,7 +12,7 @@ from pathlib import Path
 
 from .averages import averages_view, closure_totals, profit_averages
 from .fx import attach_twd, usdt_twd
-from .store import _equivalent_by_run, _fx_view, closure_entries, connect, equivalent_i, money, to_fixed
+from .store import _equivalent_by_run, _fx_view, closure_entries, connect, day_rows_payload, equivalent_i, money, to_fixed
 
 COIN_PRODUCT = "coin_margined_contract_grid"
 
@@ -85,7 +85,10 @@ def funding_by_date(rows: dict) -> dict:
     return by_date
 
 
-def funding_payload(db_path: Path | None = None) -> dict:
+def funding_payload(db_path: Path | None = None, with_rows: bool = True) -> dict:
+    """The calendar's data: each day's grid profit, funding and net, the averages, closures and each
+    position's funding. with_rows adds every day's position rows (large; the calendar loads one day
+    at a time with day_rows instead)."""
     con = connect(db_path)
     try:
         rows, totals = funding_by_day(con)
@@ -142,6 +145,10 @@ def funding_payload(db_path: Path | None = None) -> dict:
     rows_by_date: dict[str, list] = {}
     latest_lifetime: dict[str, int] = {}
     for d in detail:
+        if d["lifetime_i"] is not None:
+            latest_lifetime[d["bu_order_id"]] = d["lifetime_i"]
+        if not with_rows:
+            continue
         key = (d["capture_date"], d["bu_order_id"])
         f = rows.get(key) or {}
         pos = positions.get(d["bu_order_id"]) or {}
@@ -159,8 +166,6 @@ def funding_payload(db_path: Path | None = None) -> dict:
             "equivalent": m(f.get("equivalent_i")),
             "pct_of_grid": _ratio_pct(f.get("delta_i"), d["daily_profit_i"]),
         })
-        if d["lifetime_i"] is not None:
-            latest_lifetime[d["bu_order_id"]] = d["lifetime_i"]
 
     last_day = summaries[-1]["capture_date"] if summaries else None
     since = (date.fromisoformat(last_day) - timedelta(days=30)).isoformat() if last_day else ""
@@ -205,9 +210,30 @@ def funding_payload(db_path: Path | None = None) -> dict:
 
     return {
         "days": days[::-1],
-        "rows_by_date": rows_by_date,
+        **({"rows_by_date": rows_by_date} if with_rows else {}),
         "grids": grids,
         "averages": averages,
         "closures": closure_totals(closures, summaries[-1]["capture_date"] if summaries else None, m),
         "fx": _fx_view(usdt_twd()),
     }
+
+
+def day_rows(capture_date: str, db_path: Path | None = None) -> dict:
+    """One day's position rows for the calendar: the 每日詳情 rows (events, decisions, grid profit)
+    with that day's funding, its running total, the net and how much of the grid profit it took."""
+    data = day_rows_payload(capture_date, db_path)
+    con = connect(db_path)
+    try:
+        rows, _ = funding_by_day(con)
+    finally:
+        con.close()
+    rate = usdt_twd().get("usdt_twd")
+    m = lambda value: attach_twd(money(value), rate)  # noqa: E731
+    for r in data["rows"]:
+        f = rows.get((capture_date, r["bu_order_id"])) or {}
+        delta, grid = f.get("delta_i"), (r.get("daily_profit") or {}).get("int")
+        r["funding_day"] = m(delta)
+        r["funding_cum"] = m(f.get("cum_i"))
+        r["net"] = m(None if delta is None or grid is None else grid + delta)
+        r["pct_of_grid"] = _ratio_pct(delta, grid)
+    return data

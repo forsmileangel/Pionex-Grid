@@ -71,7 +71,7 @@ function paintLeverCompare() {
     ["資金費", "fundingFeePayment 的差額；沒資料當 0", "totalFundingFee 的差額（淨額，含收到的）；沒資料留空",
       `${diff}：fundingFeePayment 只算付出的。目前合計他 ${signed(t.funding_paid)}、淨額 ${signed(t.funding_net)}${fundGap
         ? `；差最多的是 ${esc(fundGap.symbol)}（${signed(fundGap.funding_paid)} 對 ${signed(fundGap.funding_net)}）` : ""}`],
-    ["單天淨利", "單天配對＋資金費", "資金費試做頁的淨利", "算法一樣，資金費來源不同（見上一列）"],
+    ["單天淨利", "單天配對＋資金費", "月曆的淨利", "算法一樣，資金費來源不同（見上一列）"],
     ["當前利潤／淨利", "保證金權益推算，再加回已轉入本金的獲利", "總損益＝趨勢盈虧＋網格利潤", `${diff}：是另一套算法`],
     ["當前利潤%／淨利%", "÷ 他的等效倉位", "沒有；年化用你的等效倉位", "分母不同"],
     ["配對效率（%/年）", "累積網格 ÷ 他的等效倉位 ÷ 天數 × 365", "網格年化＝網格利潤 ÷ 你的等效倉位 ÷ 天數 × 365",
