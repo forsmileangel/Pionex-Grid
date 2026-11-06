@@ -327,6 +327,16 @@ class Handler(BaseHTTPRequestHandler):
             from .funding import funding_payload
             self._json(funding_payload(self.db_path))
             return
+        if path == "/api/v1/range":
+            from .range_stats import RangeError, payload as range_payload
+            qs = parse_qs(parsed.query)
+            arg = lambda key: (qs.get(key) or [""])[0]  # noqa: E731
+            try:
+                self._json(range_payload(arg("from"), arg("to"), [x for x in arg("exclude").split(",") if x],
+                                         self.db_path, self._intraday_path()))
+            except RangeError as exc:
+                self._json({"error": str(exc)}, 400)
+            return
         if path == "/api/v1/leverage-compare":
             from .levercompare import compare_payload
             self._json(compare_payload(self.db_path))

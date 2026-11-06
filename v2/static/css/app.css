@@ -246,6 +246,15 @@
     .cal-sum b { font-weight:650; }
     /* 月曆卡片裡的「當月效率」「近 30 天日均」：淺底、不加陰影，兩張並排，手機上下排。 */
     .cal-avg { margin:0 0 14px; }
+    .range-pick { display:flex; flex-wrap:wrap; gap:10px 14px; align-items:flex-end; }
+    .range-pick .field { margin:0; min-width:210px; }
+    .range-presets { display:flex; flex-wrap:wrap; margin-top:12px; }
+    label.check { display:inline-flex; align-items:center; gap:6px; cursor:pointer; }
+    tr.muted td { color:var(--muted); }
+    .range-table { overflow-x:auto; }
+    .range-table table { table-layout:auto; min-width:680px; }
+    .range-table td, .range-table th { white-space:nowrap; }
+    .range-table td.note { white-space:normal; min-width:160px; }
     .cal-avg .stat { grid-column:span 6; min-height:0; gap:4px; padding:12px 14px; background:var(--soft); box-shadow:none; }
     .cal-avg .stat strong { font-size:22px; }
     .cal-avg .stat .twd { white-space:normal; }

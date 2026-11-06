@@ -7,6 +7,7 @@ import { renderDaily } from "./pages/daily.js";
 import { renderCalendar } from "./pages/calendar.js";
 import { renderEfficiency } from "./pages/efficiency.js";
 import { renderFunding } from "./pages/funding.js";
+import { renderRange } from "./pages/range.js";
 import { renderLeverCompare } from "./pages/levercmp.js";
 import { renderHistory } from "./pages/history.js";
 import { renderSettlements } from "./pages/settlements.js";
@@ -19,6 +20,7 @@ setRenderers({
   calendar: renderCalendar,
   efficiency: renderEfficiency,
   funding: renderFunding,
+  range: renderRange,
   levercmp: renderLeverCompare,
   history: renderHistory,
   settlements: renderSettlements,

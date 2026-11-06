@@ -69,6 +69,8 @@ CREATE TABLE IF NOT EXISTS intraday_points (
   delta_i INTEGER,
   ref_kind TEXT,
   event TEXT,
+  funding_fee_i INTEGER,
+  funding_ts INTEGER,
   PRIMARY KEY (run_id, bu_order_id)
 );
 CREATE INDEX IF NOT EXISTS intraday_points_by_grid ON intraday_points(bu_order_id, captured_at);
@@ -99,7 +101,31 @@ def connect(db_path: Path | None = None) -> sqlite3.Connection:
     con.execute("PRAGMA busy_timeout = 30000")
     con.execute("PRAGMA journal_mode = WAL")
     con.executescript(SCHEMA)
+    _migrate(con)
     return con
+
+
+def _migrate(con: sqlite3.Connection) -> None:
+    """Points recorded before 1.0.4 have no funding columns; add them (empty) once."""
+    have = {row[1] for row in con.execute("PRAGMA table_info(intraday_points)")}
+    for column in ("funding_fee_i", "funding_ts"):
+        if column not in have:
+            con.execute(f"ALTER TABLE intraday_points ADD COLUMN {column} INTEGER")
+
+
+def funding_ts(raw) -> int | None:
+    """Pionex's lastFundingFeeTs (epoch seconds of the position's last funding settlement), from a
+    record's RawJson or a stored raw_json text."""
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except ValueError:
+            return None
+    data = ((raw or {}).get("order") or {}).get("buOrderData") or {} if isinstance(raw, dict) else {}
+    try:
+        return int(data["lastFundingFeeTs"]) if data.get("lastFundingFeeTs") else None
+    except (TypeError, ValueError):
+        return None
 
 
 def _ledger_con(ledger_db: Path | None) -> sqlite3.Connection | None:
@@ -230,13 +256,14 @@ def _record(snapshot: dict, source: str, db_path: Path, ledger_db: Path | None) 
             con.execute(
                 """INSERT INTO intraday_points(run_id, bu_order_id, captured_at, symbol, product, leverage, lev_x, trend,
                      created_at, investment_i, grid_profit_i, grid_profit_coin_i, conversion_price_i, withdrawn_i,
-                     reinvest_i, reduce_i, grid_profit_24h_i, delta_i, ref_kind, event)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                     reinvest_i, reduce_i, grid_profit_24h_i, delta_i, ref_kind, event, funding_fee_i, funding_ts)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     run_id, oid, at, rec.get("Symbol"), rec.get("Product"), leverage,
                     _leverage_value({"leverage": rec.get("Leverage")}), trend, rec.get("Created"),
                     inv_i, grid_i, coin_i, px_i, withdrawn_i, reinvest_i, reduce_i,
                     to_fixed(rec.get("GridProfit24h")), delta_i, ref_kind, event,
+                    to_fixed(rec.get("FundingFee")), funding_ts(rec.get("RawJson")),
                 ),
             )
         con.commit()

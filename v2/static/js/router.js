@@ -2,7 +2,7 @@ import { state } from "./state.js";
 
 import { app, esc, clearFlash } from "./common.js";
 
-export const PAGES = ["live", "records", "daily", "calendar", "efficiency", "funding", "levercmp", "history", "settlements", "status"];
+export const PAGES = ["live", "records", "daily", "calendar", "efficiency", "funding", "range", "levercmp", "history", "settlements", "status"];
 export const PAGE_LABELS = {
   live: "目前倉位",
   records: "倉位紀錄",
@@ -10,6 +10,7 @@ export const PAGE_LABELS = {
   calendar: "月曆",
   efficiency: "效率走勢",
   funding: "資金費",
+  range: "區間統計",
   levercmp: "槓桿對照",
   settlements: "關倉紀錄",
   status: "執行狀態",
@@ -79,6 +80,7 @@ export async function render() {
     else if (page === "calendar") await renderers.calendar(seq);
     else if (page === "efficiency") await renderers.efficiency(seq);
     else if (page === "funding") await renderers.funding(seq);
+    else if (page === "range") await renderers.range(seq);
     else if (page === "levercmp") await renderers.levercmp(seq);
     else if (page === "history") await renderers.history(seq);
     else if (page === "settlements") await renderers.settlements(seq);
