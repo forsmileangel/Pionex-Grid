@@ -9,6 +9,9 @@ from zoneinfo import ZoneInfo
 from v2.live import commit_live_to_daily, live_payload, save_live_snapshot, snapshot_to_board
 from v2.store import CaptureError, connect, ingest, to_fixed
 from v2.tests.test_store import FX, rec, snap
+from v2 import intraday
+from v2.range_stats import funding_between
+from v2.tests.test_range_stats import bot, snapshot
 
 TAIPEI = ZoneInfo("Asia/Taipei")
 
@@ -34,6 +37,12 @@ class LiveTests(unittest.TestCase):
         self.fx.start()
         self.store_fx = patch("v2.store.usdt_twd", return_value=FX)
         self.store_fx.start()
+        # Existing board tests must never read the local user's funding databases.
+        funding = patch("v2.live.funding_between", side_effect=lambda ids, start, end, ledger_db, intraday_db:
+                        funding_between(ids, start, end, ledger_db or self.db,
+                                        intraday_db or intraday.default_intraday_db(self.db)))
+        funding.start()
+        self.addCleanup(funding.stop)
 
     def tearDown(self):
         self.fx.stop()
@@ -59,6 +68,66 @@ class LiveTests(unittest.TestCase):
         board = snapshot_to_board(live_snap([rec(GridProfit=12.5, Investment=1000, ProfitReinvest=40)]))
         self.assertEqual(board["total_grid_profit"]["usdt"], "12.5")
         self.assertEqual(board["true_grid_profit"]["usdt"], "12.5")
+
+    def funding_snapshot(self):
+        idb = intraday.default_intraday_db(self.db)
+        first = snapshot("2026-09-18 12:00", [bot(funding=-1, settled="2026-09-18 08:00")])
+        last = snapshot("2026-09-19 12:00", [bot(funding=-4, settled="2026-09-19 08:00",
+                                               GridProfit24h=10, ExtraMargin=1000)])
+        for data in (first, last):
+            intraday.record_snapshot(data, "live", idb, self.db)
+        return last, idb
+
+    def test_live_funding_and_net_use_captured_time_and_equivalent_position(self):
+        data, idb = self.funding_snapshot()
+        save_live_snapshot(data, self.live)
+        board = live_payload(self.live, self.db, idb)
+        row = board["rows"][0]
+        self.assertEqual(row["funding_24h"]["usdt"], "-3")
+        self.assertEqual(row["funding_24h"]["twd"], "-94")
+        self.assertEqual(row["net_24h"]["usdt"], "7")
+        self.assertEqual(board["total_funding_24h"]["usdt"], "-3")
+        self.assertEqual(board["total_net_24h"]["usdt"], "7")
+        self.assertEqual(board["net_24h_pct"], 0.35)
+        self.assertEqual(board["funding_24h_missing"], 0)
+        self.assertEqual(board["total_profit_24h"]["usdt"], "10")
+
+    def test_live_partial_funding_does_not_present_a_partial_net_total(self):
+        data, idb = self.funding_snapshot()
+        data["Records"].append(bot("missing", GridProfit24h=5))
+        board = snapshot_to_board(data, self.db, idb)
+        self.assertIsNotNone(board["rows"][0]["funding_24h"])
+        self.assertIsNone(board["rows"][1]["funding_24h"])
+        self.assertIsNone(board["rows"][1]["net_24h"])
+        for key in ("total_funding_24h", "total_net_24h", "net_24h_pct"):
+            self.assertIsNone(board[key])
+        self.assertEqual(board["funding_24h_missing"], 1)
+        self.assertEqual(board["total_profit_24h"]["usdt"], "15")
+
+    def test_live_funding_errors_leave_the_board_available(self):
+        data = live_snap([rec(GridProfit24h=10)])
+        for error in (OSError("unavailable"), ValueError("bad observation")):
+            with self.subTest(error=type(error)), patch("v2.live.funding_between", side_effect=error):
+                board = snapshot_to_board(data, self.db)
+                self.assertTrue(board["available"])
+                self.assertEqual(board["total_profit_24h"]["usdt"], "10")
+                self.assertEqual(board["funding_24h_missing"], 1)
+                for key in ("total_funding_24h", "total_net_24h", "net_24h_pct"):
+                    self.assertIsNone(board[key])
+                self.assertIsNone(board["rows"][0]["funding_24h"])
+                self.assertIsNone(board["rows"][0]["net_24h"])
+
+    def test_live_bad_capture_time_and_missing_databases_are_optional(self):
+        for captured in (None, "invalid", "2026-08-26T12:00:00+08:00"):
+            with self.subTest(captured=captured):
+                data = live_snap([rec(GridProfit24h=10)])
+                data["CapturedAt"] = captured
+                board = snapshot_to_board(data, self.db)
+                self.assertTrue(board["available"])
+                self.assertIsNone(board["total_net_24h"])
+                self.assertIsNone(board["rows"][0]["funding_24h"])
+                self.assertEqual(board["funding_24h_missing"], 1)
+        self.assertFalse(self.db.exists())
 
     def test_inverse_contract_displays_coin_direction_without_flipping_pnl(self):
         from v2 import store

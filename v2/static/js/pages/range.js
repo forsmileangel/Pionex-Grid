@@ -26,13 +26,15 @@ function lastSettle(now = new Date()) {
 }
 
 function presets() {
-  const s = lastSettle();
+  const now = new Date();
+  const s = lastSettle(now);
   const hours = (d, h) => new Date(d.getTime() + h * 3600e3);
   const at8 = new Date(); at8.setHours(8, 0, 0, 0);
   if (at8 > new Date()) at8.setDate(at8.getDate() - 1);
   const night = new Date(at8); night.setDate(night.getDate() - 1); night.setHours(22, 30, 0, 0);
   return [
-    ["最近 24 小時（08:00–08:00）", hours(at8, -24), at8],
+    ["最近 24 小時（到現在）", hours(now, -24), now],
+    ["最近一個完整日（08:00–08:00）", hours(at8, -24), at8],
     ["昨晚 22:30–08:00", night, at8],
     ["最近一個結算段（8 小時）", hours(s, -8), s],
     ["前一個結算段", hours(s, -16), hours(s, -8)],

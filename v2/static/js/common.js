@@ -318,11 +318,18 @@ export function bindSortHeaders(sort, onChange) {
 }
 
 export function summaryCards(board, timeLabel, timeValue, gridTip, trueTip) {
-  const total = board.total_profit_24h && board.total_profit_24h.usdt;
-  const pct24 = board.profit_24h_pct;
+  const live = board.kind === "live";
+  const hasNet = moneyNum(board.total_net_24h) != null;
+  const amount = live && hasNet ? board.total_net_24h : board.total_profit_24h;
+  const total = moneyNum(amount);
+  const pct24 = live ? (hasNet ? board.net_24h_pct : null) : board.profit_24h_pct;
+  const grid = moneyNum(board.total_profit_24h), funding = moneyNum(board.total_funding_24h);
+  const share = grid > 0 && funding != null ? ` · ${fundShare(funding / grid * 100)}` : "";
+  const detail = live ? `<span class="twd">配對 ${signed(grid)} · 資金費 ${signed(funding)}${share}</span>`
+    + (hasNet ? "" : `<span class="twd">資金費資料不足${board.funding_24h_missing ? `（${board.funding_24h_missing} 倉）` : ""}，暫顯示配對利潤</span>`) : "";
   return `<div class="stats">
       <div class="stat wide"><span class="label">錢包總市值</span><strong>${board.wallet_total && board.wallet_total.usdt != null ? both(board.wallet_total) : "—"}</strong></div>
-      <div class="stat wide">${tip("過去 24 小時總利潤", "派網回傳的近 24 小時網格利潤加總，是從現在往回算的滾動 24 小時，所以和每日紀錄（08:15 到隔天 08:15）的單日利潤不會一樣；已關倉的倉位也不在裡面。下面的％＝這筆 ÷ 等效倉位，調槓桿不會讓它跳動。")}<strong class="${cls(total)}">${bothSigned(board.total_profit_24h)}${pct24 == null || pct24 === "" ? "" : `<span class="pct ${cls(pct24)}">${signed(pct24)}%</span>`}</strong></div>
+      <div class="stat wide">${tip(live ? "過去 24 小時淨利（含資金費）" : "過去 24 小時總利潤", live ? "以快照更新時間往回算的滾動 24 小時，淨利＝配對＋資金費。資金費依台北 00:00／08:00／16:00 結算時間歸屬，開始時間的結算不算、結束時間的算入；付出為負、收到為正。只含目前運行中的倉位。％＝淨利 ÷ 等效倉位。" : "派網回傳的近 24 小時網格利潤加總，是從現在往回算的滾動 24 小時，所以和每日紀錄（08:15 到隔天 08:15）的單日利潤不會一樣；已關倉的倉位也不在裡面。下面的％＝這筆 ÷ 等效倉位，調槓桿不會讓它跳動。")}<strong class="${cls(total)}">${bothSigned(amount)}${pct24 == null || pct24 === "" ? "" : `<span class="pct ${cls(pct24)}">${signed(pct24)}%</span>`}${detail}</strong></div>
       <div class="stat wide">${tip("等效倉位", "投入＋追加保證金。調高槓桿但把保證金留在原倉時，保證金只是從「投入」移到「追加保證金」，這個數字不變；加倉、減倉才會變。")}<strong>${both(board.total_equivalent || board.total_investment)}${board.leverage_equivalent ? `<span class="twd">等效槓桿 ${n(board.leverage_equivalent, 2)} 倍</span>` : ""}</strong></div>
       <div class="stat">${tip("倉位加總（派網顯示）", "各倉「投入」加總，就是派網畫面上的倉位。調高槓桿會讓它變小，和等效倉位的差距就是移到追加保證金的部分。")}<strong>${both(board.total_investment)}<span class="twd">${board.position_count || 0} 倉${board.leverage_nominal ? ` · 名目槓桿 ${n(board.leverage_nominal, 2)} 倍` : ""}</span></strong></div>
       <div class="stat">${tip("運行中配對利潤", gridTip)}<strong>${both(board.total_grid_profit)}</strong></div>

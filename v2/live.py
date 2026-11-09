@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from threading import Lock
 from zoneinfo import ZoneInfo
 
 from .fileio import atomic_write_text, file_lock
 from .fx import attach_twd, attach_twd_tree, usdt_twd
+from .range_stats import funding_between, parse_time
 from .store import (
     CaptureError,
     _board_row,
@@ -81,7 +82,7 @@ def record_to_snap(rec: dict) -> dict:
     }
 
 
-def snapshot_to_board(snapshot: dict) -> dict:
+def snapshot_to_board(snapshot: dict, ledger_db: Path | None = None, intraday_db: Path | None = None) -> dict:
     records = list(snapshot.get("Records") or [])
     running = [r for r in records if r.get("ListStatus", "running") == "running"]
     fx = usdt_twd()
@@ -106,6 +107,33 @@ def snapshot_to_board(snapshot: dict) -> dict:
     wallet = (snapshot.get("Wallet") or {}).get("totalInUsdt")
     rows = [attach_twd_tree(row, rate) for row in rows]
     totals = position_totals(snaps)
+    funding_fields = {"total_funding_24h": None, "total_net_24h": None,
+                      "net_24h_pct": None, "funding_24h_missing": len(rows)}
+    try:
+        end = parse_time(captured)
+        funding = funding_between([s["bu_order_id"] for s in snaps], end - timedelta(hours=24), end,
+                                  ledger_db, intraday_db)
+        values = []
+        for row, snap in zip(rows, snaps):
+            value = funding.get(snap["bu_order_id"], (None, None))[0]
+            profit = snap.get("grid_profit_24h_i")
+            net = None if value is None or profit is None else profit + value
+            row["funding_24h"] = None if value is None else attach_twd(money(value), rate)
+            row["net_24h"] = None if net is None else attach_twd(money(net), rate)
+            values.append(value)
+        missing = sum(v is None for v in values)
+        total_funding = None if missing else sum(values)
+        total_net = None if total_funding is None else total_24h + total_funding
+        funding_fields = {
+            "total_funding_24h": None if total_funding is None else attach_twd(money(total_funding), rate),
+            "total_net_24h": None if total_net is None else attach_twd(money(total_net), rate),
+            "net_24h_pct": _pct_value(total_net, totals["equivalent_i"] or total_investment),
+            "funding_24h_missing": missing,
+        }
+    except Exception:
+        # Funding is optional: an unavailable/corrupt database must not take down the live board.
+        for row in rows:
+            row["funding_24h"] = row["net_24h"] = None
     return {
         "available": True,
         "kind": "live",
@@ -114,6 +142,7 @@ def snapshot_to_board(snapshot: dict) -> dict:
         "window": "past_24h",
         "position_count": len(rows),
         "total_profit_24h": attach_twd(money(total_24h), rate),
+        **funding_fields,
         "total_investment": attach_twd(money(total_investment), rate),
         "total_equivalent": attach_twd(money(totals["equivalent_i"]), rate),
         "leverage_nominal": totals["leverage_nominal"],
@@ -128,7 +157,7 @@ def snapshot_to_board(snapshot: dict) -> dict:
     }
 
 
-def live_payload(path: Path | None = None) -> dict:
+def live_payload(path: Path | None = None, ledger_db: Path | None = None, intraday_db: Path | None = None) -> dict:
     snapshot = load_live_snapshot(path)
     if snapshot is None:
         fx = usdt_twd()
@@ -140,7 +169,7 @@ def live_payload(path: Path | None = None) -> dict:
             "position_count": 0,
             "fx": _fx_view(fx),
         }
-    return snapshot_to_board(snapshot)
+    return snapshot_to_board(snapshot, ledger_db, intraday_db)
 
 
 def commit_live_to_daily(confirm_date: str, db_path: Path, live_file: Path | None = None) -> dict:
