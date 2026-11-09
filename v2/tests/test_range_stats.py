@@ -116,6 +116,20 @@ class RangeTests(unittest.TestCase):
         self.assertIn("09/19 00:00", note)
         self.assertIn("還沒入帳", note)
 
+    def test_a_range_ending_now_leaves_an_unposted_settlement_out_and_says_so(self):
+        self.point("2026-09-18 12:00", [bot(grid=100, funding=-1, settled="2026-09-18 08:00")])
+        self.point("2026-09-18 23:50", [bot(grid=105, funding=-2, settled="2026-09-18 16:00")])
+        self.point("2026-09-19 00:05", [bot(grid=106, funding=-2, settled="2026-09-18 16:00")])
+        out = self.stats("2026-09-18 12:00", "2026-09-19 00:10")      # past the latest capture: "now"
+        row = out["rows"][0]
+        self.assertEqual((row["funding_i"], row["funding_missing"], row["funding_pending"]),
+                         (store.to_fixed(-1), None, True))
+        self.assertTrue(any("09/19 00:00" in n for n in row["notes"]))
+        self.assertEqual((out["totals"]["funding_missing"], out["totals"]["funding_pending"]), (0, 1))
+        older = self.stats("2026-09-18 12:00", "2026-09-19 00:02")["rows"][0]   # ends before the latest capture
+        self.assertIsNone(older["funding_i"])
+        self.assertFalse(older["funding_pending"])
+
     def test_a_settlement_still_missing_after_an_hour_is_missing_not_pending(self):
         self.point("2026-09-18 12:00", [bot(funding=-1, settled="2026-09-18 08:00")])
         self.point("2026-09-19 01:30", [bot(funding=-2, settled="2026-09-18 16:00")])

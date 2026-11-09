@@ -18,7 +18,7 @@ function paintLive() {
       <button class="btn" id="liveRefresh" ${liveBusy ? "disabled" : ""}>${liveBusy ? "更新中…" : "更新目前倉位"}</button>
       <button class="btn ghost" id="liveCommit" ${hasLive && !liveBusy ? "" : "disabled"}>把現在倉位寫入倉位歷史</button>
       <span class="note">${hasLive
-        ? `暫存時間：${fmtTaipei(board.as_of)}${age ? `（<span class="${age.stale ? "warn" : ""}">${age.text}</span>）` : ""}。只留在這一頁，不會改每日快照；排程每 30 分鐘更新一次。`
+        ? `暫存時間：${fmtTaipei(board.as_of)}${age ? `（<span class="${age.stale ? "warn" : ""}">${age.text}</span>）` : ""}。只留在這一頁，不會改每日快照；排程每 10 分鐘更新一次。`
         : "尚未抓過。按「更新目前倉位」只刷新這一頁暫存，不影響每日 08:15 紀錄。"}</span>
     </div>`
     + summaryCards(board, "即時更新時間", hasLive ? fmtTaipei(board.as_of) : "尚未抓過",
@@ -44,7 +44,7 @@ function paintLive() {
       const network = /fetch failed|terminated|ECONN|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|UND_ERR/i.test(err.message);
       const clock = /INVALID_TIMESTAMP/.test(err.message);
       showFlash("更新目前倉位失敗：" + err.message
-        + (network ? "。這是連不上派網（網路一時斷線），稍後再按一次即可；排程每 30 分鐘仍會自動更新。" : "")
+        + (network ? "。這是連不上派網（網路一時斷線），稍後再按一次即可；排程每 10 分鐘仍會自動更新。" : "")
         + (clock ? "。電腦時鐘和派網差超過 10 秒，請到 Windows 設定 → 時間與語言 → 日期和時間按「立即同步」後再按一次。" : ""), "error");
       return;
     }

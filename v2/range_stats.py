@@ -217,7 +217,10 @@ def range_stats(start: datetime, end: datetime, exclude=(), ledger_db: Path | No
     finally:
         lcon.close()
 
-    funding = funding_between(ids, start, datetime.fromtimestamp(t_to, TAIPEI), ledger_db, intraday_db)
+    # A range reaching the latest capture ends "now": a settlement Pionex has not posted yet is left out
+    # and noted, as on the live board, so 最近 24 小時 here and on 目前倉位 agree.
+    funding = funding_between(ids, start, datetime.fromtimestamp(t_to, TAIPEI), ledger_db, intraday_db,
+                              allow_pending=end.timestamp() >= _epoch(last))
 
     by_id: dict[str, dict] = {}
     for p in points:
@@ -258,11 +261,15 @@ def range_stats(start: datetime, end: datetime, exclude=(), ledger_db: Path | No
             else:
                 row["notes"].append("幣本位關倉的最後一段配對沒算")
         funding_i, why = funding[oid]
+        pending = why if funding_i is not None else None
+        if pending:
+            row["notes"].append(pending)
         status = ("開＋關" if created and created.timestamp() > t_from and closed_t and closed_t <= t_to else
                   "關倉" if closed_t and closed_t <= t_to else "新開" if created and created.timestamp() > t_from else "運行中")
         item = {"id": oid, "symbol": symbol, "leverage": meta.get("leverage"), "status": status,
                 "investment_i": meta.get("investment_i"), "grid_i": grid_i, "funding_i": funding_i,
-                "funding_missing": why, "net_i": None if funding_i is None else grid_i + funding_i,
+                "funding_missing": None if pending else why, "funding_pending": bool(pending),
+                "net_i": None if funding_i is None else grid_i + funding_i,
                 "excluded": _matches(oid, symbol, excluded), "notes": sorted(set(row["notes"]))}
         rows.append(item)
         (out if item["excluded"] else kept).append(item)
@@ -274,6 +281,7 @@ def range_stats(start: datetime, end: datetime, exclude=(), ledger_db: Path | No
         funding = sum(known) if known else None
         missing = sum(r["funding_i"] is None for r in items)
         return {"count": len(items), "grid_i": grid, "funding_i": funding, "funding_missing": missing,
+                "funding_pending": sum(bool(r["funding_pending"]) for r in items),
                 "net_i": None if funding is None else grid + funding,
                 "pct_of_grid": None if funding is None or grid <= 0 else round(funding / grid * 100, 1)}
 
@@ -326,7 +334,8 @@ def main(argv=None) -> int:
               + (f"  ※{r['funding_missing']}" if r["funding_missing"] else "") + "".join(f"  ※{n}" for n in r["notes"]))
     print(f"合計 {t['count']} 倉：配對 {_fmt(t['grid_i'])}  資金費 {_fmt(t['funding_i'])}  淨利 {_fmt(t['net_i'])}"
           + (f"  資金費{'加成' if t['pct_of_grid'] > 0 else '吃掉'}配對 {abs(t['pct_of_grid'])}%" if t["pct_of_grid"] else "")
-          + (f"  （{t['funding_missing']} 倉資金費缺資料，未計）" if t["funding_missing"] else ""))
+          + (f"  （{t['funding_missing']} 倉資金費缺資料，未計）" if t["funding_missing"] else "")
+          + (f"  （{t['funding_pending']} 倉最新一次結算還沒入帳，暫不計）" if t["funding_pending"] else ""))
     if x["count"]:
         print(f"排除 {x['count']} 倉：配對 {_fmt(x['grid_i'])}  資金費 {_fmt(x['funding_i'])}")
     return 0

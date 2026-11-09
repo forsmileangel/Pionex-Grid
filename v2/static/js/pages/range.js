@@ -87,7 +87,7 @@ function paintRange() {
     </div>
     ${t ? `<div class="stats">
       <div class="stat">${tip("配對", RANGE_TIP)}<strong class="${cls(moneyNum(t.grid))}">${money(t.grid)}<span class="unit">USDT</span><span class="twd">${twd(t.grid)} · ${t.count} 倉</span></strong></div>
-      <div class="stat">${tip("資金費", FUND_NOTE)}<strong class="${cls(moneyNum(t.funding))}">${money(t.funding)}<span class="unit">USDT</span><span class="twd">${t.funding_missing ? `${t.funding_missing} 倉缺資料，未計` : twd(t.funding)}</span></strong></div>
+      <div class="stat">${tip("資金費", FUND_NOTE)}<strong class="${cls(moneyNum(t.funding))}">${money(t.funding)}<span class="unit">USDT</span><span class="twd">${t.funding_missing ? `${t.funding_missing} 倉缺資料，未計` : twd(t.funding)}${t.funding_pending ? ` · ${t.funding_pending} 倉最新一次結算還沒入帳，暫不計` : ""}</span></strong></div>
       <div class="stat">${tip("淨利", "配對＋資金費。不含關倉賠掉的本金（看關倉紀錄）。")}<strong class="${cls(moneyNum(t.net))}">${money(t.net)}<span class="unit">USDT</span><span class="twd">${twd(t.net)}</span></strong></div>
       <div class="stat">${tip("資金費" + fundWord(t.pct_of_grid) + "配對", "資金費 ÷ 配對。" + FUND_SIGN_NOTE)}<strong class="${cls(t.pct_of_grid)}">${t.pct_of_grid == null ? "—" : n(Math.abs(t.pct_of_grid), 1) + "%"}</strong></div>
     </div>` : ""}
