@@ -29,10 +29,29 @@ test("missing funding falls back to grid and hides the net percentage", () => {
   assert.doesNotMatch(html, /class="pct /);
 });
 
-test("daily records retain their grid card", () => {
-  const html = render({ kind: "daily" });
-  assert.match(html, /過去 24 小時總利潤/);
-  assert.doesNotMatch(html, /資金費資料不足/);
+test("daily records show the snapshot day's net, as the calendar does", () => {
+  const html = render({ kind: "daily", as_of: "2026-11-09T08:15:18+08:00", day_grid: { usdt: "62.14" },
+    day_funding: { usdt: "61.07" }, day_net: { usdt: "123.21" }, day_net_pct: 0.18, day_span: 1 });
+  assert.match(html, /11\/09 08:15 快照前 24 小時淨利（含資金費）/);
+  assert.ok(html.includes(`+123.21<span class="unit">USDT`));
+  assert.match(html, /配對 \+62.14 · 資金費 \+61.07 · 加成配對 98.3%/);
+  assert.match(html, /\+0.18%/);
+  assert.match(html, /不是即時/);
+  assert.doesNotMatch(html, /從現在往回算的滾動/);
+  assert.doesNotMatch(html, /相隔/);
+});
+
+test("daily records note a gap between snapshots", () => {
+  const html = render({ kind: "daily", as_of: "2026-11-09T08:15:18+08:00", day_grid: { usdt: "20" },
+    day_funding: { usdt: "-2" }, day_net: { usdt: "18" }, day_net_pct: 0.1, day_span: 3 });
+  assert.match(html, /和前一次快照相隔 3 天，數字涵蓋這 3 天/);
+});
+
+test("daily records without funding fall back to Pionex's grid figure and say so", () => {
+  const html = render({ kind: "daily", as_of: "2026-11-09T08:15:18+08:00", day_grid: { usdt: "10" } });
+  assert.match(html, /11\/09 08:15 快照前 24 小時配對/);
+  assert.match(html, /\+10.00<span class="unit">USDT/);
+  assert.match(html, /這天沒有資金費資料，暫顯示派網回傳的配對/);
   assert.match(html, /\+1.00%/);
 });
 

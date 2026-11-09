@@ -3,7 +3,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from v2.funding import day_rows, funding_payload
+from v2.funding import day_rows, funding_payload, with_snapshot_day
+from v2.store import board_payload
 from v2.store import ingest
 from v2.tests.test_store import FX, rec, snap
 
@@ -31,6 +32,26 @@ class FundingTests(unittest.TestCase):
 
     def row(self, payload, date, oid="g1"):
         return next(r for r in payload["rows_by_date"][date] if r["bu_order_id"] == oid)
+
+    def test_the_records_card_shows_the_snapshot_day_as_the_calendar_does(self):
+        ingest(snap("2026-08-25", [rec(GridProfit=10, FundingFee=-10, ExtraMargin=1000)]), self.db)
+        ingest(snap("2026-08-26", [rec(GridProfit=16, FundingFee=-7, ExtraMargin=1000)]), self.db)
+        board = with_snapshot_day(board_payload(self.db), self.db)
+        day = self.day(funding_payload(self.db, with_rows=False), "2026-08-26")
+        self.assertEqual(board["capture_date"], "2026-08-26")
+        self.assertEqual((usdt(board["day_grid"]), usdt(board["day_funding"]), usdt(board["day_net"])),
+                         (usdt(day["grid_profit"]), usdt(day["funding"]), usdt(day["net"])))
+        self.assertEqual((usdt(board["day_funding"]), usdt(board["day_net"])), (3.0, 9.0))   # received 3: a boost
+        self.assertEqual(board["day_pct_of_grid"], 50.0)
+        equivalent = int(board["total_equivalent"]["int"])
+        self.assertAlmostEqual(board["day_net_pct"], 9e8 / equivalent * 100)
+
+    def test_the_records_card_on_the_first_day_has_no_net(self):
+        ingest(snap("2026-08-25", [rec(GridProfit=10, FundingFee=-10)]), self.db)
+        board = with_snapshot_day(board_payload(self.db), self.db)
+        self.assertIsNone(usdt(board["day_funding"]))
+        self.assertIsNone(usdt(board["day_net"]))
+        self.assertIsNone(board["day_net_pct"])
 
     def test_daily_funding_is_the_change_in_the_running_total(self):
         ingest(snap("2026-08-25", [rec(GridProfit=10, FundingFee=-10)]), self.db)

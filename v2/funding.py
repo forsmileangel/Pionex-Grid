@@ -12,7 +12,8 @@ from pathlib import Path
 
 from .averages import averages_view, closure_totals, profit_averages
 from .fx import attach_twd, usdt_twd
-from .store import _equivalent_by_run, _fx_view, closure_entries, connect, day_rows_payload, equivalent_i, money, to_fixed
+from .store import (_equivalent_by_run, _fx_view, _pct_value, closure_entries, connect, day_rows_payload, equivalent_i,
+                    money, to_fixed)
 
 COIN_PRODUCT = "coin_margined_contract_grid"
 
@@ -216,6 +217,33 @@ def funding_payload(db_path: Path | None = None, with_rows: bool = True) -> dict
         "closures": closure_totals(closures, summaries[-1]["capture_date"] if summaries else None, m),
         "fx": _fx_view(usdt_twd()),
     }
+
+
+def with_snapshot_day(board: dict, db_path: Path | None = None) -> dict:
+    """倉位紀錄's 24-hour card: the snapshot day's grid profit, funding and net exactly as the calendar
+    shows that day (the change since the previous daily snapshot), and the net as a % of the board's
+    equivalent position. Fields are None when the day or its funding is unknown."""
+    out = {**board, "day_grid": None, "day_funding": None, "day_net": None, "day_net_pct": None,
+           "day_pct_of_grid": None, "day_span": None}
+    day = board.get("capture_date")
+    if not day:
+        return out
+    con = connect(db_path)
+    try:
+        summary = con.execute("SELECT daily_profit_i FROM daily_summary WHERE capture_date=?", (day,)).fetchone()
+        rows, _ = funding_by_day(con)
+    finally:
+        con.close()
+    agg = funding_by_date(rows).get(day, {"funding_i": None, "span": 1})
+    grid, fund = (summary["daily_profit_i"] if summary else None), agg["funding_i"]
+    net = None if grid is None or fund is None else grid + fund
+    equivalent = ((board.get("total_equivalent") or {}).get("int")
+                  or (board.get("total_investment") or {}).get("int"))
+    rate = usdt_twd().get("usdt_twd")
+    m = lambda value: attach_twd(money(value), rate)  # noqa: E731
+    out.update(day_grid=m(grid), day_funding=m(fund), day_net=m(net), day_net_pct=_pct_value(net, equivalent),
+               day_pct_of_grid=_ratio_pct(fund, grid), day_span=agg["span"])
+    return out
 
 
 def day_rows(capture_date: str, db_path: Path | None = None) -> dict:

@@ -301,7 +301,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json(sparkline_payload(days, self.db_path))
             return
         if path == "/api/v1/board":
-            self._json(board_payload(self.db_path))
+            from .funding import with_snapshot_day
+            self._json(with_snapshot_day(board_payload(self.db_path), self.db_path))
             return
         if path == "/api/v1/live":
             self._json(live_payload(ledger_db=self.db_path, intraday_db=self._intraday_path()))
