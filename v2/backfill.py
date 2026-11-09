@@ -1,4 +1,4 @@
-"""Fill a missed daily capture from the 30-minute intraday record of that day.
+"""Fill a missed daily capture from the intraday record of that day.
 
 Picks the first intraday snapshot at or after the daily cut-off (08:15 Taipei) on the missing date.
 Dry run by default; --apply writes the ledger, then republishes the Gist ledger.

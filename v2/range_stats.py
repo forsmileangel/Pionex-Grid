@@ -1,6 +1,6 @@
 """區間統計: grid profit, funding and net per position between two times you pick.
 
-Grid profit comes from the 30-minute intraday points: each point's delta_i is the change since the
+Grid profit comes from the intraday points (every 10 minutes): each point's delta_i is the change since the
 position's previous point, with add/reinvest jumps already taken out. A position opened inside the
 range counts all of its grid profit; one closed inside it adds the last stretch up to its settlement.
 
@@ -105,13 +105,13 @@ def range_stats(start: datetime, end: datetime, exclude=(), ledger_db: Path | No
     try:
         times = [r["captured_at"] for r in icon.execute("SELECT captured_at FROM intraday_runs ORDER BY captured_at")]
         if not times:
-            raise RangeError("還沒有每 30 分鐘的紀錄")
+            raise RangeError("還沒有盤中紀錄")
         first, last = times[0], times[-1]
         g_from, g_to = _anchor(times, start), _anchor(times, end)
         if g_from is None:
-            raise RangeError(f"開始時間早於第一筆每 30 分鐘紀錄（{first[:16]}）")
+            raise RangeError(f"開始時間早於第一筆盤中紀錄（{first[:16]}）")
         if g_to is None or g_to <= g_from:
-            raise RangeError("這個區間內沒有每 30 分鐘的紀錄")
+            raise RangeError("這個區間內沒有盤中紀錄")
         points = [dict(r) for r in icon.execute(
             """SELECT bu_order_id, captured_at, symbol, product, leverage, created_at, investment_i, grid_profit_i,
                       grid_profit_coin_i, conversion_price_i, delta_i, event, funding_fee_i, funding_ts
@@ -160,7 +160,7 @@ def range_stats(start: datetime, end: datetime, exclude=(), ledger_db: Path | No
             if created is not None and created.timestamp() > _epoch(g_from):
                 row["grid_i"] += p["grid_profit_i"] or 0           # opened inside the range: all of it
             else:
-                row["notes"].append("區間內才開始有每 30 分鐘紀錄，之前的配對沒算")
+                row["notes"].append("區間內才開始有盤中紀錄，之前的配對沒算")
         else:
             row["grid_i"] += p["delta_i"] or 0
             if "review" in str(p["event"] or "").split("+"):

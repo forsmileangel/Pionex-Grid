@@ -1,6 +1,6 @@
 """Small file helpers shared by the scheduled tasks and the dashboard server.
 
-The 08:15 capture, the 30-minute live task and the dashboard can run at the same
+The 08:15 capture, the live task and the dashboard can run at the same
 time and write the same JSON files. A reader must never see half a file, and a
 read-modify-write must not drop another process's update.
 """

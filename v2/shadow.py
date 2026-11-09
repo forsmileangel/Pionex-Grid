@@ -35,7 +35,7 @@ def capture_shadow(credentials: Path, now: datetime | None = None, force: bool =
     if not force and not (WINDOW[0] <= (now.hour, now.minute) <= WINDOW[1]):
         return {"ok": True, "skipped": True, "reason": f"outside 08:10-08:30 ({now:%H:%M})"}
     SHADOW_DIR.mkdir(parents=True, exist_ok=True)
-    # Same collector call as the 30-minute live capture, with its own closed-bot cache:
+    # Same collector call as the live capture, with its own closed-bot cache:
     # the shared one is rewritten by the live and daily captures around the same time.
     snapshot = collect_snapshot(credentials, reuse_finished=True, running_from_list=True,
                                 cache_path=SHADOW_DIR / FINISHED_CACHE_NAME)

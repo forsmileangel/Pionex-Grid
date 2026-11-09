@@ -419,7 +419,7 @@ def render(data: dict, notes: dict) -> str:
 <h3 style="margin:22px 0 6px">資金在哪裡</h3>{wallet_table(data)}</section>
 
 <section id="s-method"><h2>方法與資料來源</h2>
-<p class="note" style="margin-top:0">倉位資料來自本機 SQLite 帳本與每 30 分鐘的即時快照（只讀，沒有改動帳本，也沒有發布到 Gist）。市場資料來自派網公開行情 API：
+<p class="note" style="margin-top:0">倉位資料來自本機 SQLite 帳本與每 10 分鐘的即時快照（只讀，沒有改動帳本，也沒有發布到 Gist）。市場資料來自派網公開行情 API：
 可交易的 USDT 永續合約、24 小時成交量、近 200 天日 K；美股代幣 24 小時成交量至少 100 萬 U、加密與商品至少 300 萬 U 才列入；排除槓桿／反向 ETF 和上市前合成合約。
 建議區間：下限取「180 天低點的九成」和「現價的六成」較低者，上限取「180 天高點的 1.05 倍」和「現價的 1.35 倍」較高者；每格約為日波動的十分之一（0.2%～0.5%）。</p>
 <ul class="sources">{sources}</ul>

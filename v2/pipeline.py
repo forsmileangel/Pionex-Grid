@@ -41,7 +41,7 @@ LEGACY_TIMEOUT_SECONDS = 600
 # export; keep the newest ones only.
 LEGACY_BACKUP_PATTERN = "snapshot-legacy-excel-*.xlsx"
 LEGACY_BACKUP_KEEP = 14
-# The 30-minute live task retries exports only after the daily task's own retries are over.
+# The live task (every 10 minutes) retries exports only after the daily task's own retries are over.
 CATCH_UP_AFTER = timedelta(minutes=45)
 
 
@@ -328,7 +328,7 @@ def run(args: argparse.Namespace) -> int:
         }, ensure_ascii=False))
         return 0
     try:
-        # The 30-minute catch-up uses the same lock, so two exports never open the workbook at once.
+        # The live task's catch-up uses the same lock, so two exports never open the workbook at once.
         with file_lock(state_file.parent / "excel-export", timeout=LEGACY_TIMEOUT_SECONDS + 60):
             state = _load_state(state_file)
             legacy_status = _step_legacy(
@@ -351,7 +351,7 @@ def run(args: argparse.Namespace) -> int:
 def catch_up_exports(db_path: Path = DEFAULT_DB, now: datetime | None = None) -> dict:
     """Export a workbook the daily run could not write, e.g. because it was open in Excel.
 
-    Called by the 30-minute live task. Production folder only, today's ledger only, and
+    Called by the live task (every 10 minutes). Production folder only, today's ledger only, and
     never while the daily task may still be retrying.
     """
     now = now or datetime.now(TAIPEI)

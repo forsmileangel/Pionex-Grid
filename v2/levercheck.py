@@ -1,6 +1,6 @@
 """Before/after check for leverage adjustments that keep the margin inside the same bot.
 
-Read-only: reads v2-data/live-snapshot.json (refreshed every 30 minutes or by 「更新目前倉位」)
+Read-only: reads v2-data/live-snapshot.json (refreshed every 10 minutes or by 「更新目前倉位」)
 and writes baselines/reports under v2-data/audits/. Never touches the ledger or the Gist.
 
     python -m v2.levercheck --save-baseline    # before adjusting

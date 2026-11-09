@@ -34,7 +34,7 @@ def live_path() -> Path:
 
 
 def save_live_snapshot(snapshot: dict, path: Path | None = None) -> Path:
-    # The 30-minute task and the dashboard both write this file; "write today" reads it.
+    # The live task and the dashboard both write this file; "write today" reads it.
     dest = Path(path or LIVE_PATH)
     with file_lock(dest):
         atomic_write_text(dest, json.dumps(snapshot, ensure_ascii=False))

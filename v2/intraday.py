@@ -1,4 +1,4 @@
-"""Intraday (30-minute) grid-profit points and per-bucket efficiency.
+"""Intraday (every 10 minutes) grid-profit points and per-bucket efficiency.
 
 The Pionex API only exposes cumulative grid profit, never fills, so these
 points can never be re-fetched: they live in their own SQLite file, get a daily

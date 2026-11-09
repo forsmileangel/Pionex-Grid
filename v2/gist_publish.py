@@ -259,7 +259,7 @@ def _patch_gist_file(filename: str, payload: dict, creds_path: Path | None = Non
                 msg = str(err_body["message"])
         except Exception:
             pass
-        # No retry here: a failed ledger publish is retried by the next 30-minute live task.
+        # No retry here: a failed ledger publish is retried by the next live task (every 10 minutes).
         return {"ok": False, "status": status, "error": msg, **_rate_info(status, getattr(exc, "headers", None), msg)}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}

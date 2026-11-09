@@ -9,7 +9,7 @@ Excel 那條線（`pionex grid record`、08:00）**不走 Gist**，跟這份無�
 | 角色 | 專案 | 做什麼 |
 |---|---|---|
 | 唯一寫入方 | SQLite 儀表板 `python -m v2.capture` | ingest 成功後 PATCH Gist **第二檔** |
-| 目前倉位寫入 | `python -m v2.capture --live` 或儀表板「更新目前倉位」或 30 分鐘排程 | 成功後 PATCH **第三檔** `pionex-grid-live.json` |
+| 目前倉位寫入 | `python -m v2.capture --live` 或儀表板「更新目前倉位」或每 10 分鐘排程 | 成功後 PATCH **第三檔** `pionex-grid-live.json` |
 | 只讀方 | Portfolio Tracker（v15.954 起帳本；v15.962 起目前倉位） | 啟動／pull／進網格頁時讀；失敗保留舊 cache，不中斷持倉同步 |
 
 - Gist 第一檔永遠是 PT 的 `portfolio-tracker-holdings.json`。SQLite 這邊 **禁止** 把這個檔名放進 PATCH body。
@@ -107,7 +107,7 @@ PT v15.974 起網格頁會讀這些欄位；缺少時（舊帳本）退回原畫
 
 - 頂層新增 `corrections[]`（最近 30 筆，PT 目前不讀）：`capture_date`、`field`（daily_profit_i／cumulative_i／true_profit_i／unresolved_count）、`old_value`、`new_value`、`reason`、`corrected_at`。已記錄的日子因關倉補抓、人工補登、加倉／複投判定而重算時寫入；當日擷取本身不算修正。
 - PT 每次拉取都整份取代帳本，所以修正後的數字與月平均會自動更新，不需要 PT 端另外處理。
-- 發布結果存在本機 `v2-data/publish-state.json`（內容雜湊不含 TWD／FX 欄位）。帳本與上次成功發布不同時，每 30 分鐘的 `capture --live` 排程會另外送一次「只含帳本檔」的 PATCH 補發；儀表板「執行狀態」也可手動重新發布。
+- 發布結果存在本機 `v2-data/publish-state.json`（內容雜湊不含 TWD／FX 欄位）。帳本與上次成功發布不同時，每 10 分鐘的 `capture --live` 排程會另外送一次「只含帳本檔」的 PATCH 補發；儀表板「執行狀態」也可手動重新發布。
 
 幣本位（ETH）的 `rows[].daily_profit_usdt` 是「當天新增的幣 × 抓取現貨價」，不是畫面 USDT 庫存相減。PT 不必改 HTML，pull 後單日數字會自己變。
 
