@@ -11,7 +11,7 @@ let rangeFrom = "";
 let rangeTo = "";
 const excluded = new Set();
 
-const RANGE_TIP = "配對＝區間內每 30 分鐘紀錄的配對增量（已扣掉加倉、複投的跳動）；區間內新開的倉算全部，關倉的補到結算為止。資金費＝區間內各次結算（台北 00:00、08:00、16:00）的合計，剛好在結束時間結算的算進來、剛好在開始時間的不算。淨利＝配對＋資金費，不含關倉賠掉的本金。" + FUND_SIGN_NOTE;
+const RANGE_TIP = "配對＝區間內盤中紀錄的配對增量（已扣掉加倉、複投的跳動）；區間內新開的倉算全部，關倉的補到結算為止。資金費＝區間內各次結算（台北 00:00、08:00、16:00）的合計，剛好在結束時間結算的算進來、剛好在開始時間的不算。淨利＝配對＋資金費，不含關倉賠掉的本金。" + FUND_SIGN_NOTE;
 const FUND_NOTE = "1.0.4 起每 30 分鐘都會記資金費，任何時段都算得出來；在那之前只有每天 08:15 的紀錄，開始和結束要落在 08:00 才算得出資金費（配對不受影響）。";
 
 const pad = (v) => String(v).padStart(2, "0");
@@ -83,7 +83,7 @@ function paintRange() {
         <button type="button" class="btn" id="rangeGo">計算</button>
       </div>
       <div class="seg range-presets" role="group">${presetHtml}</div>
-      ${d ? `<p class="note">區間 ${esc(d.from.slice(0, 16).replace("T", " "))} → ${esc(d.to.slice(0, 16).replace("T", " "))}；配對用 ${esc(d.grid_from.slice(5, 16).replace("T", " "))} → ${esc(d.grid_to.slice(5, 16).replace("T", " "))} 的紀錄（每 30 分鐘一筆，從 ${esc(d.first_point.slice(0, 10))} 開始）。</p>` : ""}
+      ${d ? `<p class="note">區間 ${esc(d.from.slice(0, 16).replace("T", " "))} → ${esc(d.to.slice(0, 16).replace("T", " "))}；配對用 ${esc(d.grid_from.slice(5, 16).replace("T", " "))} → ${esc(d.grid_to.slice(5, 16).replace("T", " "))} 的盤中紀錄（從 ${esc(d.first_point.slice(0, 10))} 開始）。</p>` : ""}
     </div>
     ${t ? `<div class="stats">
       <div class="stat">${tip("配對", RANGE_TIP)}<strong class="${cls(moneyNum(t.grid))}">${money(t.grid)}<span class="unit">USDT</span><span class="twd">${twd(t.grid)} · ${t.count} 倉</span></strong></div>
