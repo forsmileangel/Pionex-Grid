@@ -103,6 +103,7 @@ def live_publish_payload(board: dict) -> dict:
         "total_net_24h_usdt": _usdt_of(board.get("total_net_24h")),
         "net_24h_pct": board.get("net_24h_pct"),
         "funding_24h_missing": board.get("funding_24h_missing"),
+        "funding_24h_pending": board.get("funding_24h_pending"),
         "total_investment_usdt": _usdt_of(board.get("total_investment")),
         "total_equivalent_usdt": _usdt_of(board.get("total_equivalent")),
         "leverage_nominal": board.get("leverage_nominal"),

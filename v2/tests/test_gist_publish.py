@@ -121,13 +121,15 @@ class GistPublishTests(unittest.TestCase):
                            "funding_total": {"usdt": "-20"}}]}
         old = live_publish_payload(board)
         board.update(total_funding_24h={"usdt": "-3"}, total_net_24h={"usdt": "7"},
-                     net_24h_pct=0.7, funding_24h_missing=0)
+                     net_24h_pct=0.7, funding_24h_missing=0, funding_24h_pending=0)
         board["rows"][0].update(funding_24h={"usdt": "-3"}, net_24h={"usdt": "7"})
         new = live_publish_payload(board)
-        top_keys = {"total_funding_24h_usdt", "total_net_24h_usdt", "net_24h_pct", "funding_24h_missing"}
+        top_keys = {"total_funding_24h_usdt", "total_net_24h_usdt", "net_24h_pct", "funding_24h_missing",
+                    "funding_24h_pending"}
         row_keys = {"funding_24h_usdt", "net_24h_usdt"}
         self.assertEqual({k: new[k] for k in top_keys}, dict(total_funding_24h_usdt="-3",
-                         total_net_24h_usdt="7", net_24h_pct=0.7, funding_24h_missing=0))
+                         total_net_24h_usdt="7", net_24h_pct=0.7, funding_24h_missing=0,
+                         funding_24h_pending=0))
         self.assertEqual({k: new["rows"][0][k] for k in row_keys},
                          dict(funding_24h_usdt="-3", net_24h_usdt="7"))
         self.assertEqual({k: v for k, v in new.items() if k not in top_keys | {"rows"}},

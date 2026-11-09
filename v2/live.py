@@ -108,14 +108,17 @@ def snapshot_to_board(snapshot: dict, ledger_db: Path | None = None, intraday_db
     rows = [attach_twd_tree(row, rate) for row in rows]
     totals = position_totals(snaps)
     funding_fields = {"total_funding_24h": None, "total_net_24h": None,
-                      "net_24h_pct": None, "funding_24h_missing": len(rows)}
+                      "net_24h_pct": None, "funding_24h_missing": len(rows),
+                      "funding_24h_pending": 0, "funding_24h_note": None}
     try:
         end = parse_time(captured)
         funding = funding_between([s["bu_order_id"] for s in snaps], end - timedelta(hours=24), end,
-                                  ledger_db, intraday_db)
-        values = []
+                                  ledger_db, intraday_db, allow_pending=True)
+        values, notes = [], []
         for row, snap in zip(rows, snaps):
-            value = funding.get(snap["bu_order_id"], (None, None))[0]
+            value, note = funding.get(snap["bu_order_id"], (None, None))
+            if value is not None and note:
+                notes.append(note)
             profit = snap.get("grid_profit_24h_i")
             net = None if value is None or profit is None else profit + value
             row["funding_24h"] = None if value is None else attach_twd(money(value), rate)
@@ -129,6 +132,9 @@ def snapshot_to_board(snapshot: dict, ledger_db: Path | None = None, intraday_db
             "total_net_24h": None if total_net is None else attach_twd(money(total_net), rate),
             "net_24h_pct": _pct_value(total_net, totals["equivalent_i"] or total_investment),
             "funding_24h_missing": missing,
+            # A settlement Pionex has not posted yet (a few minutes after 00:00/08:00/16:00) is left out, and said so.
+            "funding_24h_pending": len(notes),
+            "funding_24h_note": f"{len(notes)} 倉 {notes[0]}" if notes else None,
         }
     except Exception:
         # Funding is optional: an unavailable/corrupt database must not take down the live board.

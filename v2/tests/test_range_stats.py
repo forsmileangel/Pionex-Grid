@@ -103,6 +103,28 @@ class RangeTests(unittest.TestCase):
                                             range_stats.parse_time("2026-09-19 12:00"), self.db, self.idb)
         self.assertEqual(result, {"g1": (store.to_fixed(-3), None)})
 
+    def test_a_settlement_not_yet_posted_is_left_out_only_when_asked(self):
+        self.point("2026-09-18 12:00", [bot(funding=-1, settled="2026-09-18 08:00")])
+        self.point("2026-09-18 23:50", [bot(funding=-2, settled="2026-09-18 16:00")])
+        self.point("2026-09-19 00:05", [bot(funding=-2, settled="2026-09-18 16:00")])   # 00:00 not posted yet
+        a, b = range_stats.parse_time("2026-09-18 12:00"), range_stats.parse_time("2026-09-19 00:05")
+        strict = range_stats.funding_between(["g1"], a, b, self.db, self.idb)
+        self.assertIsNone(strict["g1"][0])
+        self.assertIn("00:00", strict["g1"][1])
+        delta, note = range_stats.funding_between(["g1"], a, b, self.db, self.idb, allow_pending=True)["g1"]
+        self.assertEqual(delta, store.to_fixed(-1))                   # the 16:00 settlement only
+        self.assertIn("09/19 00:00", note)
+        self.assertIn("還沒入帳", note)
+
+    def test_a_settlement_still_missing_after_an_hour_is_missing_not_pending(self):
+        self.point("2026-09-18 12:00", [bot(funding=-1, settled="2026-09-18 08:00")])
+        self.point("2026-09-19 01:30", [bot(funding=-2, settled="2026-09-18 16:00")])
+        delta, note = range_stats.funding_between(["g1"], range_stats.parse_time("2026-09-18 12:00"),
+                                                 range_stats.parse_time("2026-09-19 01:30"),
+                                                 self.db, self.idb, allow_pending=True)["g1"]
+        self.assertIsNone(delta)
+        self.assertIn("00:00", note)
+
     def test_funding_between_coin_amounts_use_end_price(self):
         self.point("2026-09-18 12:00", [bot(funding=-2, settled="2026-09-18 08:00",
                                           Product=range_stats.COIN, ConversionPrice=100)])

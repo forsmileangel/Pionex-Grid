@@ -98,9 +98,18 @@ def _funding_delta(start, end, coin: bool):
     return e_total - s_total
 
 
+PENDING_GRACE = 3600  # Pionex posts a settlement a few minutes late; within this, count up to the one before.
+
+
 def funding_between(ids, start: datetime, end: datetime, ledger_db: Path | None = None,
-                    intraday_db: Path | None = None) -> dict[str, tuple[int | None, str | None]]:
+                    intraday_db: Path | None = None,
+                    allow_pending: bool = False) -> dict[str, tuple[int | None, str | None]]:
     """Funding settled in (start, end], using intraday, daily and closing observations.
+
+    Returns {id: (delta, note)}. delta is None when it cannot be known, and note says why.
+    With allow_pending (the live board, whose end is "now"): if the settlement just before end is
+    less than an hour old and Pionex has not posted it yet, delta counts up to the settlement before
+    it and note says which one is still pending. range_stats never sets it, so its totals stay exact.
 
     Plain connections (no migrations, no writes; never ?mode=ro, which leaves -shm/-wal behind on
     the WAL files). Only observations that can matter are read: from the last settlement at or
@@ -157,9 +166,17 @@ def funding_between(ids, start: datetime, end: datetime, ledger_db: Path | None 
         obs = sorted(observations.get(oid, []))
         a = _funding_as_of(obs, start.timestamp(), c_t, o_t)
         b = _funding_as_of(obs, end.timestamp(), c_t, o_t)
+        pending = None
+        settle = last_settlement(end.timestamp())
+        if (b[0] is None and allow_pending and o_t is None and end.timestamp() - settle <= PENDING_GRACE
+                and settle - 1 > start.timestamp()):
+            earlier = _funding_as_of(obs, settle - 1, c_t, o_t)
+            if earlier[0] is not None:
+                b = earlier
+                pending = datetime.fromtimestamp(settle, TAIPEI).strftime("%m/%d %H:%M") + " 的結算派網還沒入帳，暫不計"
         coin = (meta.get("product") or pos.get("product")) == COIN
         delta = _funding_delta(a, b, coin) if a[0] is not None and b[0] is not None else None
-        result[oid] = (delta, None if delta is not None else (a[2] if a[0] is None else b[2]))
+        result[oid] = (delta, pending if delta is not None else (a[2] if a[0] is None else b[2]))
     return result
 
 

@@ -38,9 +38,9 @@ class LiveTests(unittest.TestCase):
         self.store_fx = patch("v2.store.usdt_twd", return_value=FX)
         self.store_fx.start()
         # Existing board tests must never read the local user's funding databases.
-        funding = patch("v2.live.funding_between", side_effect=lambda ids, start, end, ledger_db, intraday_db:
+        funding = patch("v2.live.funding_between", side_effect=lambda ids, start, end, ledger_db, intraday_db, **kw:
                         funding_between(ids, start, end, ledger_db or self.db,
-                                        intraday_db or intraday.default_intraday_db(self.db)))
+                                        intraday_db or intraday.default_intraday_db(self.db), **kw))
         funding.start()
         self.addCleanup(funding.stop)
 
@@ -90,7 +90,24 @@ class LiveTests(unittest.TestCase):
         self.assertEqual(board["total_net_24h"]["usdt"], "7")
         self.assertEqual(board["net_24h_pct"], 0.35)
         self.assertEqual(board["funding_24h_missing"], 0)
+        self.assertEqual(board["funding_24h_pending"], 0)
+        self.assertIsNone(board["funding_24h_note"])
         self.assertEqual(board["total_profit_24h"]["usdt"], "10")
+
+    def test_live_net_right_after_a_settlement_counts_up_to_the_one_before_and_says_so(self):
+        idb = intraday.default_intraday_db(self.db)
+        intraday.record_snapshot(snapshot("2026-09-18 00:10", [bot(funding=-1, settled="2026-09-18 00:00")]),
+                                 "live", idb, self.db)
+        intraday.record_snapshot(snapshot("2026-09-18 23:50", [bot(funding=-3, settled="2026-09-18 16:00")]),
+                                 "live", idb, self.db)
+        now = snapshot("2026-09-19 00:05", [bot(funding=-3, settled="2026-09-18 16:00", GridProfit24h=10)])
+        intraday.record_snapshot(now, "live", idb, self.db)
+        board = snapshot_to_board(now, self.db, idb)
+        self.assertEqual(board["total_funding_24h"]["usdt"], "-2")   # 09/18 08:00 and 16:00; 09/19 00:00 pending
+        self.assertEqual(board["total_net_24h"]["usdt"], "8")
+        self.assertEqual(board["funding_24h_missing"], 0)
+        self.assertEqual(board["funding_24h_pending"], 1)
+        self.assertIn("1 倉 09/19 00:00", board["funding_24h_note"])
 
     def test_live_partial_funding_does_not_present_a_partial_net_total(self):
         data, idb = self.funding_snapshot()
