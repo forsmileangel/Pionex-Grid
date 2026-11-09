@@ -19,7 +19,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import sqlite3
 import sys
+from contextlib import closing
 from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -96,6 +98,71 @@ def _funding_delta(start, end, coin: bool):
     return e_total - s_total
 
 
+def funding_between(ids, start: datetime, end: datetime, ledger_db: Path | None = None,
+                    intraday_db: Path | None = None) -> dict[str, tuple[int | None, str | None]]:
+    """Funding settled in (start, end], using intraday, daily and closing observations.
+
+    Plain connections (no migrations, no writes; never ?mode=ro, which leaves -shm/-wal behind on
+    the WAL files). Only observations that can matter are read: from the last settlement at or
+    before start (an earlier one cannot describe the total as of start) to 9 hours after end (a
+    later one may carry a settlement posted late), so the live board stays fast as history grows.
+    """
+    if end <= start:
+        raise RangeError("結束時間要晚於開始時間")
+    ids = list(dict.fromkeys(ids))
+    if not ids:
+        return {}
+    marks = ','.join('?' * len(ids))
+    lo = intraday._iso(datetime.fromtimestamp(last_settlement(start.timestamp()), TAIPEI))
+    hi = intraday._iso(end + timedelta(hours=9))
+    observations, positions, metadata = {}, {}, {}
+    ipath = Path(intraday_db or intraday.default_intraday_db(ledger_db))
+    if ipath.exists():
+        with closing(sqlite3.connect(str(ipath), timeout=1)) as con:
+            con.row_factory = sqlite3.Row
+            for p in con.execute(
+                    f"""SELECT bu_order_id, captured_at, created_at, product, funding_fee_i, funding_ts,
+                               conversion_price_i FROM intraday_points
+                        WHERE bu_order_id IN ({marks}) AND captured_at >= ? AND captured_at <= ?
+                        ORDER BY captured_at""", [*ids, lo, hi]):
+                oid = p["bu_order_id"]
+                metadata[oid] = dict(p)
+                if p["funding_fee_i"] is not None:
+                    observations.setdefault(oid, []).append(
+                        (_epoch(p["captured_at"]), p["funding_fee_i"], p["funding_ts"], p["conversion_price_i"]))
+    lpath = Path(ledger_db or store.DEFAULT_DB)
+    if lpath.exists():
+        with closing(sqlite3.connect(str(lpath), timeout=1)) as con:
+            con.row_factory = sqlite3.Row
+            positions = {r["bu_order_id"]: dict(r) for r in con.execute(
+                f"SELECT * FROM grid_positions WHERE bu_order_id IN ({marks})", ids)}
+            for r in con.execute(
+                    f"""SELECT s.bu_order_id, r.captured_at, s.funding_fee_i, s.conversion_price_i, s.raw_json,
+                               s.list_status, s.closed_at FROM grid_snapshots s JOIN capture_runs r ON r.id=s.run_id
+                        WHERE r.status='success' AND s.funding_fee_i IS NOT NULL
+                          AND s.bu_order_id IN ({marks})
+                          AND ((r.captured_at >= ? AND r.captured_at <= ?) OR s.list_status='finished')""",
+                    [*ids, lo, hi]):
+                at = _epoch(r["captured_at"])
+                if r["list_status"] == "finished" and r["closed_at"]:
+                    at = parse_time(r["closed_at"]).timestamp()
+                observations.setdefault(r["bu_order_id"], []).append(
+                    (at, r["funding_fee_i"], intraday.funding_ts(r["raw_json"]), r["conversion_price_i"]))
+    result = {}
+    for oid in ids:
+        pos, meta = positions.get(oid, {}), metadata.get(oid, {})
+        created = intraday._parse_time(str(pos.get("created_at") or meta.get("created_at") or "").replace(" ", "T"))
+        closed = intraday._parse_time(str(pos.get("closed_at") or "").replace(" ", "T"))
+        c_t, o_t = created.timestamp() if created else None, closed.timestamp() if closed else None
+        obs = sorted(observations.get(oid, []))
+        a = _funding_as_of(obs, start.timestamp(), c_t, o_t)
+        b = _funding_as_of(obs, end.timestamp(), c_t, o_t)
+        coin = (meta.get("product") or pos.get("product")) == COIN
+        delta = _funding_delta(a, b, coin) if a[0] is not None and b[0] is not None else None
+        result[oid] = (delta, None if delta is not None else (a[2] if a[0] is None else b[2]))
+    return result
+
+
 def range_stats(start: datetime, end: datetime, exclude=(), ledger_db: Path | None = None,
                 intraday_db: Path | None = None) -> dict:
     if end <= start:
@@ -117,12 +184,6 @@ def range_stats(start: datetime, end: datetime, exclude=(), ledger_db: Path | No
                       grid_profit_coin_i, conversion_price_i, delta_i, event, funding_fee_i, funding_ts
                FROM intraday_points WHERE captured_at > ? AND captured_at <= ? ORDER BY captured_at""", (g_from, g_to))]
         ids = sorted({p["bu_order_id"] for p in points})
-        fund_points = {}
-        for p in icon.execute(
-                f"""SELECT bu_order_id, captured_at, funding_fee_i, funding_ts, conversion_price_i FROM intraday_points
-                    WHERE funding_fee_i IS NOT NULL AND bu_order_id IN ({','.join('?' * len(ids))})""", ids) if ids else []:
-            fund_points.setdefault(p["bu_order_id"], []).append(
-                (_epoch(p["captured_at"]), p["funding_fee_i"], p["funding_ts"], p["conversion_price_i"]))
     finally:
         icon.close()
     t_from, t_to = start.timestamp(), min(end.timestamp(), _epoch(last))
@@ -136,21 +197,10 @@ def range_stats(start: datetime, end: datetime, exclude=(), ledger_db: Path | No
             closed = intraday._parse_time(pos.get("closed_at"))
             if closed and t_from < closed.timestamp() <= t_to and oid not in ids:
                 ids.append(oid)
-        ledger_obs = {}
-        if ids:
-            for r in lcon.execute(
-                    f"""SELECT s.bu_order_id, r.captured_at, s.funding_fee_i, s.conversion_price_i, s.raw_json, s.list_status,
-                               s.closed_at FROM grid_snapshots s JOIN capture_runs r ON r.id=s.run_id
-                        WHERE r.status='success' AND s.funding_fee_i IS NOT NULL
-                          AND s.bu_order_id IN ({','.join('?' * len(ids))})""", ids):
-                at = _epoch(r["captured_at"])
-                if r["list_status"] == "finished" and r["closed_at"]:
-                    # The settlement's total is final at the close, whenever it was recorded.
-                    at = intraday._parse_time(str(r["closed_at"]).replace(" ", "T")).timestamp()
-                ledger_obs.setdefault(r["bu_order_id"], []).append(
-                    (at, r["funding_fee_i"], intraday.funding_ts(r["raw_json"]), r["conversion_price_i"]))
     finally:
         lcon.close()
+
+    funding = funding_between(ids, start, datetime.fromtimestamp(t_to, TAIPEI), ledger_db, intraday_db)
 
     by_id: dict[str, dict] = {}
     for p in points:
@@ -190,12 +240,7 @@ def range_stats(start: datetime, end: datetime, exclude=(), ledger_db: Path | No
                 grid_i += final - (row["last"]["grid_profit_i"] or 0)
             else:
                 row["notes"].append("幣本位關倉的最後一段配對沒算")
-        obs = sorted(fund_points.get(oid, []) + ledger_obs.get(oid, []))
-        c_t, o_t = (created.timestamp() if created else None), closed_t
-        a = _funding_as_of(obs, t_from, c_t, o_t)
-        b = _funding_as_of(obs, t_to, c_t, o_t)
-        funding_i = _funding_delta(a, b, coin) if a[0] is not None and b[0] is not None else None
-        why = None if funding_i is not None else (a[2] if a[0] is None else b[2])
+        funding_i, why = funding[oid]
         status = ("開＋關" if created and created.timestamp() > t_from and closed_t and closed_t <= t_to else
                   "關倉" if closed_t and closed_t <= t_to else "新開" if created and created.timestamp() > t_from else "運行中")
         item = {"id": oid, "symbol": symbol, "leverage": meta.get("leverage"), "status": status,

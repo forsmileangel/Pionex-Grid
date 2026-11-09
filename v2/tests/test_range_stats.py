@@ -80,6 +80,38 @@ class RangeTests(unittest.TestCase):
         self.assertEqual([f("2026-09-18 08:00"), f("2026-09-18 07:59"), f("2026-09-18 23:59"), f("2026-09-19 00:30")],
                          ["09-18 08:00", "09-18 00:00", "09-18 16:00", "09-19 00:00"])
 
+    def test_funding_between_matches_range_rows_including_missing_data(self):
+        self.timeline()
+        for start, end in [("2026-09-18 08:00", "2026-09-19 08:00"),
+                           ("2026-09-18 22:30", "2026-09-19 08:00"),
+                           ("2026-09-17 22:30", "2026-09-18 12:00")]:
+            with self.subTest(start=start, end=end):
+                a, b = range_stats.parse_time(start), range_stats.parse_time(end)
+                if start.startswith("2026-09-17"):
+                    result = range_stats.funding_between(["g1"], a, b, self.db, self.idb)
+                    self.assertIsNone(result["g1"][0])
+                    self.assertIn("16:00", result["g1"][1])
+                else:
+                    rows = self.stats(start, end)["rows"]
+                    actual = range_stats.funding_between([r["id"] for r in rows], a, b, self.db, self.idb)
+                    self.assertEqual(actual, {r["id"]: (r["funding_i"], r["funding_missing"]) for r in rows})
+
+    def test_funding_between_uses_intraday_metadata_without_a_ledger(self):
+        self.point("2026-09-18 12:00", [bot(funding=-1, settled="2026-09-18 08:00")])
+        self.point("2026-09-19 12:00", [bot(funding=-4, settled="2026-09-19 08:00")])
+        result = range_stats.funding_between(["g1"], range_stats.parse_time("2026-09-18 12:00"),
+                                            range_stats.parse_time("2026-09-19 12:00"), self.db, self.idb)
+        self.assertEqual(result, {"g1": (store.to_fixed(-3), None)})
+
+    def test_funding_between_coin_amounts_use_end_price(self):
+        self.point("2026-09-18 12:00", [bot(funding=-2, settled="2026-09-18 08:00",
+                                          Product=range_stats.COIN, ConversionPrice=100)])
+        self.point("2026-09-19 12:00", [bot(funding=-8, settled="2026-09-19 08:00",
+                                          Product=range_stats.COIN, ConversionPrice=200)])
+        result = range_stats.funding_between(["g1"], range_stats.parse_time("2026-09-18 12:00"),
+                                            range_stats.parse_time("2026-09-19 12:00"), self.db, self.idb)
+        self.assertEqual(result["g1"], (store.to_fixed(-4), None))
+
     def test_a_day_from_08_to_08_takes_the_three_settlements_inside_it(self):
         self.timeline()
         out = self.stats("2026-09-18 08:00", "2026-09-19 08:00")

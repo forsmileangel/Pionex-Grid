@@ -115,6 +115,31 @@ class GistPublishTests(unittest.TestCase):
         self.assertIsNone(payload["rows"][2]["funding_total_usdt"])
         self.assertEqual(payload["total_funding_usdt"], "70.24")
 
+    def test_live_24h_fields_are_additive_and_keep_schema_one(self):
+        board = {"position_count": 1, "total_profit_24h": {"usdt": "10"}, "profit_24h_pct": 1,
+                 "rows": [{"symbol": "TEST/USDT", "profit_24h": {"usdt": "10"},
+                           "funding_total": {"usdt": "-20"}}]}
+        old = live_publish_payload(board)
+        board.update(total_funding_24h={"usdt": "-3"}, total_net_24h={"usdt": "7"},
+                     net_24h_pct=0.7, funding_24h_missing=0)
+        board["rows"][0].update(funding_24h={"usdt": "-3"}, net_24h={"usdt": "7"})
+        new = live_publish_payload(board)
+        top_keys = {"total_funding_24h_usdt", "total_net_24h_usdt", "net_24h_pct", "funding_24h_missing"}
+        row_keys = {"funding_24h_usdt", "net_24h_usdt"}
+        self.assertEqual({k: new[k] for k in top_keys}, dict(total_funding_24h_usdt="-3",
+                         total_net_24h_usdt="7", net_24h_pct=0.7, funding_24h_missing=0))
+        self.assertEqual({k: new["rows"][0][k] for k in row_keys},
+                         dict(funding_24h_usdt="-3", net_24h_usdt="7"))
+        self.assertEqual({k: v for k, v in new.items() if k not in top_keys | {"rows"}},
+                         {k: v for k, v in old.items() if k not in top_keys | {"rows"}})
+        self.assertEqual({k: v for k, v in new["rows"][0].items() if k not in row_keys},
+                         {k: v for k, v in old["rows"][0].items() if k not in row_keys})
+        self.assertEqual(new["schema"], 1)
+        for key in top_keys:
+            self.assertIsNone(old[key])
+        for key in row_keys:
+            self.assertIsNone(old["rows"][0][key])
+
     def test_patch_only_live_file(self):
         captured = {}
 

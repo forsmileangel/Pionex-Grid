@@ -304,7 +304,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json(board_payload(self.db_path))
             return
         if path == "/api/v1/live":
-            self._json(live_payload())
+            self._json(live_payload(ledger_db=self.db_path, intraday_db=self._intraday_path()))
             return
         if path == "/api/v1/settlements":
             self._json(get_settlements(self.db_path))

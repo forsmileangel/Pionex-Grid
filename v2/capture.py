@@ -231,14 +231,15 @@ def capture_live(credentials: Path, dest: Path | None = None, skip_publish: bool
 
     snapshot = collect_snapshot(credentials, reuse_finished=True, running_from_list=True)
     save_live_snapshot(snapshot, dest)
-    board = snapshot_to_board(snapshot)
+    recorded = record_intraday(snapshot, source, db_path or DEFAULT_DB, intraday_db)
+    board = snapshot_to_board(snapshot, ledger_db=db_path, intraday_db=intraday_db)
     result = {
         "ok": True,
         "kind": "live",
         "as_of": snapshot.get("CapturedAt"),
         "position_count": board["position_count"],
         "board": board,
-        "intraday": record_intraday(snapshot, source, db_path or DEFAULT_DB, intraday_db),
+        "intraday": recorded,
         "finished_cache": snapshot.get("FinishedCache"),
     }
     if skip_publish:
