@@ -431,7 +431,12 @@ def main() -> int:
     parser.add_argument("--db", default=str(DEFAULT_DB))
     parser.add_argument("--skip-market", action="store_true", help="Reuse data/market-DATE.json")
     parser.add_argument("--render", action="store_true", help="Render HTML from data + notes")
+    parser.add_argument("--tune", action="store_true", help="Write offline position tuning report")
     args = parser.parse_args()
+    if args.tune:
+        from . import tune_report
+        print(tune_report.write(args.date, Path(args.db)))
+        return 0
     (OUT_DIR / "data").mkdir(parents=True, exist_ok=True)
     (OUT_DIR / "notes").mkdir(parents=True, exist_ok=True)
     data_path = OUT_DIR / "data" / f"{args.date}.json"
