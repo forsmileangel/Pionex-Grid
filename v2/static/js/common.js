@@ -42,6 +42,15 @@ export function avgStat(label, note, value, sub) {
 }
 export const dayRange = (b) => (b && b.from ? `${b.from.slice(5).replace("-", "/")}–${b.to.slice(5).replace("-", "/")}` : "");
 export const skippedNote = (b) => (b && b.skipped ? ` · ${b.skipped} 天待補未計` : "");
+// 資金費佔配對的百分比：付出（負）＝吃掉配對，收到（正，做多而市場偏空時）＝加成配對。pct 帶正負號。
+export function fundShare(pct, short = false) {
+  if (pct == null) return "—";
+  if (Number(pct) === 0) return "持平";
+  const word = Number(pct) < 0 ? "吃掉" : "加成";
+  return `${word}${short ? "" : "配對"} ${n(Math.abs(pct), 1)}%`;
+}
+export const fundWord = (pct) => (pct != null && Number(pct) > 0 ? "加成" : "吃掉");
+export const FUND_SIGN_NOTE = "資金費做多付出為負（吃掉配對），市場偏空時做多會收到，為正（加成配對）。";
 // 關倉損益＝關倉紀錄頁的最終淨損益，記在關倉後第一筆每日紀錄那天；不算進配對和平均。
 const CLOSE_REASON = { profit_stop: "止盈", loss_stop: "止損", user_cancel: "手動關倉", liquidation: "強平", liquidate: "強平",
   force_liquidation: "強平", expired: "到期" };

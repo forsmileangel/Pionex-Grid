@@ -1,6 +1,6 @@
 import { state } from "../state.js";
 
-import { app, cls, esc, moneyNum, n, showFlash, signed, tip, twd } from "../common.js";
+import { FUND_SIGN_NOTE, app, cls, esc, fundShare, fundWord, moneyNum, n, showFlash, signed, tip, twd } from "../common.js";
 
 import { isCurrent } from "../router.js";
 
@@ -11,7 +11,7 @@ let rangeFrom = "";
 let rangeTo = "";
 const excluded = new Set();
 
-const RANGE_TIP = "配對＝區間內每 30 分鐘紀錄的配對增量（已扣掉加倉、複投的跳動）；區間內新開的倉算全部，關倉的補到結算為止。資金費＝區間內各次結算（台北 00:00、08:00、16:00）的合計，剛好在結束時間結算的算進來、剛好在開始時間的不算。淨利＝配對＋資金費，不含關倉賠掉的本金。";
+const RANGE_TIP = "配對＝區間內每 30 分鐘紀錄的配對增量（已扣掉加倉、複投的跳動）；區間內新開的倉算全部，關倉的補到結算為止。資金費＝區間內各次結算（台北 00:00、08:00、16:00）的合計，剛好在結束時間結算的算進來、剛好在開始時間的不算。淨利＝配對＋資金費，不含關倉賠掉的本金。" + FUND_SIGN_NOTE;
 const FUND_NOTE = "1.0.4 起每 30 分鐘都會記資金費，任何時段都算得出來；在那之前只有每天 08:15 的紀錄，開始和結束要落在 08:00 才算得出資金費（配對不受影響）。";
 
 const pad = (v) => String(v).padStart(2, "0");
@@ -49,10 +49,12 @@ async function load() {
 }
 
 const money = (m) => (m && m.usdt != null ? signed(moneyNum(m)) : "—");
-const pct = (grid, fund) => {
+// 資金費 ÷ 配對，帶正負號（正＝收到）；配對為 0 或負時不算。
+const pctNum = (grid, fund) => {
   const g = moneyNum(grid), f = moneyNum(fund);
-  return g == null || f == null || g <= 0 ? "—" : n(Math.abs(f / g * 100), 1) + "%";
+  return g == null || f == null || g <= 0 ? null : f / g * 100;
 };
+const pctText = (v) => (v == null ? "—" : signed(v, 1) + "%");
 
 function paintRange() {
   const d = rangeData;
@@ -66,7 +68,7 @@ function paintRange() {
       <td class="n ${cls(moneyNum(r.grid))}">${money(r.grid)}</td>
       <td class="n ${cls(moneyNum(r.funding))}">${r.funding_missing ? `<span class="warn" title="${esc(r.funding_missing)}">缺資料</span>` : money(r.funding)}</td>
       <td class="n ${cls(moneyNum(r.net))}"><b>${money(r.net)}</b></td>
-      <td class="n">${pct(r.grid, r.funding)}</td>
+      <td class="n ${cls(pctNum(r.grid, r.funding))}">${pctText(pctNum(r.grid, r.funding))}</td>
       <td class="note">${esc(r.notes.join("；"))}</td>
     </tr>`).join("");
   const x = d && d.excluded_totals;
@@ -85,13 +87,13 @@ function paintRange() {
       <div class="stat">${tip("配對", RANGE_TIP)}<strong class="${cls(moneyNum(t.grid))}">${money(t.grid)}<span class="unit">USDT</span><span class="twd">${twd(t.grid)} · ${t.count} 倉</span></strong></div>
       <div class="stat">${tip("資金費", FUND_NOTE)}<strong class="${cls(moneyNum(t.funding))}">${money(t.funding)}<span class="unit">USDT</span><span class="twd">${t.funding_missing ? `${t.funding_missing} 倉缺資料，未計` : twd(t.funding)}</span></strong></div>
       <div class="stat">${tip("淨利", "配對＋資金費。不含關倉賠掉的本金（看關倉紀錄）。")}<strong class="${cls(moneyNum(t.net))}">${money(t.net)}<span class="unit">USDT</span><span class="twd">${twd(t.net)}</span></strong></div>
-      <div class="stat">${tip("資金費吃掉配對", "資金費 ÷ 配對。")}<strong>${t.pct_of_grid == null ? "—" : n(Math.abs(t.pct_of_grid), 1) + "%"}</strong></div>
+      <div class="stat">${tip("資金費" + fundWord(t.pct_of_grid) + "配對", "資金費 ÷ 配對。" + FUND_SIGN_NOTE)}<strong class="${cls(t.pct_of_grid)}">${t.pct_of_grid == null ? "—" : n(Math.abs(t.pct_of_grid), 1) + "%"}</strong></div>
     </div>` : ""}
     ${d ? `<div class="card">
       <div class="card-head"><h3>每倉明細</h3>
         <div class="seg" role="group"><button type="button" id="rangeDropClosed">排除區間內關倉的倉</button><button type="button" id="rangeAll">全部算進來</button><button type="button" id="rangeCopy">複製表格</button></div></div>
       <p class="note">取消勾選＝不算進合計。${x && x.count ? `已排除 ${x.count} 倉：配對 ${money(x.grid)} · 資金費 ${money(x.funding)} U` : ""}</p>
-      <div class="range-table"><table class="plain"><thead><tr><th>標的</th><th>槓桿</th><th>狀態</th><th>配對</th><th>資金費</th><th>淨利</th><th>吃掉</th><th>備註</th></tr></thead>
+      <div class="range-table"><table class="plain"><thead><tr><th>標的</th><th>槓桿</th><th>狀態</th><th>配對</th><th>資金費</th><th>淨利</th><th>${tip("資金費／配對", "正＝收到（加成）、負＝付出（吃掉）")}</th><th>備註</th></tr></thead>
       <tbody>${rowHtml || `<tr><td colspan="8" class="muted">這段時間沒有倉位紀錄</td></tr>`}</tbody></table></div>
     </div>` : ""}`;
 

@@ -1,6 +1,6 @@
 import { state } from "../state.js";
 
-import { app, avgStat, bindHistoryClicks, both, bothSigned, closureCell, closureLine, closureNote, cls, dayRange, esc, eventCell, get, moneyNum, n, postJson, publishText, showFlash, signed, skippedNote, tip, usdt } from "../common.js";
+import { FUND_SIGN_NOTE, app, avgStat, bindHistoryClicks, both, bothSigned, closureCell, closureLine, closureNote, cls, dayRange, esc, eventCell, fundShare, fundWord, get, moneyNum, n, postJson, publishText, showFlash, signed, skippedNote, tip, usdt } from "../common.js";
 
 import { isCurrent } from "../router.js";
 
@@ -11,7 +11,7 @@ const dayRows = new Map();
 let calMonth = null;
 let calSelected = "";
 
-const FUND_TIP = "資金費＝派網這個倉的累計資金費，和上一次每日紀錄相減；付出為負、收到為正。派網在台北 00:00、08:00、16:00 結算。幣本位是當天新增的幣×抓取價，不含幣價重估。";
+const FUND_TIP = "資金費＝派網這個倉的累計資金費，和上一次每日紀錄相減。" + FUND_SIGN_NOTE + "派網在台北 00:00、08:00、16:00 結算。幣本位是當天新增的幣×抓取價，不含幣價重估。";
 const NET_TIP = "淨利＝當日配對＋當日資金費。Portfolio 和 Excel 的每日利潤仍只有配對。不含關倉賠掉的本金（看關倉損益）。";
 const MONTH_TIP = "所選月份的每日淨利（配對＋資金費）加總 ÷ 天數。一天＝前一天 08:15 到當天 08:15 的那筆每日紀錄；漏抓的日子會併進下一筆，天數照實際算；資金費沒記到的那天，會併進下一天。帳本第一天（基準日）和關倉配對待補的日子不算。切換月份會跟著變。";
 const RECENT_TIP = "最新一筆每日紀錄往回 30 天（含當天）的每日淨利加總 ÷ 天數，規則和當月效率一樣。固定看最近 30 天，不跟著月份切換。";
@@ -31,7 +31,6 @@ async function loadDayRows(date) {
 }
 
 const pctText = (v) => (v == null ? "—" : signed(v) + "%");
-const eaten = (pct) => (pct == null ? "—" : n(Math.abs(pct), 1) + "%");
 
 // 平均卡：大字是淨利日均，小字拆成配對和資金費（v2/averages.py）。
 function calAverages(mon, recent) {
@@ -103,7 +102,7 @@ function paintCalendar() {
 
   const total = (key) => (mon && mon.days ? moneyNum(mon[key].total) : null);
   const monthSum = mon && mon.days
-    ? `本月配對 <b class="${cls(total("grid_profit"))}">${signed(total("grid_profit"))}</b> U · 資金費 <b class="${cls(total("funding"))}">${signed(total("funding"))}</b> U（吃掉配對 ${eaten(mon.pct_of_grid)}）· 淨利 <b class="${cls(total("net"))}">${signed(total("net"))}</b> U`
+    ? `本月配對 <b class="${cls(total("grid_profit"))}">${signed(total("grid_profit"))}</b> U · 資金費 <b class="${cls(total("funding"))}">${signed(total("funding"))}</b> U（${fundShare(mon.pct_of_grid)}）· 淨利 <b class="${cls(total("net"))}">${signed(total("net"))}</b> U`
     : "本月尚無紀錄";
 
   const sel = byDate[calSelected] || {};
@@ -146,13 +145,13 @@ function paintCalendar() {
   app.innerHTML = `
     <div class="stats">
       ${stat("最近一天淨利", NET_TIP, latest.net,
-        `${esc(latest.date)} · 配對 ${signed(moneyNum(latest.grid_profit))} · 資金費 ${signed(moneyNum(latest.funding))}（吃掉 ${eaten(latest.pct_of_grid)}）`)}
+        `${esc(latest.date)} · 配對 ${signed(moneyNum(latest.grid_profit))} · 資金費 ${signed(moneyNum(latest.funding))}（${fundShare(latest.pct_of_grid, true)}）`)}
       ${stat("本月淨利", "本月每日配對＋資金費加總。基準日和關倉待補的日子不計。", monthNow && monthNow.days ? monthNow.net.total : null,
-        monthNow && monthNow.days ? `配對 ${signed(moneyNum(monthNow.grid_profit.total))} · 資金費 ${signed(moneyNum(monthNow.funding.total))}（吃掉 ${eaten(monthNow.pct_of_grid)}）` : "")}
+        monthNow && monthNow.days ? `配對 ${signed(moneyNum(monthNow.grid_profit.total))} · 資金費 ${signed(moneyNum(monthNow.funding.total))}（${fundShare(monthNow.pct_of_grid, true)}）` : "")}
       ${stat("近 30 天資金費", "最近 30 天的每日資金費加總與日均；年化＝日均 ÷ 最近一天的等效倉位 × 365。", recent.days ? recent.funding.total : null,
         fund30 != null ? `日均 ${signed(fund30)} U · 年化 ${moneyNum(latest.equivalent) ? pctText(fund30 * 365 / moneyNum(latest.equivalent) * 100) : "—"}` : "")}
       ${stat("歷史累計資金費", "所有出現過的倉（含已關倉）從建倉起的累計資金費加總，USDT 用最近一次的換算。％＝佔歷史累計配對利潤。", latest.total,
-        `佔歷史累計配對 ${eaten(latest.total_pct_of_grid)}`)}
+        `${fundShare(latest.total_pct_of_grid)}（歷史累計）`)}
     </div>
     <div class="card">
       <div class="cal-head">
@@ -190,7 +189,7 @@ function paintCalendar() {
         ? `<p class="warn">有倉位變多、網格利潤也掉了一截，對不上是加倉還是複投。請在列上選一次。</p>` : ""}
       <div class="range-table"><table class="plain"><thead><tr><th>標的</th><th>${tip("事件", "續存＝照常；加倉＝只是本金變多、網格利潤沒被重置；複投＝網格利潤打進倉位後從接近 0 再算。對不上才會出現待確認。")}</th><th>倉位</th><th>當日配對</th>
         <th>${tip("當日資金費", FUND_TIP)}</th><th>${tip("淨利", NET_TIP)}</th>
-        <th>${tip("資金費／配對", "當日資金費 ÷ 當日配對利潤；配對為 0 或負時不算。")}</th>
+        <th>${tip("資金費／配對", "當日資金費 ÷ 當日配對利潤；正＝收到（加成）、負＝付出（吃掉）；配對為 0 或負時不算。")}</th>
         <th>${tip("累計資金費", "這個倉從建倉起的累計資金費（派網數字）。")}</th><th>當時網格利潤</th></tr></thead>
       <tbody>${rowHtml}</tbody></table></div>
     </div>
@@ -245,7 +244,7 @@ function drawCalendarBars(byDate, y, m, dim) {
         { color: accent, label: "當日配對", value: signed(grid[i]) + " U", cls: cls(grid[i]) },
         { color: down, label: "資金費", value: fund[i] == null ? "—" : signed(fund[i]) + " U", cls: cls(fund[i]) },
         { color: ink, label: "淨利", value: net[i] == null ? "—" : signed(net[i]) + " U", cls: cls(net[i]) },
-        { label: "資金費吃掉", value: r.pct_of_grid == null ? "—" : n(Math.abs(r.pct_of_grid), 1) + "%" },
+        { label: "資金費" + fundWord(r.pct_of_grid), value: r.pct_of_grid == null ? "—" : n(Math.abs(r.pct_of_grid), 1) + "%" },
         { label: "倉位數", value: String(r.active_count ?? "—") },
       ], "點長條切換到那一天");
     },

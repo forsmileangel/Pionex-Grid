@@ -152,5 +152,21 @@ class RangeTests(unittest.TestCase):
         self.assertIn("配對 +7.00  資金費 -2.00  淨利 +5.00", out.getvalue())
 
 
+    def test_received_funding_is_called_a_boost_not_eaten(self):
+        """Long positions receive funding when the market leans short: the share is positive."""
+        self.daily("2026-09-17 08:15", [bot(grid=90, funding=0, settled="2026-09-17 08:00")])
+        self.point("2026-09-18 08:00:03", [bot(grid=100, funding=0, settled="2026-09-18 00:00")])
+        self.point("2026-09-18 12:00:03", [bot(grid=103, funding=1.5, settled="2026-09-18 08:00")])
+        self.point("2026-09-19 08:00:03", [bot(grid=110, funding=3.5, settled="2026-09-19 00:00")])
+        self.point("2026-09-19 09:00:03", [bot(grid=111, funding=6.0, settled="2026-09-19 08:00")])
+        out = self.stats("2026-09-18 08:00", "2026-09-19 08:00")
+        self.assertEqual(out["totals"]["funding_i"], store.to_fixed(4.5))  # the 08:00 settlement at the start is not in (start, end]
+        self.assertEqual(out["totals"]["pct_of_grid"], 45.0)
+        text = io.StringIO()
+        with contextlib.redirect_stdout(text):
+            range_stats.main(["--db", str(self.db), "--from", "2026-09-18 08:00", "--to", "2026-09-19 08:00"])
+        self.assertIn("資金費加成配對 45.0%", text.getvalue())
+        self.assertNotIn("吃掉", text.getvalue())
+
 if __name__ == "__main__":
     unittest.main()

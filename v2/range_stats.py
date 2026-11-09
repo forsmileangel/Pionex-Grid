@@ -255,7 +255,7 @@ def main(argv=None) -> int:
         return 0
     t, x = data["totals"], data["excluded_totals"]
     print(f"區間 {data['from']} → {data['to']}（配對用 {data['grid_from'][5:16]} → {data['grid_to'][5:16]} 的紀錄）")
-    print(f"{'標的':<12}{'槓桿':<9}{'狀態':<6}{'配對':>10}{'資金費':>10}{'淨利':>10}{'吃掉':>8}")
+    print(f"{'標的':<12}{'槓桿':<9}{'狀態':<6}{'配對':>10}{'資金費':>10}{'淨利':>10}{'資金費/配對':>10}")
     for r in data["rows"]:
         pct = "" if r["funding_i"] is None or r["grid_i"] <= 0 else f"{r['funding_i'] / r['grid_i'] * 100:.1f}%"
         mark = "（排除）" if r["excluded"] else ""
@@ -263,7 +263,7 @@ def main(argv=None) -> int:
               f"{_fmt(r['funding_i']):>10}{_fmt(r['net_i']):>10}{pct:>8}{mark}"
               + (f"  ※{r['funding_missing']}" if r["funding_missing"] else "") + "".join(f"  ※{n}" for n in r["notes"]))
     print(f"合計 {t['count']} 倉：配對 {_fmt(t['grid_i'])}  資金費 {_fmt(t['funding_i'])}  淨利 {_fmt(t['net_i'])}"
-          + (f"  資金費吃掉 {abs(t['pct_of_grid'])}%" if t["pct_of_grid"] is not None else "")
+          + (f"  資金費{'加成' if t['pct_of_grid'] > 0 else '吃掉'}配對 {abs(t['pct_of_grid'])}%" if t["pct_of_grid"] else "")
           + (f"  （{t['funding_missing']} 倉資金費缺資料，未計）" if t["funding_missing"] else ""))
     if x["count"]:
         print(f"排除 {x['count']} 倉：配對 {_fmt(x['grid_i'])}  資金費 {_fmt(x['funding_i'])}")
