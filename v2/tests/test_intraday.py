@@ -268,7 +268,8 @@ class SparklineTests(IntradayTestCase):
         for day, gp in (("2026-09-29", 10), ("2026-09-30", 12), ("2026-10-01", 15)):
             ingest(snap(day, [rec(GridProfit=gp)]), self.ledger)
         data = sparkline_payload(14, self.ledger)
-        self.assertEqual(data["dates"], ["2026-09-29", "2026-09-30", "2026-10-01"])
+        # Profit days: each capture is filed under the day before it.
+        self.assertEqual(data["dates"], ["2026-09-28", "2026-09-29", "2026-09-30"])
         values = data["rows"]["g1"]
         self.assertIsNone(values[0])
         self.assertAlmostEqual(values[1], 2 / 1000 * 100 * 3 / 5, places=6)

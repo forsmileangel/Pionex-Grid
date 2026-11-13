@@ -34,6 +34,7 @@ from .store import (
     daily_date_payload,
     daily_payload,
     day_rows_payload,
+    profit_date,
     days_payload,
     export_sheets,
     grid_history_payload,
@@ -489,7 +490,8 @@ class Handler(BaseHTTPRequestHandler):
                 # Same as the 08:15 capture: every bot read in full, no local closed-bot cache.
                 save_live_snapshot(collect_snapshot(V1_CREDENTIALS))
                 result = commit_live_to_daily(confirm, self.db_path)
-                self._json({"ok": True, "capture_date": result.get("capture_date"), "publish": result.get("publish")})
+                self._json({"ok": True, "capture_date": result.get("capture_date"),
+                            "profit_date": profit_date(result.get("capture_date")), "publish": result.get("publish")})
             except CaptureError as exc:
                 self._json({"error": str(exc)}, 400)
             except Exception as exc:
@@ -503,9 +505,19 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 self._json({"error": "invalid json"}, 400)
                 return
+            capture_date = str((body or {}).get("capture_date") or "")
+            try:
+                shown = profit_date(capture_date)
+            except ValueError:
+                shown = None
+            # A tab opened before 1.0.8 would send the day it shows as the capture date and write the
+            # decision one day off. The page must name both, and they must agree.
+            if not shown or str((body or {}).get("date") or "") != shown:
+                self._json({"error": "頁面是舊版，請重新整理後再選一次"}, 400)
+                return
             try:
                 result = apply_event_decision(
-                    str((body or {}).get("capture_date") or ""),
+                    capture_date,
                     str((body or {}).get("bu_order_id") or ""),
                     str((body or {}).get("decision") or ""),
                     self.db_path,

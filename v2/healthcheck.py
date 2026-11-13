@@ -240,7 +240,7 @@ def ledger_stats(db: Path, leverage_by_id: dict[str, float]) -> dict:
             per_bot[oid] = {"eff14": statistics.fmean(v14) if v14 else None,
                             "eff30": statistics.fmean(v30) if v30 else None, "days": len(v30)}
         monthly = [dict(r) for r in con.execute(
-            """SELECT substr(capture_date,1,7) AS month, count(*) AS days, sum(daily_profit_i)/1e8 AS profit,
+            """SELECT substr(date(capture_date,'-1 day'),1,7) AS month, count(*) AS days, sum(daily_profit_i)/1e8 AS profit,
                       sum(gap_days) AS gaps FROM daily_summary GROUP BY 1 ORDER BY 1""")]
         recent = con.execute(
             "SELECT capture_date, daily_profit_i/1e8 AS p, gap_days FROM daily_summary ORDER BY capture_date DESC LIMIT 30").fetchall()

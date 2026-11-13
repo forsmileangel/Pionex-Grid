@@ -9,7 +9,7 @@ from contextlib import closing
 from datetime import date, datetime
 from pathlib import Path
 
-from .store import DEFAULT_DB, SCALE, TAIPEI
+from .store import DEFAULT_DB, SCALE, TAIPEI, profit_date
 
 
 def amount(value):
@@ -37,6 +37,8 @@ def ledger_rows(db_path: Path, today: date, allow_stale: bool = False) -> dict:
                   'withdraw': '提取', 'reinvest': '複投', 'reduce': '減倉',
                   'add': '加倉', 'review': '待確認', 'leverage': '調槓桿'}
         for day in summaries:
+            # Column 1 is the day the profit belongs to; the time beside it is the next morning's capture.
+            shown = profit_date(day['capture_date'])
             timestamp = datetime.fromisoformat(day['captured_at']).astimezone(TAIPEI)
             details = list(con.execute('''SELECT d.*, p.symbol, p.created_at, p.product, s.leverage
                 FROM daily_grid_profit d JOIN grid_positions p ON p.bu_order_id=d.bu_order_id
@@ -55,20 +57,24 @@ def ledger_rows(db_path: Path, today: date, allow_stale: bool = False) -> dict:
                 product = '幣本位合約網格' if record['product'] == 'coin_margined_contract_grid' else '合約網格'
                 leverage = (record['leverage'] or '').replace(' long', ' 做多').replace(' short', ' 做空')
                 status = '／'.join(labels.get(e, e) for e in (record['event'] or record['status']).split('+'))
-                rows.append([day['capture_date'], timestamp.strftime('%H:%M:%S'), '網格', oid,
+                rows.append([shown, timestamp.strftime('%H:%M:%S'), '網格', oid,
                     record['symbol'], record['created_at'], (product + ' ' + leverage).strip(), status,
                     amount(record['grid_profit_i']), amount(record['prev_grid_profit_i']),
                     amount(record['daily_profit_i']), amount(running_by_id[oid]),
                     amount(record['investment_i']), '否' if record['daily_profit_i'] is None else '是',
                     day['active_count'], source])
             period_total += day['daily_profit_i']
-            rows.append([day['capture_date'], timestamp.strftime('%H:%M:%S'), '日總計', '__DAILY_TOTAL__',
+            rows.append([shown, timestamp.strftime('%H:%M:%S'), '日總計', '__DAILY_TOTAL__',
                 '合約網格合計', '', '合約網格', '日總計', amount(day['cumulative_i']),
                 amount(sum(previous)) if previous else None, amount(day['daily_profit_i']),
                 amount(period_total), amount(day['investment_i']), '否', day['active_count'], source])
-        return {'source': 'v2-sqlite', 'dates': [d['capture_date'] for d in summaries],
-                'note': '來源：v2 每日快照。每日利潤含關倉最後增量，提領不重複加回。累計欄為記錄期間每日利潤加總，基準日為 0；關倉待補時為暫計。',
-                'schedule_note': '每日 08:15 擷取帳本後更新 Excel，採 v2 每日快照時間。重跑會重建帳本涵蓋日期，補登回填原區間；當天帳本未完成時保留原檔。',
+        # dates: the days in column 1 (profit days). capture_dates: the days those captures ran, which
+        # is what a workbook written before 1.0.8 holds; the exporter accepts a date found in either.
+        # latest_date stays the latest capture date (the freshness check and the run log use it).
+        return {'source': 'v2-sqlite', 'dates': [profit_date(d['capture_date']) for d in summaries],
+                'capture_dates': [d['capture_date'] for d in summaries],
+                'note': '來源：v2 每日快照。日期是利潤所屬的那一天（當天 08:15 到隔天 08:15），時間是隔天早上的擷取時間。每日利潤含關倉最後增量，提領不重複加回。累計欄為記錄期間每日利潤加總，基準日為 0；關倉待補時為暫計。',
+                'schedule_note': '每日 08:15 擷取帳本後更新 Excel，這一筆記在前一天的日期。重跑會重建帳本涵蓋日期，補登回填原區間；當天帳本未完成時保留原檔。',
                 'latest_date': latest.isoformat(), 'rows': rows}
 
 

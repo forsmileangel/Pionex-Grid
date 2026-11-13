@@ -176,8 +176,9 @@ class LiquidationTests(Ledger):
         self.assertEqual(store.status_payload(self.db)["settlement_check_flags"], 0)
         for page in (store.days_payload(self.db), funding.funding_payload(self.db)):
             closed = page["closures"]
-            self.assertEqual(closed["days"]["2026-09-19"]["net"]["usdt"], "-3000")
-            self.assertEqual(closed["days"]["2026-09-19"]["items"][0]["reason"], "force_liquidation")
+            # Recorded by the 09-19 capture, so it sits on the 09-18 cell, the day it happened.
+            self.assertEqual(closed["days"]["2026-09-18"]["net"]["usdt"], "-3000")
+            self.assertEqual(closed["days"]["2026-09-18"]["items"][0]["reason"], "force_liquidation")
             self.assertEqual((closed["months"]["2026-09"]["count"], closed["recent"]["count"]), (1, 1))
             self.assertIn("twd", closed["recent"]["net"])
         self.assertEqual(store.days_payload(self.db)["averages"]["recent"]["daily_profit"]["total"]["usdt"], "4")

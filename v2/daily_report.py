@@ -18,7 +18,7 @@ import tempfile
 import zipfile
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from xml.sax.saxutils import escape, quoteattr
@@ -147,6 +147,11 @@ def validate_schema(connection: sqlite3.Connection) -> None:
             raise ReportError(f"v2 SQLite 結構不相容，{table} 缺少：{', '.join(missing)}")
 
 
+def profit_day(capture_date: str) -> str:
+    """The day a capture's profit belongs to: the day before it ran (same rule as store.profit_date)."""
+    return (date.fromisoformat(capture_date) - timedelta(days=1)).isoformat()
+
+
 def load_report(connection: sqlite3.Connection, today: date, allow_stale: bool) -> tuple[list[dict], dict[str, list[dict]]]:
     validate_schema(connection)
     summaries = [dict(row) for row in connection.execute(
@@ -181,6 +186,8 @@ def load_report(connection: sqlite3.Connection, today: date, allow_stale: bool) 
         rows_by_date.setdefault(item["capture_date"], []).append(item)
     for summary in summaries:
         rows_by_date.setdefault(summary["capture_date"], [])
+        # The report labels each day by its profit day; rows_by_date stays keyed by capture date.
+        summary["date"] = profit_day(summary["capture_date"])
     return summaries, rows_by_date
 
 
@@ -338,7 +345,7 @@ def summary_sheet(summaries: list[dict]) -> tuple[list[list[Cell]], list[float],
     ]
     rows: list[list[Cell]] = [
         [c(REPORT_TITLE, 1)] + [c() for _ in range(len(headers) - 1)],
-        [c("來源：v2 SQLite 08:15 快照；單日利潤採 v2 事件分類，幣本位匯率重估另列。", 2)] + [c() for _ in range(len(headers) - 1)],
+        [c("來源：v2 SQLite 08:15 快照；日期是利潤所屬的那一天（當天 08:15 到隔天 08:15），擷取時間是隔天早上；單日利潤採 v2 事件分類，幣本位匯率重估另列。", 2)] + [c() for _ in range(len(headers) - 1)],
         [c() for _ in headers],
         [c(value, 3) for value in headers],
     ]
@@ -351,7 +358,7 @@ def summary_sheet(summaries: list[dict]) -> tuple[list[list[Cell]], list[float],
         wallet = number(summary["wallet_total_usdt"])
         captured = parse_datetime(summary["captured_at"])
         rows.append([
-            c(excel_serial(date.fromisoformat(summary["capture_date"])), 7),
+            c(excel_serial(date.fromisoformat(summary["date"])), 7),
             c(excel_serial(captured), 8),
             c(summary["active_count"], 15), c(summary["new_count"], 15), c(summary["closed_count"], 15),
             c(summary["unresolved_count"], 17 if summary["unresolved_count"] else 15),
@@ -485,13 +492,13 @@ def verify_xlsx(path: Path, summaries: list[dict], sheet_names: list[str]) -> No
 
 
 def write_xlsx(path: Path, summaries: list[dict], rows_by_date: dict[str, list[dict]]) -> None:
-    sheet_names = ["每日總表"] + [row["capture_date"] for row in summaries]
-    summary_by_date = {row["capture_date"]: row for row in summaries}
+    # One sheet per day, named by the profit day.
+    sheet_names = ["每日總表"] + [row["date"] for row in summaries]
     rendered: list[str] = []
     summary_rows, widths, merges, auto_filter = summary_sheet(summaries)
     rendered.append(sheet_xml(summary_rows, widths, merges, auto_filter))
-    for day in sheet_names[1:]:
-        daily_rows, widths, merges, auto_filter = daily_sheet(day, summary_by_date[day], rows_by_date[day])
+    for summary in summaries:
+        daily_rows, widths, merges, auto_filter = daily_sheet(summary["date"], summary, rows_by_date[summary["capture_date"]])
         rendered.append(sheet_xml(daily_rows, widths, merges, auto_filter, hidden_columns={18}))
 
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -583,7 +590,9 @@ def export_report(db_path: Path, output: Path, today: date, allow_stale: bool, a
     write_xlsx(output, summaries, rows_by_date)
     return {
         "ok": True, "source": str(db_path), "output": str(output),
+        # Capture dates (the pipeline compares latest_date with the ledger); the sheets use the profit days.
         "first_date": summaries[0]["capture_date"], "latest_date": summaries[-1]["capture_date"],
+        "first_profit_date": summaries[0]["date"], "latest_profit_date": summaries[-1]["date"],
         "sheet_count": len(summaries) + 1, "position_rows": sum(len(rows) for rows in rows_by_date.values()),
         "archived": None if archived is None else str(archived),
     }

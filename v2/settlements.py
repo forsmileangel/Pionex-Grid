@@ -323,6 +323,7 @@ def payload(con):
             'id': row['bu_order_id'], 'symbol': pos['symbol'], 'currency': f['currency'],
             'closed_at': f['closed_at'], 'observed_at': row['observed_at'], 'updated_at': row['updated_at'],
             'capture_date': daily['capture_date'] if daily else None,
+            'profit_date': store.profit_date(daily['capture_date']) if daily else None,
             'status': 'settled' if complete else 'partial' if f['grid_profit'] is not None else 'pending',
             'source': 'manual+api' if f['manual'] else 'api',
             **{k: f[k] for k in ['grid_profit','grid_profit_usdt','net_profit','net_profit_usdt',

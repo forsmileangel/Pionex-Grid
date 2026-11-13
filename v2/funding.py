@@ -13,6 +13,7 @@ from pathlib import Path
 from .averages import averages_view, closure_totals, profit_averages
 from .fx import attach_twd, usdt_twd
 from .store import (_equivalent_by_run, _fx_view, _pct_value, closure_entries, connect, day_rows_payload, equivalent_i,
+                    profit_date,
                     money, to_fixed)
 
 COIN_PRODUCT = "coin_margined_contract_grid"
@@ -125,7 +126,10 @@ def funding_payload(db_path: Path | None = None, with_rows: bool = True) -> dict
         true_profit = s["true_profit_i"] if s["true_profit_i"] is not None else s["cumulative_i"]
         grid = s["daily_profit_i"]
         days.append({
-            "date": day,
+            # date is the profit day (what the calendar shows); capture_date is what the day's
+            # rows and event decisions are asked for with.
+            "date": profit_date(day),
+            "capture_date": day,
             "funding": m(f),
             "grid_profit": m(grid),
             # Net for the day = grid profit + funding; unknown when funding is.
@@ -153,7 +157,7 @@ def funding_payload(db_path: Path | None = None, with_rows: bool = True) -> dict
         key = (d["capture_date"], d["bu_order_id"])
         f = rows.get(key) or {}
         pos = positions.get(d["bu_order_id"]) or {}
-        rows_by_date.setdefault(d["capture_date"], []).append({
+        rows_by_date.setdefault(profit_date(d["capture_date"]), []).append({
             "bu_order_id": d["bu_order_id"],
             "symbol": pos.get("symbol"),
             "status": d["status"],
@@ -214,7 +218,7 @@ def funding_payload(db_path: Path | None = None, with_rows: bool = True) -> dict
         **({"rows_by_date": rows_by_date} if with_rows else {}),
         "grids": grids,
         "averages": averages,
-        "closures": closure_totals(closures, summaries[-1]["capture_date"] if summaries else None, m),
+        "closures": closure_totals(closures, profit_date(summaries[-1]["capture_date"]) if summaries else None, m),
         "fx": _fx_view(usdt_twd()),
     }
 

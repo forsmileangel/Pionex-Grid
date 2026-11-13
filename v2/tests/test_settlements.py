@@ -85,7 +85,8 @@ class SettlementTests(unittest.TestCase):
 
         calendar = {d['capture_date']: d for d in store.days_payload(self.db)['days']}
         daily = {d['capture_date']: d for d in store.daily_payload(self.db)}
-        ledger = {d['date']: d for d in store.ledger_publish_payload(self.db)['days']}
+        ledger = {d['capture_date']: d for d in store.ledger_publish_payload(self.db)['days']}
+        # The export is keyed by the profit day, one day before the capture.
         excel = {r[0]: r for r in store.export_sheets(self.db)['每日總覽'][1:]}
         for date, profit, history, running in [
             ('2026-09-18', 0, 1500, 1500),
@@ -101,8 +102,9 @@ class SettlementTests(unittest.TestCase):
                 self.assertEqual(float(calendar[date]['true_profit']['usdt']), history)
                 self.assertEqual(float(ledger[date]['daily_profit_usdt']), profit)
                 self.assertEqual(float(ledger[date]['true_profit_usdt']), history)
-                self.assertEqual(excel[date][1], profit)
-                self.assertEqual(excel[date][7], history)
+                self.assertEqual(ledger[date]['date'], store.profit_date(date))
+                self.assertEqual(excel[store.profit_date(date)][1], profit)
+                self.assertEqual(excel[store.profit_date(date)][7], history)
         self.assertEqual(calendar['2026-09-20']['unresolved_count'], 0)
         self.assertEqual(store.day_rows_payload('2026-09-20', self.db)['rows'][0]['bu_order_id'], 'g1')
         self.assertEqual(self.row()['reported_total_profit'], -195)

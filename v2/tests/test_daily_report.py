@@ -39,8 +39,10 @@ class DailyReportTests(unittest.TestCase):
         self.assertEqual(result["sheet_count"], 3)
         self.assertEqual(result["first_date"], "2026-09-18")
         self.assertEqual(result["latest_date"], "2026-09-19")
+        self.assertEqual((result["first_profit_date"], result["latest_profit_date"]), ("2026-09-17", "2026-09-18"))
         ns = {"m": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
         with zipfile.ZipFile(output) as archive:
             workbook = ET.fromstring(archive.read("xl/workbook.xml"))
         names = [node.attrib["name"] for node in workbook.findall(".//m:sheet", ns)]
-        self.assertEqual(names, ["每日總表", "2026-09-18", "2026-09-19"])
+        # Sheets are named by the profit day: the 09-19 capture holds what 09-18 made.
+        self.assertEqual(names, ["每日總表", "2026-09-17", "2026-09-18"])

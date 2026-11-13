@@ -73,6 +73,28 @@ class DashboardApiTests(unittest.TestCase):
         self.assertEqual(status["settlement_unconfirmed"], 1)
         self.assertIn("corrections", status)
 
+    # A tab opened before 1.0.8 shows capture dates; its event decision must not land a day off.
+    def decide(self, **body):
+        return self.call("/api/v1/event-decision", "POST", {"bu_order_id": "g1", "decision": "add", **body})
+
+    def test_a_page_that_does_not_name_the_shown_day_is_refused(self):
+        code, out = self.decide(capture_date="2026-09-19")
+        self.assertEqual(code, 400)
+        self.assertIn("重新整理", out["error"])
+
+    def test_a_shown_day_that_disagrees_is_refused(self):
+        # What an old page would do with the new payload: send the shown day as the capture date.
+        code, _ = self.decide(capture_date="2026-09-18", date="2026-09-18")
+        self.assertEqual(code, 400)
+        code, _ = self.decide(capture_date="not-a-date", date="2026-09-18")
+        self.assertEqual(code, 400)
+
+    def test_matching_days_reach_the_ledger(self):
+        code, out = self.decide(capture_date="2026-09-19", date="2026-09-18")
+        # Past the guard: the ledger answers (this closing day has no add/reinvest question to decide).
+        self.assertNotIn("重新整理", str(out.get("error", "")))
+        self.assertIn(code, (200, 400))
+
     def test_efficiency_endpoints_and_saved_views(self):
         code, meta = self.call("/api/v1/efficiency/meta")
         self.assertEqual(code, 200)

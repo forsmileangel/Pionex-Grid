@@ -4,7 +4,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from v2.funding import day_rows, funding_payload, with_snapshot_day
-from v2.store import board_payload
+from v2.store import board_payload, profit_date
 from v2.store import ingest
 from v2.tests.test_store import FX, rec, snap
 
@@ -27,11 +27,24 @@ class FundingTests(unittest.TestCase):
         self.fx2.stop()
         self.tmp.cleanup()
 
+    # Tests name a day by its capture date; the payload keys it by the profit day (one day earlier).
     def day(self, payload, date):
-        return next(d for d in payload["days"] if d["date"] == date)
+        return next(d for d in payload["days"] if d["capture_date"] == date)
 
     def row(self, payload, date, oid="g1"):
-        return next(r for r in payload["rows_by_date"][date] if r["bu_order_id"] == oid)
+        return next(r for r in payload["rows_by_date"][profit_date(date)] if r["bu_order_id"] == oid)
+
+    def test_days_are_keyed_by_the_profit_day(self):
+        ingest(snap("2026-08-31", [rec(GridProfit=10, FundingFee=-10)]), self.db)
+        ingest(snap("2026-09-01", [rec(GridProfit=16, FundingFee=-13)]), self.db)
+        p = funding_payload(self.db)
+        # The capture on 09-01 holds what 08-31 made, so it is August's.
+        self.assertEqual([(d["date"], d["capture_date"]) for d in p["days"]],
+                         [("2026-08-31", "2026-09-01"), ("2026-08-30", "2026-08-31")])
+        self.assertEqual(sorted(p["rows_by_date"]), ["2026-08-30", "2026-08-31"])
+        self.assertEqual(list(p["averages"]["months"]), ["2026-08"])
+        one = day_rows("2026-09-01", self.db)
+        self.assertEqual((one["date"], one["capture_date"]), ("2026-08-31", "2026-09-01"))
 
     def test_the_records_card_shows_the_snapshot_day_as_the_calendar_does(self):
         ingest(snap("2026-08-25", [rec(GridProfit=10, FundingFee=-10, ExtraMargin=1000)]), self.db)

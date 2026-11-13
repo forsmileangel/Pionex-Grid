@@ -147,6 +147,18 @@ class CaptureError(Exception):
     pass
 
 
+def profit_date(capture_date: str | None) -> str | None:
+    """The day a capture's profit belongs to: the day before the capture.
+
+    The 08:15 capture on 11/13 holds the profit from 11/12 08:15 to 11/13 08:15, which is read
+    the next morning as "what 11/12 made". capture_date stays the run's key in the database;
+    this is applied only where a day is shown or published.
+    """
+    if not capture_date:
+        return None
+    return (datetime.fromisoformat(str(capture_date)[:10]).date() - timedelta(days=1)).isoformat()
+
+
 def to_fixed(value) -> int | None:
     if value is None or value == "":
         return None
@@ -698,7 +710,7 @@ def record_corrections(con: sqlite3.Connection, before: dict[str, dict], reason:
 
 
 def recent_corrections(con: sqlite3.Connection, limit: int = 30) -> list[dict]:
-    return [dict(row) for row in con.execute(
+    return [{**dict(row), "profit_date": profit_date(row["capture_date"])} for row in con.execute(
         """SELECT capture_date, field, old_value, new_value, reason, corrected_at
            FROM ledger_corrections ORDER BY id DESC LIMIT ?""", (limit,))]
 
@@ -1721,9 +1733,10 @@ def status_payload(db_path: Path | None = None) -> dict:
                 cur += timedelta(days=1)
         month_fx = None
         if last is not None:
-            month_prefix = last["capture_date"][:7]
+            # The month the latest profit day falls in (a capture on the 1st belongs to the month before).
+            month_prefix = profit_date(last["capture_date"])[:7]
             row = con.execute(
-                "SELECT SUM(fx_gap_i) AS n FROM daily_summary WHERE capture_date LIKE ?",
+                "SELECT SUM(fx_gap_i) AS n FROM daily_summary WHERE date(capture_date,'-1 day') LIKE ?",
                 (month_prefix + "%",),
             ).fetchone()
             month_fx = money(row["n"]) if row and row["n"] is not None else money(0)
@@ -1735,11 +1748,14 @@ def status_payload(db_path: Path | None = None) -> dict:
             "unresolved": unresolved,
             "settlement_unconfirmed": sum(r["status"] != "settled" for r in closures),
             "settlement_check_flags": sum(bool(r.get("needs_review")) for r in closures),
+            "last_profit_date": profit_date(last["capture_date"]) if last else None,
             "corrections": recent_corrections(con, 10),
+            # Capture dates: what `python -m v2.backfill --date` takes. The profit days they left empty follow.
             "missing_dates": missing,
+            "missing_profit_dates": [profit_date(day) for day in missing],
             "recent_errors": [dict(row) for row in failed],
             "coin_fx_gap_month": month_fx,
-            "coin_fx_gap_month_label": (last["capture_date"][:7] if last else None),
+            "coin_fx_gap_month_label": (profit_date(last["capture_date"])[:7] if last else None),
         }
     finally:
         con.close()
@@ -1751,6 +1767,7 @@ def daily_payload(db_path: Path | None = None) -> list[dict]:
         out = []
         for row in con.execute("SELECT * FROM daily_summary ORDER BY capture_date"):
             item = dict(row)
+            item["date"] = profit_date(row["capture_date"])
             item["daily_profit"] = money(row["daily_profit_i"])
             item["cumulative"] = money(row["cumulative_i"])
             item["true_profit"] = money(row["true_profit_i"] if row["true_profit_i"] is not None else row["cumulative_i"])
@@ -1766,7 +1783,7 @@ def daily_date_payload(capture_date: str, db_path: Path | None = None) -> dict:
     try:
         summary = con.execute("SELECT * FROM daily_summary WHERE capture_date=?", (capture_date,)).fetchone()
         if summary is None:
-            return {"date": capture_date, "rows": []}
+            return {"date": profit_date(capture_date), "capture_date": capture_date, "rows": []}
         rows = []
         for row in con.execute(
             """SELECT p.*, g.symbol, g.created_at FROM daily_grid_profit p
@@ -1782,6 +1799,7 @@ def daily_date_payload(capture_date: str, db_path: Path | None = None) -> dict:
             item["investment"] = money(row["investment_i"])
             rows.append(item)
         payload = dict(summary)
+        payload["date"] = profit_date(capture_date)
         payload["daily_profit"] = money(summary["daily_profit_i"])
         payload["cumulative"] = money(summary["cumulative_i"])
         payload["investment"] = money(summary["investment_i"])
@@ -1845,6 +1863,7 @@ def board_payload(db_path: Path | None = None) -> dict:
         return {
             "as_of": last["captured_at"],
             "capture_date": last["capture_date"],
+            "profit_date": profit_date(last["capture_date"]),
             "window": "past_24h",
             "position_count": len(rows),
             "total_profit_24h": attach_twd(money(total_24h), rate),
@@ -1896,7 +1915,8 @@ def day_rows_payload(capture_date: str, db_path: Path | None = None) -> dict:
     finally:
         con.close()
     rate = usdt_twd().get("usdt_twd")
-    return {"date": capture_date, "rows": [attach_twd_tree(row, rate) for row in rows]}
+    return {"date": profit_date(capture_date), "capture_date": capture_date,
+            "rows": [attach_twd_tree(row, rate) for row in rows]}
 
 
 def days_payload(db_path: Path | None = None) -> dict:
@@ -1909,6 +1929,7 @@ def days_payload(db_path: Path | None = None) -> dict:
         equivalent = _equivalent_by_run(con)
         for summary in summaries:
             item = dict(summary)
+            item["date"] = profit_date(summary["capture_date"])
             item["daily_profit"] = money(summary["daily_profit_i"])
             item["cumulative"] = money(summary["cumulative_i"])
             item["true_profit"] = money(summary["true_profit_i"] if summary["true_profit_i"] is not None else summary["cumulative_i"])
@@ -1925,22 +1946,24 @@ def days_payload(db_path: Path | None = None) -> dict:
             item["investment"] = attach_twd(item["investment"], rate)
             item["equivalent"] = attach_twd(item["equivalent"], rate)
         # 當月效率 and 近 30 天日均 for the calendar; the rules are in v2/averages.py.
-        entries = [{"date": s["capture_date"], "covered": 1 + (s["gap_days"] or 0), "baseline": i == 0,
+        entries = [{"date": profit_date(s["capture_date"]), "covered": 1 + (s["gap_days"] or 0), "baseline": i == 0,
                     "pending": bool(s["unresolved_count"]) or s["daily_profit_i"] is None,
                     "daily_profit": s["daily_profit_i"]}
                    for i, s in enumerate(reversed(summaries))]
         money_view = lambda value: attach_twd(money(value), rate)  # noqa: E731
         averages = averages_view(profit_averages(entries, ("daily_profit",)), money_view)
-        closures = closure_totals(closure_entries(con), summaries[0]["capture_date"] if summaries else None, money_view)
+        closures = closure_totals(closure_entries(con), profit_date(summaries[0]["capture_date"]) if summaries else None, money_view)
         return {"days": days, "averages": averages, "closures": closures, "fx": _fx_view(fx)}
     finally:
         con.close()
 
 
 def closure_entries(con: sqlite3.Connection) -> list[dict]:
-    """Each settlement that has a closing row, with its wallet net in USDT (the 關倉紀錄 figure)."""
+    """Each settlement that has a closing row, with its wallet net in USDT (the 關倉紀錄 figure).
+
+    date is the profit day of the closing row, the cell the calendar shows it in."""
     from .settlements import payload as settlement_payload
-    return [{"date": r["capture_date"], "id": r["id"], "symbol": r["symbol"], "reason": r.get("close_reason"),
+    return [{"date": profit_date(r["capture_date"]), "id": r["id"], "symbol": r["symbol"], "reason": r.get("close_reason"),
              "net": to_fixed(r["net_profit_usdt"]) if r.get("net_profit_usdt") is not None else None}
             for r in settlement_payload(con)["rows"] if r.get("capture_date")]
 
@@ -1972,7 +1995,7 @@ def sparkline_payload(days: int = 14, db_path: Path | None = None) -> dict:
                 continue
             pct = Decimal(row["daily_profit_i"]) / Decimal(row["investment_i"]) * 100 * 3
             values[i] = round(float(pct) / _leverage_value({"leverage": row["leverage"]}), 6)
-        return {"dates": dates, "rows": rows}
+        return {"dates": [profit_date(day) for day in dates], "rows": rows}
     finally:
         con.close()
 
@@ -2023,6 +2046,7 @@ def grid_history_payload(bu_order_id: str, db_path: Path | None = None) -> dict:
             row["equivalent"] = money(equivalent_i(row))
         snap_by_run = {row["run_id"]: row for row in snaps}
         for row in profits:
+            row["date"] = profit_date(row["capture_date"])
             row["daily_profit"] = money(row["daily_profit_i"])
             row["grid_profit"] = money(row["grid_profit_i"])
             row["prev_grid_profit"] = money(row.get("prev_grid_profit_i"))
@@ -2082,6 +2106,7 @@ def summary_latest(db_path: Path | None = None) -> dict:
         return {
             "available": True,
             "capture_date": last["capture_date"],
+            "profit_date": profit_date(last["capture_date"]),
             "daily_profit_usdt": from_fixed(last["daily_profit_i"]),
             "cumulative_usdt": from_fixed(last["cumulative_i"]),
             "investment_usdt": from_fixed(last["investment_i"]),
@@ -2114,7 +2139,7 @@ def export_sheets(db_path: Path | None = None) -> dict[str, list[list]]:
                 wallet_twd = int((Decimal(str(wallet)) * Decimal(str(rate))).quantize(Decimal("1."), rounding=ROUND_HALF_UP))
             dates.append(row["capture_date"])
             overview.append([
-                row["capture_date"],
+                profit_date(row["capture_date"]),
                 _excel_num(row["daily_profit_i"]),
                 _excel_twd(row["daily_profit_i"], rate),
                 _excel_num(row["investment_i"]),
@@ -2142,7 +2167,7 @@ def export_sheets(db_path: Path | None = None) -> dict[str, list[list]]:
                ORDER BY d.capture_date, p.symbol, p.created_at"""
         ):
             detail.append([
-                row["capture_date"],
+                profit_date(row["capture_date"]),
                 row["created_at"],
                 row["symbol"],
                 row["bu_order_id"],
@@ -2158,7 +2183,7 @@ def export_sheets(db_path: Path | None = None) -> dict[str, list[list]]:
             if key not in seen:
                 seen.add(key)
                 positions.append((row["symbol"], key, row["created_at"]))
-        matrix = [["標的", "網格ID", "建倉日期"] + dates]
+        matrix = [["標的", "網格ID", "建倉日期"] + [profit_date(day) for day in dates]]
         for symbol, oid, created in positions:
             matrix.append([symbol, oid, created] + [profit_map.get((day, oid)) for day in dates])
         settings = [["網格ID", "交易對", "建立", "類型", "上下限", "格數", "gridType", "perVolume", "槓桿", "狀態"]]
@@ -2173,7 +2198,7 @@ def export_sheets(db_path: Path | None = None) -> dict[str, list[list]]:
                 f"{row['top_s']}/{row['bottom_s']}", row["row_n"], row["grid_type"],
                 row["per_volume_s"], row["leverage"], row["lifecycle"],
             ])
-        runs = [["ID", "時間", "日期", "狀態", "活躍", "finished", "跨越天數", "錯誤"]]
+        runs = [["ID", "時間", "擷取日期", "狀態", "活躍", "finished", "跨越天數", "錯誤"]]
         for row in con.execute("SELECT * FROM capture_runs ORDER BY id"):
             runs.append([
                 row["id"], row["captured_at"], row["capture_date"], row["status"],
@@ -2192,7 +2217,7 @@ def export_sheets(db_path: Path | None = None) -> dict[str, list[list]]:
 
 LEDGER_SCHEMA = 1
 LEDGER_SOURCE = "pionex-grid-v2"
-LEDGER_BASELINE_DATE = "2026-08-26"
+LEDGER_BASELINE_DATE = "2026-08-24"  # profit day of the first capture (2026-08-25)
 # Per-position rows in the Gist ledger cover the latest 90 days; older days keep only
 # their day totals (calendar, monthly averages and the cumulative curve use those).
 # The local dashboard still has every row.
@@ -2302,7 +2327,9 @@ def ledger_publish_payload(db_path: Path | None = None) -> dict:
                 )
             days.append(
                 {
-                    "date": summary["capture_date"],
+                    # The day the profit belongs to (the day before the capture); capture_date is the run.
+                    "date": profit_date(summary["capture_date"]),
+                    "capture_date": summary["capture_date"],
                     "daily_profit_usdt": from_fixed(summary["daily_profit_i"]),
                     "daily_profit_twd": _excel_twd(summary["daily_profit_i"], rate),
                     "investment_usdt": from_fixed(summary["investment_i"]),
@@ -2342,8 +2369,10 @@ def ledger_publish_payload(db_path: Path | None = None) -> dict:
         return {
             "schema": LEDGER_SCHEMA,
             "source": LEDGER_SOURCE,
-            "baseline_date": first_date or LEDGER_BASELINE_DATE,
+            "baseline_date": profit_date(first_date) or LEDGER_BASELINE_DATE,
             "available": True,
+            # days[].date is the profit day. captured_at / capture_date say when the latest capture ran.
+            "date_basis": "profit_day",
             "captured_at": latest_row["captured_at"],
             "capture_date": latest_row["capture_date"],
             "fx": {
@@ -2356,6 +2385,7 @@ def ledger_publish_payload(db_path: Path | None = None) -> dict:
                 "twd": _twd_from_usdt(latest_wallet, latest_rate),
             },
             "latest": {
+                "date": profit_date(latest_row["capture_date"]),
                 "daily_profit_usdt": from_fixed(latest_row["daily_profit_i"]),
                 "daily_profit_twd": _excel_twd(latest_row["daily_profit_i"], latest_rate),
                 "cumulative_usdt": from_fixed(latest_row["cumulative_i"]),

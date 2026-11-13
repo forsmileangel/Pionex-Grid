@@ -47,7 +47,10 @@ try {
         if ($LASTEXITCODE -ne 0) { throw $output.Trim() }
     } finally { Pop-Location }
     $payload = Get-Content -LiteralPath $payloadPath -Raw -Encoding UTF8 | ConvertFrom-Json
-    if ($ReplaceDate -ne [datetime]::MinValue -and $payload.dates -notcontains $ReplaceDate.ToString("yyyy-MM-dd")) {
+    # dates are profit days (the day before each capture); capture_dates are the days the captures ran.
+    # A workbook written before 1.0.8 holds capture dates, so a date found in either list is in the ledger.
+    $ledgerDates = @($payload.dates) + @($payload.capture_dates)
+    if ($ReplaceDate -ne [datetime]::MinValue -and $ledgerDates -notcontains $ReplaceDate.ToString("yyyy-MM-dd")) {
         throw "ReplaceDate is not present in the v2 ledger. No Excel data changed."
     }
     if ($DryRun) {
@@ -75,7 +78,7 @@ try {
         for ($r = 1; $r -le $table.DataBodyRange.Rows.Count; $r++) {
             if ($null -eq $old[$r, 1] -or "$($old[$r, 1])" -eq "") { continue }
             $day = [datetime]::FromOADate([double]($old[$r, 1])).ToString("yyyy-MM-dd")
-            if ($payload.dates -notcontains $day) { throw "Excel contains date $day outside the v2 ledger; refusing to discard it." }
+            if ($ledgerDates -notcontains $day) { throw "Excel contains date $day outside the v2 ledger; refusing to discard it." }
         }
     }
     $headerRow = $table.HeaderRowRange.Row

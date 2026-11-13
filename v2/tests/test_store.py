@@ -358,7 +358,7 @@ class StoreTests(unittest.TestCase):
                     self.assertEqual(row["daily_profit_i"], to_fixed(daily))
                     self.assertEqual(row["lifetime_i"], to_fixed(lifetime))
             payload = ledger_publish_payload(self.db)
-            self.assertEqual({d["date"]: d["daily_profit_usdt"] for d in payload["days"]},
+            self.assertEqual({d["capture_date"]: d["daily_profit_usdt"] for d in payload["days"]},
                              {s[0]: str(s[3]) for s in samples})
         finally:
             con.close()
@@ -538,14 +538,19 @@ class StoreTests(unittest.TestCase):
         payload = ledger_publish_payload(self.db)
         self.assertEqual(payload["schema"], 1)
         self.assertEqual(payload["source"], "pionex-grid-v2")
-        self.assertEqual(payload["baseline_date"], "2026-08-25")
+        # days[].date is the profit day: the 08-26 capture holds what 08-25 made.
+        self.assertEqual(payload["date_basis"], "profit_day")
+        self.assertEqual(payload["baseline_date"], "2026-08-24")
         self.assertTrue(payload["available"])
         self.assertEqual(payload["capture_date"], "2026-08-26")
-        self.assertEqual(payload["days"][0]["date"], "2026-08-26")
+        self.assertEqual(payload["captured_at"], "2026-08-26T00:00:00+08:00")
+        self.assertEqual(payload["latest"]["date"], "2026-08-25")
+        self.assertEqual(payload["days"][0]["date"], "2026-08-25")
+        self.assertEqual(payload["days"][0]["capture_date"], "2026-08-26")
         self.assertEqual(payload["days"][0]["daily_profit_usdt"], "2")
         self.assertEqual(payload["days"][0]["cumulative_usdt"], "17")
         self.assertEqual(payload["days"][0]["true_profit_usdt"], "17")
-        self.assertEqual(payload["days"][-1]["date"], "2026-08-25")
+        self.assertEqual(payload["days"][-1]["date"], "2026-08-24")
         self.assertEqual(payload["days"][-1]["daily_profit_usdt"], "0")
         self.assertEqual(payload["days"][-1]["cumulative_usdt"], "15")
         self.assertEqual(payload["latest"]["cumulative_usdt"], "17")
@@ -645,17 +650,21 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(list(sheets.keys())[:3], ["每日總覽", "每日倉位明細", "倉位×日期"])
         overview = sheets["每日總覽"]
         self.assertEqual(overview[0][4], "單日%")
-        self.assertEqual(overview[1][0], "2026-08-26")
+        self.assertEqual(overview[1][0], "2026-08-25")
         self.assertEqual(overview[1][1], 0.0)
         self.assertEqual(overview[1][4], 0.0)
-        self.assertEqual(overview[2][0], "2026-08-27")
+        self.assertEqual(overview[2][0], "2026-08-26")
         self.assertEqual(overview[2][1], 2.0)
         self.assertEqual(overview[2][4], 0.2)
         detail = sheets["每日倉位明細"]
         self.assertEqual(detail[2][7], 0.2)
+        self.assertEqual([row[0] for row in detail[1:]], ["2026-08-25", "2026-08-26"])
         matrix = sheets["倉位×日期"]
-        self.assertEqual(matrix[0][3:], ["2026-08-26", "2026-08-27"])
+        self.assertEqual(matrix[0][3:], ["2026-08-25", "2026-08-26"])
         self.assertEqual(matrix[1][3:], [0.0, 2.0])
+        # 執行紀錄 lists the captures themselves, by the day they ran.
+        self.assertEqual(sheets["執行紀錄"][0][2], "擷取日期")
+        self.assertEqual([row[2] for row in sheets["執行紀錄"][1:]], ["2026-08-26", "2026-08-27"])
 
     def test_coin_margined_liq_is_inverted_to_usdt(self):
         ingest(snap("2026-08-26", [rec(
@@ -751,10 +760,12 @@ class MissingDayTests(unittest.TestCase):
         self.assertEqual(self.summary("2026-09-20")["gap_days"], 0)
         self.assertEqual(self.summary("2026-09-20")["true_profit_i"], before_true)
         ledger = ledger_publish_payload(self.db)
-        days = {d["date"]: d for d in ledger["days"]}
+        days = {d["capture_date"]: d for d in ledger["days"]}
         self.assertEqual(float(days["2026-09-19"]["daily_profit_usdt"]), 4)
+        self.assertEqual(days["2026-09-19"]["date"], "2026-09-18")
         self.assertIsNone(days["2026-09-19"]["wallet_usdt"])
         fixed = {(c["capture_date"], c["field"]): c for c in ledger["corrections"]}
+        self.assertEqual(fixed[("2026-09-20", "daily_profit_i")]["profit_date"], "2026-09-19")
         self.assertEqual(fixed[("2026-09-20", "daily_profit_i")]["new_value"], "6")
         self.assertEqual(fixed[("2026-09-19", "daily_profit_i")]["new_value"], "4")
         with self.assertRaises(CaptureError):

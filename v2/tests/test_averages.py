@@ -102,10 +102,11 @@ class PayloadAverageTests(unittest.TestCase):
 
     def test_calendar_and_funding_pages_share_the_rules(self):
         # Daily grid profit: baseline, +6, +4, +10. Funding: unknown, -1, not reported, -3.
-        self.capture("2026-08-30", [rec(GridProfit=10, FundingFee=-1)])
-        self.capture("2026-08-31", [rec(GridProfit=16, FundingFee=-2)])
-        self.capture("2026-09-01", [rec(GridProfit=20, FundingFee=None)])
-        self.capture("2026-09-02", [rec(GridProfit=30, FundingFee=-5)])
+        # Each capture is filed under the day before it: 08-30 (baseline), 08-31, 09-01, 09-02.
+        self.capture("2026-08-31", [rec(GridProfit=10, FundingFee=-1)])
+        self.capture("2026-09-01", [rec(GridProfit=16, FundingFee=-2)])
+        self.capture("2026-09-02", [rec(GridProfit=20, FundingFee=None)])
+        self.capture("2026-09-03", [rec(GridProfit=30, FundingFee=-5)])
 
         days = store.days_payload(self.db)["averages"]
         aug, sep, recent = days["months"]["2026-08"], days["months"]["2026-09"], days["recent"]
