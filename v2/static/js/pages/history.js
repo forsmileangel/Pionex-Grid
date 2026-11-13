@@ -60,7 +60,7 @@ export async function renderHistory(seq) {
       <div class="grid-cols">
         <section>
           <h4>倉位</h4>
-          <dl class="mini">
+          <dl class="grid-list">
             <dt>${tip("派網投入", "派網畫面上的倉位。調高槓桿、把保證金留在原倉時會變小。")}</dt><dd>${both(b.investment || b.size)}</dd>
             <dt>追加保證金</dt><dd>${moneyNum(b.extra_margin) ? both(b.extra_margin) : "—"}</dd>
             <dt>${tip("等效倉位", "投入＋追加保證金，就是你放進這一倉的全部保證金（不含浮動盈虧）。")}</dt><dd>${both(b.equivalent || b.investment || b.size)}</dd>
@@ -69,7 +69,7 @@ export async function renderHistory(seq) {
         </section>
         <section>
           <h4>損益</h4>
-          <dl class="mini">
+          <dl class="grid-list">
             <dt>${tip("趨勢盈虧", "價格相對開倉價的浮動盈虧：投入 × 槓桿 × 漲跌幅。")}</dt><dd class="${cls(b.trend_profit && b.trend_profit.usdt)}">${bothSigned(b.trend_profit)}</dd>
             <dt>資金費</dt><dd class="${cls(b.funding && b.funding.usdt)}">${bothSigned(b.funding)}</dd>
             <dt>${tip("網格年化", "用網格利潤、等效倉位（投入＋追加保證金）、持有天數推算，API 沒有現成欄位。調槓桿不會讓它跳動。")}</dt><dd class="${cls(b.grid_annualized_pct)}">${b.grid_annualized_pct == null ? "—" : signed(b.grid_annualized_pct) + "%"}</dd>
@@ -78,7 +78,7 @@ export async function renderHistory(seq) {
         </section>
         <section>
           <h4>價格與風險</h4>
-          <dl class="mini">
+          <dl class="grid-list">
             <dt>現價 / Mark</dt><dd>${n(b.mark_price, 4)}</dd>
             <dt>強平價</dt><dd>${n(b.liq_price, 4)}</dd>
             <dt>強平距離</dt><dd>${b.liq_distance_pct == null ? "—" : n(b.liq_distance_pct, 2) + "%"}</dd>

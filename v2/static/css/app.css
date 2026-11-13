@@ -226,12 +226,12 @@
     .grid-cols { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px 28px; margin:14px 0 4px; }
     .grid-cols h4 { margin:0 0 6px; padding-bottom:5px; font-size:12px; font-weight:650; color:var(--ink-2);
            letter-spacing:.04em; border-bottom:1px solid var(--line); }
-    dl.mini { margin:0; display:grid; grid-template-columns:max-content 1fr; gap:5px 14px; align-items:baseline;
+    dl.grid-list { margin:0; display:grid; grid-template-columns:max-content 1fr; gap:5px 14px; align-items:baseline;
            font-size:13px; }
-    dl.mini dt { color:var(--muted); font-size:12.5px; }
-    dl.mini dd { margin:0; text-align:right; font-variant-numeric:tabular-nums; }
-    dl.mini .unit { font-size:11px; font-weight:600; color:var(--muted); margin-left:3px; }
-    dl.mini .twd { display:inline; margin-left:6px; font-size:11.5px; color:var(--muted); }
+    dl.grid-list dt { color:var(--muted); font-size:12.5px; }
+    dl.grid-list dd { margin:0; text-align:right; font-variant-numeric:tabular-nums; }
+    dl.grid-list .unit { font-size:11px; font-weight:600; color:var(--muted); margin-left:3px; }
+    dl.grid-list .twd { display:inline; margin-left:6px; font-size:11.5px; color:var(--muted); }
     .decide { display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
 
     .statlist { margin:0; display:grid; grid-template-columns:max-content 1fr; gap:11px 24px;
