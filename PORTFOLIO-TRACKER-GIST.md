@@ -43,13 +43,14 @@ Array.isArray(obj.days)
 - `source`（目前 `"pionex-grid-v2"`；PT 不強制，但不要亂改成別種物件）
 - `available`
 - `days`（陣列；可為空，但不能缺這個 key 或改成非陣列）
-- `capture_date`、`captured_at`（月曆預設日、新鮮度）
+- `capture_date`、`captured_at`（最新一次擷取的日期與時間，用於新鮮度；**不是**月曆上最新一格的日期）
 - `wallet.usdt`、`wallet.twd`（持倉「加密 TWD」填入；`twd` 必須是數字）
 - `latest.gap_days`、`latest` 底下的利潤數字（有就顯示）
 
 `days[]` 每一天：
 
-- `date`（`YYYY-MM-DD`）
+- `date`（`YYYY-MM-DD`）：**利潤日**，也就是這筆利潤所屬的那一天（擷取日的前一天；11/13 08:15 擷取的數字記在 11/12）。PT 月曆用它當格子
+- `capture_date`（`YYYY-MM-DD`）：那筆紀錄實際擷取的日期（1.0.8 新增，PT 目前不讀）
 - `daily_profit_usdt`（字串或數字都可以，PT 會 `Number()`）
 - `cumulative_usdt`
 - `daily_profit_twd`、`cumulative_twd`、`investment_usdt`（有就顯示）
@@ -68,7 +69,7 @@ Array.isArray(obj.days)
 
 - `days[].true_profit_usdt`／`true_profit_twd`：截至該快照的歷史配對收益，含基準帶入及記錄期間已關倉、提領、複投。記錄前已提領的收益可能未涵蓋。
 - `days[].unresolved_count`：該區間配對資料待補數；數值合計是已知部分，PT 月平均暫不計入待補日，補齊後重算。
-- 頂層新增 `settlements[]`，`schema` 仍為 `1`。每筆以訂單 `id` 唯一識別，含 `symbol`、`currency`、`closed_at`（可空）、`observed_at`、`capture_date`、`status`（pending/partial/settled）、`source`、`grid_profit`、`net_profit`、`reported_total_profit`、`funding_fee`、`fee`、`lifetime_grid_profit`、`non_grid_profit`、`daily_reconciled`。
+- 頂層新增 `settlements[]`，`schema` 仍為 `1`。每筆以訂單 `id` 唯一識別，含 `symbol`、`currency`、`closed_at`（可空）、`observed_at`、`capture_date`、`profit_date`（1.0.8 新增，關倉記在月曆的哪一格）、`status`（pending/partial/settled）、`source`、`grid_profit`、`net_profit`、`reported_total_profit`、`funding_fee`、`fee`、`lifetime_grid_profit`、`non_grid_profit`、`daily_reconciled`。
 - 結算金額預設是 `currency` 原幣；`*_usdt` 只有 U 本位或已有結算換算價（關倉價或人工）時提供。API `TotalProfit` 僅為回報值，不假定已含所有費用；`net_profit` 改用下方錢包實拿口徑自動計算。
 - `grid_profit` 是派網最後顯示值；提領／複投倉須確認完整 `lifetime_grid_profit` 才能計算 `non_grid_profit = net_profit - lifetime_grid_profit`。資金費、手續費只供對帳，不從淨損益再次扣除。
 - 缺值用 `null`，不可改成 0；延遲取得結算時回補首次關倉的快照區間。手動補登紀錄存 SQLite，後續 API 不覆蓋人工值。
@@ -105,7 +106,7 @@ PT v15.974 起網格頁會讀這些欄位；缺少時（舊帳本）退回原畫
 
 ### 歷史修正回報 `corrections[]`
 
-- 頂層新增 `corrections[]`（最近 30 筆，PT 目前不讀）：`capture_date`、`field`（daily_profit_i／cumulative_i／true_profit_i／unresolved_count）、`old_value`、`new_value`、`reason`、`corrected_at`。已記錄的日子因關倉補抓、人工補登、加倉／複投判定而重算時寫入；當日擷取本身不算修正。
+- 頂層新增 `corrections[]`（最近 30 筆，PT 目前不讀）：`capture_date`、`profit_date`（1.0.8 新增）、`field`（daily_profit_i／cumulative_i／true_profit_i／unresolved_count）、`old_value`、`new_value`、`reason`、`corrected_at`。已記錄的日子因關倉補抓、人工補登、加倉／複投判定而重算時寫入；當日擷取本身不算修正。
 - PT 每次拉取都整份取代帳本，所以修正後的數字與月平均會自動更新，不需要 PT 端另外處理。
 - 發布結果存在本機 `v2-data/publish-state.json`（內容雜湊不含 TWD／FX 欄位）。帳本與上次成功發布不同時，每 10 分鐘的 `capture --live` 排程會另外送一次「只含帳本檔」的 PATCH 補發；儀表板「執行狀態」也可手動重新發布。
 

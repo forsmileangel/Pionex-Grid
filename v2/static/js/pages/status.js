@@ -7,7 +7,9 @@ import { isCurrent } from "../router.js";
 export async function renderStatus(seq) {
   const s = await get("/api/v1/status");
   if (!isCurrent(seq, "status")) return;
-  const missing = (s.missing_dates || []);
+  // missing_dates 是漏抓的擷取日（補抓指令吃這個）；missing_profit_dates 是月曆上因此空著的那一格。
+  const missingProfit = (s.missing_profit_dates || []);
+  const missing = (s.missing_dates || []).map((d, i) => (missingProfit[i] ? `${missingProfit[i]}（${d} 那次擷取）` : d));
   const gap = s.coin_fx_gap_month && s.coin_fx_gap_month.usdt != null ? signed(s.coin_fx_gap_month.usdt) + " USDT" : "—";
   const pub = s.publish || {};
   const ledgerPub = pub.ledger || {};
@@ -89,7 +91,7 @@ export async function renderStatus(seq) {
   <div class="card">
     <h3>${tip("最近的歷史修正", "已記錄的日子因關倉補抓、人工補登、加倉／複投判定而重算時，列出前後差異。修正後的整份帳本會重新發布，Portfolio 拉取後自動更新。")}</h3>
     ${corrections.length ? `<table class="plain"><thead><tr><th>日期</th><th>項目</th><th>原本</th><th>修正後</th><th>原因</th><th>時間</th></tr></thead><tbody>
-      ${corrections.map((c) => `<tr><td>${esc(c.capture_date)}</td><td>${esc(fieldLabel[c.field] || c.field)}</td>
+      ${corrections.map((c) => `<tr><td>${esc(c.profit_date || c.capture_date)}</td><td>${esc(fieldLabel[c.field] || c.field)}</td>
         <td>${c.field.endsWith("_i") ? (c.old_value == null ? "—" : signed(c.old_value)) : esc(c.old_value ?? "—")}</td>
         <td>${c.field.endsWith("_i") ? (c.new_value == null ? "—" : signed(c.new_value)) : esc(c.new_value ?? "—")}</td>
         <td style="text-align:left">${esc(c.reason)}</td><td>${esc(fmtTaipei(c.corrected_at).slice(5, 16))}</td></tr>`).join("")}

@@ -61,7 +61,7 @@ function paintLive() {
     mask.className = "mask";
     mask.innerHTML = `<div class="dialog">
         <h3>把現在倉位寫入倉位歷史？</h3>
-        <p>只有這一顆備援鈕才會動每日紀錄。會先向派網<strong>完整重抓一次</strong>（約 15 秒），再寫成台北時間 <strong>${today}</strong> 的倉位歷史。今天若已有 08:15 快照，會被換成這一份，並重新發布到 Portfolio。Excel 排程本身不會被改。</p>
+        <p>只有這一顆備援鈕才會動每日紀錄。會先向派網<strong>完整重抓一次</strong>（約 15 秒），再寫成台北時間 <strong>${today}</strong> 的倉位歷史（月曆記在前一天那一格）。今天若已有 08:15 快照，會被換成這一份，並重新發布到 Portfolio。Excel 排程本身不會被改。</p>
         <p class="muted">再按「確定寫入」才會存。取消則什麼都不改。</p>
         <div class="actions">
           <button class="btn ghost" type="button" id="commitCancel">取消</button>
@@ -75,7 +75,7 @@ function paintLive() {
       showFlash("正在向派網完整重抓並寫入，約 15 秒…");
       try {
         const result = await postJson("/api/v1/live/commit-daily", { confirm_date: today });
-        showFlash("已寫入 " + (result.capture_date || today) + " 的倉位歷史。" + publishText(result.publish));
+        showFlash("已寫入 " + (result.capture_date || today) + " 的倉位歷史" + (result.profit_date ? "，月曆記在 " + result.profit_date : "") + "。" + publishText(result.publish));
       } catch (err) {
         showFlash("寫入失敗：" + err.message, "error");
       }

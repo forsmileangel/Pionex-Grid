@@ -35,13 +35,14 @@ function paintDaily() {
     app.innerHTML = "<p class='muted'>還沒有每日紀錄。請先執行 python -m v2.capture</p>";
     return;
   }
-  app.innerHTML = `<p class="muted">每一天會往下新增一列。點日期可收合／展開當天每一筆倉位。點欄位標題可排序（各天共用同一排序）。</p>` + days.map((d, i) => {
+  app.innerHTML = `<p class="muted">每一天會往下新增一列。標題日期是利潤所屬的那一天（當天 08:15 到隔天 08:15，由隔天早上的紀錄記下）。點日期可收合／展開當天每一筆倉位。點欄位標題可排序（各天共用同一排序）。</p>` + days.map((d, i) => {
     const open = dailyOpen == null ? i === 0 : dailyOpen.has(d.capture_date);
     const dayV = d.daily_profit && d.daily_profit.usdt;
+    // data-date 與取明細用擷取日（伺服器的鍵）；畫面標題用利潤日。
     const date = esc(d.capture_date);
     return `
     <section class="day" data-date="${date}">
-      <h3><span>${date}</span><span class="meta">${d.active_count} 筆 · 當日 <b class="${cls(dayV)}">${signed(dayV)}</b> USDT · 運行中配對 ${usdt(d.cumulative)} USDT</span></h3>
+      <h3><span>${esc(d.date || d.capture_date)}</span><span class="meta">${d.active_count} 筆 · 當日 <b class="${cls(dayV)}">${signed(dayV)}</b> USDT · 運行中配對 ${usdt(d.cumulative)} USDT</span></h3>
       <div class="body" ${open ? "" : "hidden"}>${open ? dayBody(d.capture_date) : ""}</div>
     </section>`;
   }).join("");

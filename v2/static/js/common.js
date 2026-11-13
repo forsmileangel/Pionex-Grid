@@ -55,7 +55,7 @@ export const FUND_SIGN_NOTE = "資金費做多付出為負（吃掉配對），�
 const CLOSE_REASON = { profit_stop: "止盈", loss_stop: "止損", user_cancel: "手動關倉", liquidation: "強平", liquidate: "強平",
   force_liquidation: "強平", expired: "到期" };
 export const reasonLabel = (r) => r ? (CLOSE_REASON[r] || r) : "—";
-const CLOSE_TIP = "關倉時錢包實際拿回的錢＋期間提領－自己投入，和關倉紀錄頁的「最終淨損益」是同一個數字；記在關倉後的第一筆每日紀錄那天。強平賠掉的本金算在這裡。不算進配對、淨利、平均和每日利潤，也不影響 Portfolio。";
+const CLOSE_TIP = "關倉時錢包實際拿回的錢＋期間提領－自己投入，和關倉紀錄頁的「最終淨損益」是同一個數字；記在關倉後第一筆每日紀錄所屬的那一天（月曆上那一格）。強平賠掉的本金算在這裡。不算進配對、淨利、平均和每日利潤，也不影響 Portfolio。";
 const closeSum = (c) => {
   const v = c.net ? moneyNum(c.net) : null;
   return `${v == null ? "待確認" : `<b class="${cls(v)}">${signed(v)}</b> U`}（${c.count} 筆${c.pending ? `，${c.pending} 筆待確認` : ""}）`;
@@ -337,7 +337,7 @@ export function summaryCards(board, timeLabel, timeValue, gridTip, trueTip) {
   const title = live ? "過去 24 小時淨利（含資金費）"
     : hasNet ? `${snap} 快照前 24 小時淨利（含資金費）` : `${snap} 快照前 24 小時配對`;
   const help = live ? "以快照更新時間往回算的滾動 24 小時，淨利＝配對＋資金費。資金費依台北 00:00／08:00／16:00 結算時間歸屬，開始時間的結算不算、結束時間的算入；付出為負、收到為正。派網在結算後幾分鐘才入帳，還沒入帳的那次先不計，並在下方註明。只含目前運行中的倉位。％＝淨利 ÷ 等效倉位。"
-    : "這頁是每日快照，不是即時：數字是這次快照（約 08:15）和前一次快照之間的配對與資金費，和月曆同一天的數字一致。淨利＝配對＋資金費；資金費付出為負（吃掉配對）、收到為正（加成配對）。％＝淨利 ÷ 等效倉位。要看從現在往回算的 24 小時，請看「目前倉位」。";
+    : "這頁是每日快照，不是即時：數字是這次快照（約 08:15）和前一次快照之間的配對與資金費，和月曆上記在前一天那一格的數字一致（隔天早上 08:15 記下的利潤，記在前一天）。淨利＝配對＋資金費；資金費付出為負（吃掉配對）、收到為正（加成配對）。％＝淨利 ÷ 等效倉位。要看從現在往回算的 24 小時，請看「目前倉位」。";
   return `<div class="stats">
       <div class="stat wide"><span class="label">錢包總市值</span><strong>${board.wallet_total && board.wallet_total.usdt != null ? both(board.wallet_total) : "—"}</strong></div>
       <div class="stat wide">${tip(title, help)}<strong class="${cls(total)}">${bothSigned(amount)}${pct24 == null || pct24 === "" ? "" : `<span class="pct ${cls(pct24)}">${signed(pct24)}%</span>`}${detail}</strong></div>
@@ -382,14 +382,15 @@ export function eventChip(ev) {
   return ` <span class="event-tag ${kind}">${esc(eventLabel(key))}</span>`;
 }
 
-export function eventCell(r, date) {
+// captureDate：那筆紀錄的擷取日（判定時回給伺服器）；profitDate：畫面上那一格的日期（伺服器核對用）。
+export function eventCell(r, captureDate, profitDate) {
   const ev = r.event || r.status || "";
   const review = String(ev).split("+").includes("review");
   let html = `<span class="event-tag${review ? " is-review" : String(ev).split("+").includes("add") ? " is-add" : ""}">${esc(eventLabel(ev))}</span>`;
   if (review && r.bu_order_id) {
     html += `<div class="decide">
-      <button type="button" class="btn tiny" data-decide="add" data-date="${esc(date)}" data-id="${esc(r.bu_order_id)}">這是加倉</button>
-      <button type="button" class="btn tiny" data-decide="reinvest" data-date="${esc(date)}" data-id="${esc(r.bu_order_id)}">這是複投</button>
+      <button type="button" class="btn tiny" data-decide="add" data-date="${esc(captureDate)}" data-profit-date="${esc(profitDate)}" data-id="${esc(r.bu_order_id)}">這是加倉</button>
+      <button type="button" class="btn tiny" data-decide="reinvest" data-date="${esc(captureDate)}" data-profit-date="${esc(profitDate)}" data-id="${esc(r.bu_order_id)}">這是複投</button>
     </div>`;
   }
   return html;

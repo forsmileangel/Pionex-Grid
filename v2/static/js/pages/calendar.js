@@ -4,30 +4,38 @@ import { FUND_SIGN_NOTE, app, avgStat, bindHistoryClicks, both, bothSigned, clos
 
 import { isCurrent } from "../router.js";
 
-// 月曆：每天的配對、資金費、淨利（原本的資金費頁已併進來）。一天＝前一天 08:15 到當天 08:15 的那筆每日紀錄。
-// 資料來自 /api/v1/funding?rows=0；每一天的倉位明細點到那天才抓（/api/v1/funding/<date>），null＝讀取中。
+// 月曆：每天的配對、資金費、淨利（原本的資金費頁已併進來）。每一格＝當天 08:15 到隔天 08:15 的利潤，
+// 由隔天早上 08:15 的那筆每日紀錄記下，所以記在前一天那格（最新一格是昨天，今天那格要等明天 08:15）。
+// 格子用 date（利潤日），向伺服器要明細、判定事件一律用 capture_date（那筆紀錄的擷取日）。
+// 資料來自 /api/v1/funding?rows=0；每一天的倉位明細點到那天才抓（/api/v1/funding/<擷取日>），null＝讀取中。
 let calendarData = null;
 const dayRows = new Map();
 let calMonth = null;
 let calSelected = "";
 
-const FUND_TIP = "資金費＝派網這個倉的累計資金費，和上一次每日紀錄相減。" + FUND_SIGN_NOTE + "派網在台北 00:00、08:00、16:00 結算。幣本位是當天新增的幣×抓取價，不含幣價重估。";
+const FUND_TIP = "資金費＝派網這個倉的累計資金費，和上一次每日紀錄相減。" + FUND_SIGN_NOTE + "派網在台北 00:00、08:00、16:00 結算，所以一格含當天 16:00、隔天 00:00 與 08:00 三次。幣本位是當天新增的幣×抓取價，不含幣價重估。";
 const NET_TIP = "淨利＝當日配對＋當日資金費。Portfolio 和 Excel 的每日利潤仍只有配對。不含關倉賠掉的本金（看關倉損益）。";
-const MONTH_TIP = "所選月份的每日淨利（配對＋資金費）加總 ÷ 天數。一天＝前一天 08:15 到當天 08:15 的那筆每日紀錄；漏抓的日子會併進下一筆，天數照實際算；資金費沒記到的那天，會併進下一天。帳本第一天（基準日）和關倉配對待補的日子不算。切換月份會跟著變。";
+const MONTH_TIP = "所選月份的每日淨利（配對＋資金費）加總 ÷ 天數。一格＝當天 08:15 到隔天 08:15 的利潤，記在當天那一格（每月 1 號早上的那筆算上個月）；漏抓的日子會併進下一筆，天數照實際算；資金費沒記到的那天，會併進下一天。帳本第一天（基準日）和關倉配對待補的日子不算。切換月份會跟著變。";
 const RECENT_TIP = "最新一筆每日紀錄往回 30 天（含當天）的每日淨利加總 ÷ 天數，規則和當月效率一樣。固定看最近 30 天，不跟著月份切換。";
 
-async function loadDayRows(date) {
-  if (dayRows.has(date)) return;
-  dayRows.set(date, null);
+// 目前點選的那一格對應的擷取日（沒有就空字串）。
+function selectedCapture() {
+  const d = ((calendarData || {}).days || []).find((x) => x.date === calSelected);
+  return d ? d.capture_date : "";
+}
+
+async function loadDayRows(capture) {
+  if (!capture || dayRows.has(capture)) return;
+  dayRows.set(capture, null);
   try {
-    const data = await get("/api/v1/funding/" + encodeURIComponent(date));
-    dayRows.set(date, data.rows || []);
+    const data = await get("/api/v1/funding/" + encodeURIComponent(capture));
+    dayRows.set(capture, data.rows || []);
   } catch (err) {
-    dayRows.delete(date);
-    if (state.page === "calendar") showFlash(`讀取 ${date} 明細失敗：${err.message}`, "error");
+    dayRows.delete(capture);
+    if (state.page === "calendar") showFlash(`讀取 ${calSelected || capture} 明細失敗：${err.message}`, "error");
     return;
   }
-  if (state.page === "calendar" && calSelected === date) paintCalendar();
+  if (state.page === "calendar" && selectedCapture() === capture) paintCalendar();
 }
 
 const pctText = (v) => (v == null ? "—" : signed(v) + "%");
@@ -106,14 +114,15 @@ function paintCalendar() {
     : "本月尚無紀錄";
 
   const sel = byDate[calSelected] || {};
-  const loaded = dayRows.get(calSelected);
-  if (loaded === undefined) loadDayRows(calSelected);
+  const selCapture = sel.capture_date || "";
+  const loaded = dayRows.get(selCapture);
+  if (loaded === undefined) loadDayRows(selCapture);
   const rows = (loaded || []).slice().sort((a, b) => (moneyNum(a.funding_day) ?? 0) - (moneyNum(b.funding_day) ?? 0));
   const rowHtml = rows.length ? rows.map((r) => {
     const grid = moneyNum(r.daily_profit), f = moneyNum(r.funding_day), net = moneyNum(r.net);
     return `<tr class="clickable" data-id="${esc(r.bu_order_id || "")}">
       <td>${esc(r.symbol || "—")}</td>
-      <td>${eventCell(r, calSelected)}</td>
+      <td>${eventCell(r, selCapture, calSelected)}</td>
       <td class="n">${usdt(r.investment || r.size)}</td>
       <td class="n ${cls(grid)}">${signed(grid)}</td>
       <td class="n ${cls(f)}">${signed(f)}</td>
@@ -139,6 +148,7 @@ function paintCalendar() {
 
   const fund30 = recent.days ? moneyNum(recent.funding.avg) : null;
   const monthNow = (averages.months || {})[latest.date.slice(0, 7)];
+  const monthNowLabel = `${Number(latest.date.slice(5, 7))} 月淨利`;
   const stat = (label, note, value, sub) => `<div class="stat">${tip(label, note)}`
     + `<strong class="${cls(moneyNum(value))}">${bothSigned(value)}<span class="twd" style="white-space:normal">${sub}</span></strong></div>`;
 
@@ -146,7 +156,7 @@ function paintCalendar() {
     <div class="stats">
       ${stat("最近一天淨利", NET_TIP, latest.net,
         `${esc(latest.date)} · 配對 ${signed(moneyNum(latest.grid_profit))} · 資金費 ${signed(moneyNum(latest.funding))}（${fundShare(latest.pct_of_grid, true)}）`)}
-      ${stat("本月淨利", "本月每日配對＋資金費加總。基準日和關倉待補的日子不計。", monthNow && monthNow.days ? monthNow.net.total : null,
+      ${stat(monthNowLabel, "最近一天所在月份的每日配對＋資金費加總（每月 1 號早上的那筆算上個月）。基準日和關倉待補的日子不計。", monthNow && monthNow.days ? monthNow.net.total : null,
         monthNow && monthNow.days ? `配對 ${signed(moneyNum(monthNow.grid_profit.total))} · 資金費 ${signed(moneyNum(monthNow.funding.total))}（${fundShare(monthNow.pct_of_grid, true)}）` : "")}
       ${stat("近 30 天資金費", "最近 30 天的每日資金費加總與日均；年化＝日均 ÷ 最近一天的等效倉位 × 365。", recent.days ? recent.funding.total : null,
         fund30 != null ? `日均 ${signed(fund30)} U · 年化 ${moneyNum(latest.equivalent) ? pctText(fund30 * 365 / moneyNum(latest.equivalent) * 100) : "—"}` : "")}
@@ -171,6 +181,7 @@ function paintCalendar() {
         <span><b>資金費</b> 當日資金費，付出為負</span>
         <span><b>淨利</b> 配對＋資金費，格子顏色依淨利；手機只顯示淨利</span>
         <span><b>關倉</b> 那天記到的關倉淨損益</span>
+        <span>每格是當天 08:15 到隔天 08:15 的利潤，隔天早上記錄，所以最新一格是昨天。</span>
         <span>有紀錄的日子可點。</span>
       </div>
     </div>
@@ -187,7 +198,7 @@ function paintCalendar() {
       ${closureNote(closedOn[calSelected])}
       ${rows.some((r) => String(r.event || "").split("+").includes("review"))
         ? `<p class="warn">有倉位變多、網格利潤也掉了一截，對不上是加倉還是複投。請在列上選一次。</p>` : ""}
-      <div class="range-table"><table class="plain"><thead><tr><th>標的</th><th>${tip("事件", "續存＝照常；加倉＝只是本金變多、網格利潤沒被重置；複投＝網格利潤打進倉位後從接近 0 再算。對不上才會出現待確認。")}</th><th>倉位</th><th>當日配對</th>
+      <div class="range-table"><table class="plain"><thead><tr><th>標的</th><th>${tip("事件", "續存＝照常；加倉＝只是本金變多、網格利潤沒被重置；複投＝網格利潤打進倉位後從接近 0 再算；調槓桿＝槓桿改了、投資額跟著反向變，投入×槓桿不變（只是標籤，金額照算）。對不上才會出現待確認。")}</th><th>倉位</th><th>當日配對</th>
         <th>${tip("當日資金費", FUND_TIP)}</th><th>${tip("淨利", NET_TIP)}</th>
         <th>${tip("資金費／配對", "當日資金費 ÷ 當日配對利潤；正＝收到（加成）、負＝付出（吃掉）；配對為 0 或負時不算。")}</th>
         <th>${tip("累計資金費", "這個倉從建倉起的累計資金費（派網數字）。")}</th><th>當時網格利潤</th></tr></thead>
@@ -273,6 +284,7 @@ function bindEventDecisions() {
       try {
         const result = await postJson("/api/v1/event-decision", {
           capture_date: btn.dataset.date,
+          date: btn.dataset.profitDate,
           bu_order_id: btn.dataset.id,
           decision: btn.dataset.decide,
         });
