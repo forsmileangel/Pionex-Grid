@@ -22,6 +22,7 @@ from .store import (
     _coin_from_rec,
     _display_direction,
     _leverage_value,
+    _leverage_x,
     _mul_fixed,
     _prev_revalued,
     _rec_stock_triple,
@@ -239,8 +240,11 @@ def _record(snapshot: dict, source: str, db_path: Path, ledger_db: Path | None) 
             else:
                 class_grid = _mul_fixed(coin_i, px_i) if coin_i is not None and px_i else grid_i
                 class_prev = _prev_revalued(ref, px_i) if coin_i is not None else ref
+                # An intraday point stores the leverage text; a ledger row stores the parsed multiple.
+                prev_lev_x = _leverage_x(ref.get("leverage")) if ref_kind == "intraday" else ref.get("leverage_x")
                 event, delta_i, _life = _classify_event(
                     "continue", class_prev, class_grid, inv_i, withdrawn_i, reinvest_i, reduce_i,
+                    lev_x=_leverage_x(rec.get("Leverage")), prev_lev_x=prev_lev_x,
                 )
                 if "review" in event.split("+"):
                     # Unclear add-vs-reinvest: keep the chain flat rather than guess a big jump.

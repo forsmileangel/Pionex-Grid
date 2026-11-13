@@ -91,6 +91,7 @@ def translate_event(value: str | None) -> str:
         "new": "新增",
         "continue": "無調整",
         "add": "加倉",
+        "leverage": "調槓桿",
         # Withdrawn profit, named as on the dashboard and the 16-column Excel; 減倉 is reduce.
         "withdraw": "提取",
         "reduce": "減倉",

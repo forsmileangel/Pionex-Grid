@@ -26,6 +26,7 @@ class DailyReportTests(unittest.TestCase):
     def test_event_names_match_the_dashboard(self):
         self.assertEqual(translate_event("withdraw"), "提取")
         self.assertEqual(translate_event("reduce"), "減倉")
+        self.assertEqual(translate_event("leverage+withdraw"), "調槓桿＋提取")
         self.assertEqual(translate_event("reinvest+withdraw"), "再投資＋提取")
         self.assertEqual(translate_event("something_new"), "something_new")
         self.assertEqual(translate_event(None), "")

@@ -35,7 +35,7 @@ def ledger_rows(db_path: Path, today: date, allow_stale: bool = False) -> dict:
         labels = {'baseline': '基準日', 'new': '新增', 'continue': '持續',
                   'closed': '關倉', 'closed_unresolved': '關倉待補',
                   'withdraw': '提取', 'reinvest': '複投', 'reduce': '減倉',
-                  'add': '加倉', 'review': '待確認'}
+                  'add': '加倉', 'review': '待確認', 'leverage': '調槓桿'}
         for day in summaries:
             timestamp = datetime.fromisoformat(day['captured_at']).astimezone(TAIPEI)
             details = list(con.execute('''SELECT d.*, p.symbol, p.created_at, p.product, s.leverage

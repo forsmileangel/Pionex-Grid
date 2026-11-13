@@ -201,7 +201,8 @@ class SeriesTests(IntradayTestCase):
         self.record("2026-10-01T12:00:00+08:00", [rec(GridProfit=2, **moved), rec(**other, GridProfit=6)])
         out = self.series("2026-10-01T10:00:00+08:00", "2026-10-01T12:00:00+08:00", "1h")
         self.assertEqual(out["series"]["g1"]["profit"], [1.0, 1.0])
-        self.assertEqual(out["events"], [])
+        # The move is marked on the chart as 調槓桿; it is not an add and changes no figure.
+        self.assertEqual([(e["id"], e["event"]) for e in out["events"]], [("g1", "leverage")])
         self.assertAlmostEqual(out["series"]["g1"]["eff"][1], out["series"]["g1"]["eff"][0], places=6)
         self.assertAlmostEqual(out["total"]["eff"][1], out["total"]["eff"][0], places=6)
         self.assertAlmostEqual(out["summary"]["eff"], out["total"]["eff"][0], places=6)

@@ -371,7 +371,7 @@ export async function postJson(url, body) {
 }
 
 export function eventLabel(ev) {
-  const map = { baseline:"基準", new:"新增", continue:"續存", closed:"關倉", closed_unresolved:"關倉未對上", reinvest:"複投", add:"加倉", review:"待確認", withdraw:"提取", reduce:"減倉" };
+  const map = { baseline:"基準", new:"新增", continue:"續存", closed:"關倉", closed_unresolved:"關倉未對上", reinvest:"複投", add:"加倉", leverage:"調槓桿", review:"待確認", withdraw:"提取", reduce:"減倉" };
   return String(ev || "").split("+").map((p) => map[p] || p).filter(Boolean).join("＋") || "—";
 }
 

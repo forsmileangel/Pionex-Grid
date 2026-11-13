@@ -19,13 +19,14 @@ from .fx import attach_twd, attach_twd_tree, usdt_twd
 from .liq import normalize_liq
 
 SCALE = 100_000_000
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 EVENT_EPS = 1_000_000
 ADD_MIN_I = 10 * SCALE
 REINVEST_MIN_I = 20 * SCALE
 SMALL_ADD_I = 100 * SCALE
 ADD_TYPICAL_I = 200 * SCALE
 REVIEW_DROP_I = 100 * SCALE
+LEVERAGE_TOL_I = 1 * SCALE
 TAIPEI = ZoneInfo("Asia/Taipei")
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_DB = ROOT / "v2-data" / "pionex-grid.sqlite"
@@ -113,6 +114,7 @@ CREATE TABLE IF NOT EXISTS daily_grid_profit (
   daily_profit_coin_i INTEGER,
   conversion_price_i INTEGER,
   fx_gap_i INTEGER,
+  leverage_x REAL,
   UNIQUE(capture_date, bu_order_id)
 );
 CREATE TABLE IF NOT EXISTS daily_summary (
@@ -389,12 +391,42 @@ def _opened_since(created_at, previous_captured_at) -> bool:
         return False
 
 
+def _leverage_x(text) -> float | None:
+    """Leverage multiple from a text such as "6x long"; None when the text has no number.
+
+    Unlike _leverage_value this never falls back to 1.0, so a missing leverage cannot look like a change.
+    """
+    buf = ""
+    for ch in str(text or ""):
+        if ch.isdigit() or ch == ".":
+            buf += ch
+        elif buf:
+            break
+    try:
+        value = float(buf) if buf else None
+    except ValueError:
+        return None
+    return value if value and value > 0 else None
+
+
+def _is_leverage_change(prev_inv, inv_i, prev_lev_x, lev_x, grid_drop) -> bool:
+    """Pionex keeps investment x leverage constant when the leverage setting is changed."""
+    if lev_x is None or prev_lev_x is None or abs(lev_x - prev_lev_x) < 0.01:
+        return False
+    if not prev_inv or not inv_i or grid_drop >= REINVEST_MIN_I:
+        return False
+    before = Decimal(prev_inv) * Decimal(str(prev_lev_x))
+    after = Decimal(inv_i) * Decimal(str(lev_x))
+    return abs(before - after) <= max(Decimal(LEVERAGE_TOL_I), max(before, after) * Decimal("0.005"))
+
+
 def _classify_event(status: str, prev, grid_i, inv_i, withdrawn_i, reinvest_i, reduce_i, override=None,
-                    first_day=False) -> tuple[str, int, int]:
+                    first_day=False, lev_x=None, prev_lev_x=None) -> tuple[str, int, int]:
     """Return (event, daily_i, lifetime_i).
 
     複投: 網格利潤明顯掉進倉位（倉位變大、網格利潤少掉相近的一筆）。
     加倉: 倉位變多，網格利潤仍正常走、沒有被重置。
+    調槓桿: 槓桿設定變了，投資額 × 槓桿不變。只是標籤，當日利潤的算法和原本一樣。
     lifetime is running true profit from our snapshots, not Pionex lifetime stocks.
     """
     if status in ("baseline", "new") or prev is None:
@@ -431,6 +463,8 @@ def _classify_event(status: str, prev, grid_i, inv_i, withdrawn_i, reinvest_i, r
     api_reinvest = re_d >= REINVEST_MIN_I and grid_drop >= REINVEST_MIN_I
     if override in ("reinvest", "add"):
         kind = override
+    elif _is_leverage_change(prev_inv, inv_i, prev_lev_x, lev_x, grid_drop):
+        kind = "leverage"
     elif matched or api_reinvest:
         kind = "reinvest"
     elif inv_d >= ADD_MIN_I and grid_drop < REINVEST_MIN_I:
@@ -453,6 +487,11 @@ def _classify_event(status: str, prev, grid_i, inv_i, withdrawn_i, reinvest_i, r
     elif kind == "add":
         events.append("add")
         re_d = 0
+    elif kind == "leverage":
+        events.append("leverage")
+        # Same arithmetic the day had as "add" (investment up) or as no event (investment down).
+        if inv_d >= ADD_MIN_I:
+            re_d = 0
     elif kind == "review":
         events.append("review")
         re_d = 0
@@ -495,7 +534,7 @@ def _true_grid_profit_i(con: sqlite3.Connection, capture_date: str) -> int:
 
 # What rebuild_daily_profits carries from one day to the next; each is also a daily_grid_profit column.
 _CARRIED = ("grid_profit_i", "investment_i", "withdrawn_i", "reinvest_i", "reduce_i", "lifetime_i",
-            "cumulative_i", "status", "grid_profit_coin_i", "conversion_price_i")
+            "cumulative_i", "status", "grid_profit_coin_i", "conversion_price_i", "leverage_x")
 
 
 def rebuild_daily_profits(con: sqlite3.Connection, since: str | None = None) -> None:
@@ -541,6 +580,9 @@ def rebuild_daily_profits(con: sqlite3.Connection, since: str | None = None) -> 
             status = prow["status"]
             prev = prev_by_id.get(oid)
             coin_i = daily_coin_i = px_i = fx_gap = None
+            prev_lev_x = prev.get("leverage_x") if prev else None
+            # A settlement's closing snapshot carries no leverage; keep the last known one.
+            lev_x = (_leverage_x(snap["leverage"]) if snap is not None else None) or prev_lev_x
             if snap is not None:
                 withdrawn_i, reinvest_i, reduce_i = _stocks_from_snapshot(snap)
                 coin_i, px_i, px_sym = _coin_from_snapshot(snap)
@@ -578,6 +620,7 @@ def rebuild_daily_profits(con: sqlite3.Connection, since: str | None = None) -> 
                 event, daily_i, life_i = _classify_event(
                     status, class_prev, class_grid, inv_i, withdrawn_i, reinvest_i, reduce_i,
                     override=overrides.get((date, oid)), first_day=first_day,
+                    lev_x=lev_x, prev_lev_x=prev_lev_x,
                 )
                 cum_i = grid_i
                 daily_total += daily_i
@@ -593,10 +636,10 @@ def rebuild_daily_profits(con: sqlite3.Connection, since: str | None = None) -> 
             con.execute(
                 """UPDATE daily_grid_profit SET grid_profit_i=?, daily_profit_i=?, cumulative_i=?,
                      investment_i=?, withdrawn_i=?, reinvest_i=?, reduce_i=?, lifetime_i=?, event=?,
-                     grid_profit_coin_i=?, daily_profit_coin_i=?, conversion_price_i=?, fx_gap_i=?
+                     grid_profit_coin_i=?, daily_profit_coin_i=?, conversion_price_i=?, fx_gap_i=?, leverage_x=?
                    WHERE id=?""",
                 (grid_i, daily_i, cum_i, inv_i, withdrawn_i, reinvest_i, reduce_i, life_i, event,
-                 coin_i, daily_coin_i, px_i, fx_gap, prow["id"]),
+                 coin_i, daily_coin_i, px_i, fx_gap, lev_x, prow["id"]),
             )
             prev_by_id[oid] = {
                 "grid_profit_i": grid_i,
@@ -609,6 +652,7 @@ def rebuild_daily_profits(con: sqlite3.Connection, since: str | None = None) -> 
                 "status": status,
                 "grid_profit_coin_i": coin_i,
                 "conversion_price_i": px_i,
+                "leverage_x": lev_x,
             }
             if life_i is not None:
                 lifetimes[oid] = life_i
@@ -902,6 +946,7 @@ def _migrate(con: sqlite3.Connection) -> None:
         ("daily_profit_coin_i", "INTEGER"),
         ("conversion_price_i", "INTEGER"),
         ("fx_gap_i", "INTEGER"),
+        ("leverage_x", "REAL"),
     ):
         if name not in profit_cols:
             con.execute(f"ALTER TABLE daily_grid_profit ADD COLUMN {name} {decl}")
@@ -939,6 +984,11 @@ def _migrate(con: sqlite3.Connection) -> None:
             before = summary_values(con)
             rebuild_daily_profits(con)
             record_corrections(con, before, "新開倉位首日網格利潤計入單日")
+        if current < 13:
+            # v13 adds the 調槓桿 event and fills leverage_x. It only relabels days, so no figure should change.
+            before = summary_values(con)
+            rebuild_daily_profits(con)
+            record_corrections(con, before, "新增調槓桿事件")
         con.execute("INSERT INTO schema_meta(version, applied_at) VALUES (?, ?)", (SCHEMA_VERSION, datetime.now(TAIPEI).isoformat()))
         con.commit()
 
@@ -1253,9 +1303,11 @@ def ingest(snapshot: dict, db_path: Path | None = None, replace_date: bool = Fal
             class_grid = _mul_fixed(coin_i, px_i) if coin_i is not None and px_i else grid_profit_i
             class_prev = _prev_revalued(prev_row, px_i) if coin_i is not None else prev_row
             first_day = status == "new" and _opened_since(rec.get("Created"), previous_success_at)
+            lev_x = _leverage_x(rec.get("Leverage"))
             event, daily_i, life_i = _classify_event(
                 status, class_prev, class_grid, investment_i, withdrawn_i, reinvest_i, reduce_i,
                 override=overrides.get((capture_date, oid)), first_day=first_day,
+                lev_x=lev_x, prev_lev_x=_rowget(prev_row, "leverage_x"),
             )
             daily_coin_i = coin_i if first_day else 0 if status in ("baseline", "new") or prev_row is None else (None if coin_i is None else coin_i - _nz(_rowget(prev_row, "grid_profit_coin_i")))
             fx_gap = _fx_gap_i(prev_row, coin_i, px_i, grid_profit_i) if status not in ("baseline", "new") else 0
@@ -1263,7 +1315,7 @@ def ingest(snapshot: dict, db_path: Path | None = None, replace_date: bool = Fal
             profit_rows.append((
                 run_id, capture_date, oid, status, prev_i, grid_profit_i, daily_i, cum_i, investment_i,
                 withdrawn_i, reinvest_i, reduce_i, life_i, event, gap_days,
-                coin_i, daily_coin_i, px_i, fx_gap,
+                coin_i, daily_coin_i, px_i, fx_gap, lev_x,
             ))
             daily_total += daily_i
             investment_total += investment_i or 0
@@ -1285,6 +1337,7 @@ def ingest(snapshot: dict, db_path: Path | None = None, replace_date: bool = Fal
                 run_id, capture_date, oid, "closed_unresolved", prev_i, None, None,
                 prev_row["cumulative_i"], None, prev_row["withdrawn_i"], prev_row["reinvest_i"],
                 prev_row["reduce_i"], life_i, "closed_unresolved", gap_days, None, None, None, None,
+                _rowget(prev_row, "leverage_x"),
             ))
             unresolved += 1
             con.execute("UPDATE grid_positions SET lifecycle='closed_unresolved' WHERE bu_order_id=?", (oid,))
@@ -1293,8 +1346,9 @@ def ingest(snapshot: dict, db_path: Path | None = None, replace_date: bool = Fal
             con.execute(
                 """INSERT INTO daily_grid_profit(run_id, capture_date, bu_order_id, status, prev_grid_profit_i,
                      grid_profit_i, daily_profit_i, cumulative_i, investment_i, withdrawn_i, reinvest_i, reduce_i,
-                     lifetime_i, event, gap_days, grid_profit_coin_i, daily_profit_coin_i, conversion_price_i, fx_gap_i)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                     lifetime_i, event, gap_days, grid_profit_coin_i, daily_profit_coin_i, conversion_price_i, fx_gap_i,
+                     leverage_x)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 row,
             )
 
